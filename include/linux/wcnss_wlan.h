@@ -59,7 +59,6 @@ void wcnss_allow_suspend(void);
 void wcnss_prevent_suspend(void);
 void wcnss_ssr_boot_notify(void);
 void wcnss_reset_intr(void);
-int wcnss_cold_boot_done(void);
 int wcnss_wlan_iris_xo_mode(void);
 
 #define wcnss_wlan_get_drvdata(dev) dev_get_drvdata(dev)

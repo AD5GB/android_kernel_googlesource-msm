@@ -231,7 +231,7 @@ static CountryInfoTable_t countryInfoTable =
         { REGDOMAIN_WORLD,   {'J', 'E'}},  //JERSEY
         { REGDOMAIN_WORLD,   {'J', 'M'}},  //JAMAICA
         { REGDOMAIN_APAC,    {'J', 'O'}},  //JORDAN
-        { REGDOMAIN_WORLD,   {'J', 'P'}},  //JAPAN
+        { REGDOMAIN_JAPAN,   {'J', 'P'}},  //JAPAN
         { REGDOMAIN_KOREA,   {'K', '1'}},  //Korea alternate 1
         { REGDOMAIN_KOREA,   {'K', '2'}},  //Korea alternate 2
         { REGDOMAIN_KOREA,   {'K', '3'}},  //Korea alternate 3

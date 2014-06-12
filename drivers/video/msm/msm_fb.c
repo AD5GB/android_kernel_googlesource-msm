@@ -1864,8 +1864,6 @@ int msm_fb_signal_timeline(struct msm_fb_data_type *mfd)
 		sw_sync_timeline_inc(mfd->timeline, 1);
 		mfd->timeline_value++;
 	}
-	if (atomic_read(&mfd->commit_cnt) > 0)
-		atomic_dec(&mfd->commit_cnt);
 	mutex_unlock(&mfd->sync_mutex);
 	return 0;
 }
@@ -1881,7 +1879,6 @@ void msm_fb_release_timeline(struct msm_fb_data_type *mfd)
 		sw_sync_timeline_inc(mfd->timeline, 2 + commit_cnt);
 		mfd->timeline_value += 2 + commit_cnt;
 	}
-	atomic_set(&mfd->commit_cnt, 0);
 	mutex_unlock(&mfd->sync_mutex);
 }
 
@@ -3779,14 +3776,12 @@ static int msmfb_handle_buf_sync_ioctl(struct msm_fb_data_type *mfd,
 	}
 
 	release_sync_pt = sw_sync_pt_create(mfd->timeline,
-			mfd->timeline_value + threshold +
-			atomic_read(&mfd->commit_cnt));
+			mfd->timeline_value + threshold);
 	release_fence = sync_fence_create("mdp-fence",
 			release_sync_pt);
 	sync_fence_install(release_fence, release_fen_fd);
 	retire_sync_pt = sw_sync_pt_create(mfd->timeline,
-			mfd->timeline_value + threshold +
-			atomic_read(&mfd->commit_cnt) + 1);
+			mfd->timeline_value + threshold);
 	retire_fence = sync_fence_create("mdp-retire-fence",
 			retire_sync_pt);
 	sync_fence_install(retire_fence, retire_fen_fd);

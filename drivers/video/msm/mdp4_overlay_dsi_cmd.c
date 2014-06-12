@@ -1092,6 +1092,7 @@ int mdp4_dsi_cmd_off(struct platform_device *pdev)
 
 	need_wait = 0;
 	mutex_lock(&vctrl->update_lock);
+	atomic_set(&vctrl->suspend, 1);
 	wake_up_interruptible_all(&vctrl->wait_queue);
 
 	pr_debug("%s: clk=%d pan=%d\n", __func__,

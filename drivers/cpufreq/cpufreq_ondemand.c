@@ -126,6 +126,14 @@ static struct workqueue_struct *dbs_wq;
 
 static DEFINE_PER_CPU(struct work_struct, dbs_refresh_work);
 
+struct dbs_sync_work_struct {
+	struct work_struct work;
+	unsigned int src_cpu;
+	unsigned int targ_cpu;
+};
+
+static DEFINE_PER_CPU(struct dbs_sync_work_struct, dbs_sync_work);
+
 static struct dbs_tuners {
 	unsigned int sampling_rate;
 	unsigned int up_threshold;
@@ -1021,11 +1029,12 @@ bail_acq_sema_failed:
 static int dbs_migration_notify(struct notifier_block *nb,
 				unsigned long target_cpu, void *arg)
 {
-	struct cpu_dbs_info_s *target_dbs_info =
-		&per_cpu(od_cpu_dbs_info, target_cpu);
+	struct dbs_sync_work_struct *sync_work =
+		&per_cpu(dbs_sync_work, target_cpu);
+	sync_work->src_cpu = (unsigned int)arg;
 
-	atomic_set(&target_dbs_info->src_sync_cpu, (int)arg);
-	wake_up(&target_dbs_info->sync_wq);
+	queue_work_on(target_cpu, input_wq,
+		&per_cpu(dbs_sync_work, target_cpu).work);
 
 	return NOTIFY_OK;
 }
@@ -1034,91 +1043,73 @@ static struct notifier_block dbs_migration_nb = {
 	.notifier_call = dbs_migration_notify,
 };
 
-static int sync_pending(struct cpu_dbs_info_s *this_dbs_info)
+void dbs_synchronize(struct work_struct *work)
 {
-	return atomic_read(&this_dbs_info->src_sync_cpu) >= 0;
-}
-
-static int dbs_sync_thread(void *data)
-{
-	int src_cpu, cpu = (int)data;
-	unsigned int src_freq, src_max_load;
-	struct cpu_dbs_info_s *this_dbs_info, *src_dbs_info;
 	struct cpufreq_policy *policy;
+	struct cpu_dbs_info_s *this_dbs_info, *src_dbs_info;
+	struct dbs_sync_work_struct *dbs_work;
+	unsigned int cpu, src_cpu;
+	unsigned int src_freq, src_max_load;
 	int delay;
 
-	this_dbs_info = &per_cpu(od_cpu_dbs_info, cpu);
+	dbs_work = container_of(work, struct dbs_sync_work_struct, work);
+	cpu = dbs_work->targ_cpu;
+	src_cpu = dbs_work->src_cpu;
 
-	while (1) {
-		wait_event(this_dbs_info->sync_wq,
-			   sync_pending(this_dbs_info) ||
-			   kthread_should_stop());
+	get_online_cpus();
 
-		if (kthread_should_stop())
-			break;
-
-		get_online_cpus();
-
-		if (!atomic_read(&this_dbs_info->sync_enabled)) {
-			atomic_set(&this_dbs_info->src_sync_cpu, -1);
-			put_online_cpus();
-			continue;
-		}
-
-		src_cpu = atomic_read(&this_dbs_info->src_sync_cpu);
-		src_dbs_info = &per_cpu(od_cpu_dbs_info, src_cpu);
-		if (src_dbs_info != NULL &&
-		    src_dbs_info->cur_policy != NULL) {
-			src_freq = src_dbs_info->cur_policy->cur;
-			src_max_load = src_dbs_info->max_load;
-		} else {
-			src_freq = dbs_tuners_ins.sync_freq;
-			src_max_load = 0;
-		}
-
-		if (lock_policy_rwsem_write(cpu) < 0)
-			goto bail_acq_sema_failed;
-
-		policy = this_dbs_info->cur_policy;
-		if (!policy) {
-			/* CPU not using ondemand governor */
-			goto bail_incorrect_governor;
-		}
-		delay = usecs_to_jiffies(dbs_tuners_ins.sampling_rate);
-
-
-		if (policy->cur < src_freq) {
-			/* cancel the next ondemand sample */
-			cancel_delayed_work_sync(&this_dbs_info->work);
-
-			/*
-			 * Arch specific cpufreq driver may fail.
-			 * Don't update governor frequency upon failure.
-			 */
-			if (__cpufreq_driver_target(policy, src_freq,
-						    CPUFREQ_RELATION_L) >= 0) {
-				policy->cur = src_freq;
-				if (src_max_load > this_dbs_info->max_load) {
-					this_dbs_info->max_load = src_max_load;
-					this_dbs_info->prev_load = src_max_load;
-				}
-			}
-
-			/* reschedule the next ondemand sample */
-			mutex_lock(&this_dbs_info->timer_mutex);
-			schedule_delayed_work_on(cpu, &this_dbs_info->work,
-						 delay);
-			mutex_unlock(&this_dbs_info->timer_mutex);
-		}
-
-bail_incorrect_governor:
-		unlock_policy_rwsem_write(cpu);
-bail_acq_sema_failed:
-		put_online_cpus();
-		atomic_set(&this_dbs_info->src_sync_cpu, -1);
+	/* Getting source cpu info  */
+	src_dbs_info = &per_cpu(od_cpu_dbs_info, src_cpu);
+	if (src_dbs_info != NULL && src_dbs_info->cur_policy != NULL) {
+		src_freq = src_dbs_info->cur_policy->cur;
+		src_max_load = src_dbs_info->max_load;
+	} else {
+		src_freq = dbs_tuners_ins.sync_freq;
+		src_max_load = 0;
 	}
 
-	return 0;
+	if (lock_policy_rwsem_write(cpu) < 0)
+		goto bail_acq_sema_failed;
+
+	this_dbs_info = &per_cpu(od_cpu_dbs_info, cpu);
+	policy = this_dbs_info->cur_policy;
+	if (!policy) {
+		/* CPU not using ondemand governor */
+		goto bail_incorrect_governor;
+	}
+
+	delay = usecs_to_jiffies(dbs_tuners_ins.sampling_rate);
+
+	if (policy->cur < src_freq) {
+
+		/* Cancelling the next ondemand sample */
+		cancel_delayed_work_sync(&this_dbs_info->work);
+
+		/*
+		 * Arch specific cpufreq driver may fail.
+		 * Don't update governor frequency upon failure.
+		 */
+		if (__cpufreq_driver_target(policy, src_freq,
+					CPUFREQ_RELATION_L) >= 0) {
+			policy->cur = src_freq;
+			if (src_max_load > this_dbs_info->max_load) {
+				this_dbs_info->max_load = src_max_load;
+				this_dbs_info->prev_load = src_max_load;
+			}
+		}
+
+		/* Rescheduling the next ondemand sample */
+		mutex_lock(&this_dbs_info->timer_mutex);
+		schedule_delayed_work_on(cpu, &this_dbs_info->work,
+					delay);
+		mutex_unlock(&this_dbs_info->timer_mutex);
+	}
+bail_incorrect_governor:
+	unlock_policy_rwsem_write(cpu);
+
+bail_acq_sema_failed:
+	put_online_cpus();
+	return;
 }
 
 static void dbs_input_event(struct input_handle *handle, unsigned int type,
@@ -1350,16 +1341,16 @@ static int __init cpufreq_gov_dbs_init(void)
 	for_each_possible_cpu(i) {
 		struct cpu_dbs_info_s *this_dbs_info =
 			&per_cpu(od_cpu_dbs_info, i);
+                struct dbs_sync_work_struct *dbs_sync =
+                        &per_cpu(dbs_sync_work, i);
 
 		mutex_init(&this_dbs_info->timer_mutex);
 		INIT_WORK(&per_cpu(dbs_refresh_work, i), dbs_refresh_callback);
 
-		atomic_set(&this_dbs_info->src_sync_cpu, -1);
-		init_waitqueue_head(&this_dbs_info->sync_wq);
+		INIT_WORK(&dbs_sync->work, dbs_synchronize);
+		dbs_sync->src_cpu = 0;
+		dbs_sync->targ_cpu = i;
 
-		this_dbs_info->sync_thread = kthread_run(dbs_sync_thread,
-							 (void *)i,
-							 "dbs_sync/%d", i);
 	}
 
 	return cpufreq_register_governor(&cpufreq_gov_ondemand);

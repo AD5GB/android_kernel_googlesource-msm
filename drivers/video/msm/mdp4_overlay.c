@@ -135,6 +135,20 @@ void  mdp4_overlay_free_base_pipe(struct msm_fb_data_type *mfd)
 	}
 }
 
+void  mdp4_overlay_free_base_pipe(struct msm_fb_data_type *mfd)
+{
+	if (!hdmi_prim_display && mfd->index == 0) {
+		if (ctrl->panel_mode & MDP4_PANEL_DSI_VIDEO)
+			mdp4_dsi_video_free_base_pipe(mfd);
+		else if (ctrl->panel_mode & MDP4_PANEL_DSI_CMD)
+			mdp4_dsi_cmd_free_base_pipe(mfd);
+		else if (ctrl->panel_mode & MDP4_PANEL_LCDC)
+			mdp4_lcdc_free_base_pipe(mfd);
+	} else if (hdmi_prim_display || mfd->index == 1) {
+		mdp4_dtv_free_base_pipe(mfd);
+	}
+}
+
 static struct ion_client *display_iclient;
 
 static int mdp4_map_sec_resource(struct msm_fb_data_type *mfd)
@@ -2748,8 +2762,9 @@ static int mdp4_calc_req_mdp_clk(struct msm_fb_data_type *mfd,
 		yscale <<= shift;
 		yscale /= dst_h;
 	} else {		/* upscale */
-		yscale = 1;
+		yscale = dst_h;
 		yscale <<= shift;
+		yscale /= src_h;
 	}
 
 	yscale *= src_w;
