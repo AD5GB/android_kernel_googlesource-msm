@@ -724,7 +724,6 @@ static int __sched_grow(struct ocmem_req *req, bool can_block)
 	bool retry;
 	struct ocmem_region *spanned_r = NULL;
 	struct ocmem_region *overlap_r = NULL;
-	int rc = 0;
 
 	struct ocmem_req *matched_req = NULL;
 	struct ocmem_region *matched_region = NULL;
@@ -768,10 +767,9 @@ retry_next_step:
 	if (overlap_r == NULL) {
 		/* no conflicting regions, schedule this region */
 		zone->z_ops->free(zone, curr_start, curr_sz);
-		rc = zone->z_ops->allocate(zone, curr_sz + growth_sz,
-								&alloc_addr);
+		alloc_addr = zone->z_ops->allocate(zone, curr_sz + growth_sz);
 
-		if (rc) {
+		if (alloc_addr < 0) {
 			pr_err("ocmem: zone allocation operation failed\n");
 			goto internal_error;
 		}
@@ -935,7 +933,6 @@ static int __sched_shrink(struct ocmem_req *req, unsigned long new_sz)
 	struct ocmem_region *matched_region = NULL;
 	struct ocmem_region *region = NULL;
 	unsigned long alloc_addr = 0x0;
-	int rc =  0;
 
 	struct ocmem_zone *zone = get_zone(owner);
 
@@ -960,9 +957,9 @@ static int __sched_shrink(struct ocmem_req *req, unsigned long new_sz)
 		goto internal_error;
 	}
 
-	rc = zone->z_ops->allocate(zone, new_sz, &alloc_addr);
+	alloc_addr = zone->z_ops->allocate(zone, new_sz);
 
-	if (rc) {
+	if (alloc_addr < 0) {
 		pr_err("Zone Allocation operation failed\n");
 		goto internal_error;
 	}
@@ -1035,7 +1032,6 @@ static int __sched_allocate(struct ocmem_req *req, bool can_block,
 	enum client_prio prio = req->prio;
 	unsigned long alloc_addr = 0x0;
 	bool retry;
-	int rc = 0;
 
 	struct ocmem_region *spanned_r = NULL;
 	struct ocmem_region *overlap_r = NULL;
@@ -1060,6 +1056,13 @@ static int __sched_allocate(struct ocmem_req *req, bool can_block,
 			goto invalid_op_error;
 	}
 
+	region = create_region();
+
+	if (!region) {
+		pr_err("ocmem: Unable to create region\n");
+		goto invalid_op_error;
+	}
+
 	retry = false;
 
 	pr_debug("ocmem: do_allocate: %s request %p size %lx\n",
@@ -1074,18 +1077,10 @@ retry_next_step:
 	overlap_r = find_region_intersection(zone->z_head, zone->z_head + sz);
 
 	if (overlap_r == NULL) {
-
-		region = create_region();
-
-		if (!region) {
-			pr_err("ocmem: Unable to create region\n");
-			goto invalid_op_error;
-		}
-
 		/* no conflicting regions, schedule this region */
-		rc = zone->z_ops->allocate(zone, sz, &alloc_addr);
+		alloc_addr = zone->z_ops->allocate(zone, sz);
 
-		if (rc) {
+		if (alloc_addr < 0) {
 			pr_err("Zone Allocation operation failed\n");
 			goto internal_error;
 		}
@@ -1177,6 +1172,7 @@ retry_next_step:
 
 trigger_eviction:
 	pr_debug("Trigger eviction of region %p\n", overlap_r);
+	destroy_region(region);
 	return OP_EVICT;
 
 err_not_supported:
@@ -1192,23 +1188,19 @@ invalid_op_error:
 }
 
 /* Remove the request from eviction lists */
-static void cancel_restore(struct ocmem_req *req)
+static void cancel_restore(struct ocmem_req *e_handle,
+				struct ocmem_req *req)
 {
-	struct ocmem_eviction_data *edata;
+	struct ocmem_eviction_data *edata = e_handle->edata;
 
-	if (!req)
-		return;
-
-	edata = req->eviction_info;
-
-	if (!edata)
+	if (!edata || !req)
 		return;
 
 	if (list_empty(&edata->req_list))
 		return;
 
 	list_del_init(&req->eviction_list);
-	req->eviction_info = NULL;
+	req->e_handle = NULL;
 
 	return;
 }
@@ -1503,8 +1495,8 @@ int process_free(int id, struct ocmem_handle *handle)
 	}
 
 	/* Remove the request from any restore lists */
-	if (req->eviction_info)
-		cancel_restore(req);
+	if (req->e_handle)
+		cancel_restore(req->e_handle, req);
 
 	/* Remove the request from any pending opreations */
 	if (TEST_STATE(req, R_ENQUEUED)) {
@@ -1523,18 +1515,6 @@ int process_free(int id, struct ocmem_handle *handle)
 				pr_err("ocmem: Failed to unmap %p\n", req);
 				goto free_fail;
 			}
-			/* Turn off the memory */
-			if (req->req_sz != 0) {
-
-				offset = phys_to_offset(req->req_start);
-				rc = ocmem_memory_off(req->owner, offset,
-					req->req_sz);
-
-				if (rc < 0) {
-					pr_err("Failed to switch OFF memory macros\n");
-					goto free_fail;
-				}
-			}
 
 			rc = do_free(req);
 			if (rc < 0) {
@@ -1545,19 +1525,21 @@ int process_free(int id, struct ocmem_handle *handle)
 			pr_debug("request %p was already shrunk to 0\n", req);
 	}
 
-	if (!TEST_STATE(req, R_FREE)) {
-		/* Turn off the memory */
-		if (req->req_sz != 0) {
+	/* Turn off the memory */
+	if (req->req_sz != 0) {
 
-			offset = phys_to_offset(req->req_start);
-			rc = ocmem_memory_off(req->owner, offset, req->req_sz);
+		offset = phys_to_offset(req->req_start);
 
-			if (rc < 0) {
-				pr_err("Failed to switch OFF memory macros\n");
-				goto free_fail;
-			}
+		rc = ocmem_memory_off(req->owner, offset, req->req_sz);
+
+		if (rc < 0) {
+			pr_err("Failed to switch OFF memory macros\n");
+			goto free_fail;
 		}
 
+	}
+
+	if (!TEST_STATE(req, R_FREE)) {
 		/* free the allocation */
 		rc = do_free(req);
 		if (rc < 0)
@@ -1751,7 +1733,12 @@ int process_shrink(int id, struct ocmem_handle *handle, unsigned long size)
 		goto shrink_fail;
 	}
 
-	edata = req->eviction_info;
+	if (!req->e_handle) {
+		pr_err("Unable to find evicting request\n");
+		goto shrink_fail;
+	}
+
+	edata = req->e_handle->edata;
 
 	if (!edata) {
 		pr_err("Unable to find eviction data\n");
@@ -1904,7 +1891,7 @@ static int __evict_common(struct ocmem_eviction_data *edata,
 						&e_req->eviction_list,
 						&edata->req_list);
 					atomic_inc(&edata->pending);
-					e_req->eviction_info = edata;
+					e_req->e_handle = req;
 				}
 			}
 		} else {
@@ -2036,7 +2023,7 @@ static int __restore_common(struct ocmem_eviction_data *edata)
 		pr_debug("ocmem: restoring evicted request %p\n",
 							req);
 		req->edata = NULL;
-		req->eviction_info = NULL;
+		req->e_handle = NULL;
 		req->op = SCHED_ALLOCATE;
 		inc_ocmem_stat(zone_of(req), NR_RESTORES);
 		sched_enqueue(req);
@@ -2075,11 +2062,8 @@ int process_restore(int id)
 	struct ocmem_eviction_data *edata = evictions[id];
 	int rc = 0;
 
-	if (!edata) {
-		pr_err("Client %s invoked restore without any eviction\n",
-					get_name(id));
+	if (!edata)
 		return -EINVAL;
-	}
 
 	mutex_lock(&free_mutex);
 	rc = __restore_common(edata);

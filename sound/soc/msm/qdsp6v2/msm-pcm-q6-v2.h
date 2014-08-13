@@ -1,7 +1,7 @@
 /*
  * Copyright (C) 2008 Google, Inc.
  * Copyright (C) 2008 HTC Corporation
- * Copyright (c) 2012-2014 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2013 The Linux Foundation. All rights reserved.
  *
  * This software is licensed under the terms of the GNU General Public
  * License version 2, as published by the Free Software Foundation, and
@@ -69,17 +69,9 @@ struct msm_audio {
 
 	int abort; /* set when error, like sample rate mismatch */
 
-	bool reset_event;
 	int enabled;
 	int close_ack;
 	int cmd_ack;
-	/*
-	 * cmd_ack doesn't tell if paticular command has been sent so can't
-	 * determine if it needs to wait for completion.
-	 * Use cmd_pending instead when checking whether a command is been
-	 * sent or not.
-	 */
-	unsigned long cmd_pending;
 	atomic_t start;
 	atomic_t stop;
 	atomic_t out_count;
@@ -93,8 +85,6 @@ struct msm_audio {
 	bool set_channel_map;
 	char channel_map[8];
 	int cmd_interrupt;
-	bool meta_data_mode;
-	uint32_t volume;
 };
 
 struct output_meta_data_st {

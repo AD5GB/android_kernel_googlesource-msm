@@ -27,7 +27,6 @@
 #include <asm-generic/sizes.h>
 #include <mach/memory.h>
 #include <mach/msm_rtb.h>
-#include <mach/system.h>
 
 #define SENTINEL_BYTE_1 0xFF
 #define SENTINEL_BYTE_2 0xAA

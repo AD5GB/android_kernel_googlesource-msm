@@ -1,4 +1,4 @@
-/* Copyright (c) 2011-2014, The Linux Foundataion. All rights reserved.
+/* Copyright (c) 2011-2013, The Linux Foundataion. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -16,9 +16,9 @@
 #include <linux/regulator/consumer.h>
 #include <linux/io.h>
 #include <linux/err.h>
-#include <soc/qcom/camera2.h>
+#include <mach/camera2.h>
 #include <mach/gpiomux.h>
-#include <linux/msm-bus.h>
+#include <mach/msm_bus.h>
 #include "msm_camera_io_util.h"
 
 #define BUFF_SIZE_128 128
@@ -32,13 +32,13 @@
 
 void msm_camera_io_w(u32 data, void __iomem *addr)
 {
-	CDBG("%s: 0x%p %08x\n", __func__,  (addr), (data));
+	CDBG("%s: %08x %08x\n", __func__, (int) (addr), (data));
 	writel_relaxed((data), (addr));
 }
 
 void msm_camera_io_w_mb(u32 data, void __iomem *addr)
 {
-	CDBG("%s: 0x%p %08x\n", __func__,  (addr), (data));
+	CDBG("%s: %08x %08x\n", __func__, (int) (addr), (data));
 	wmb();
 	writel_relaxed((data), (addr));
 	wmb();
@@ -47,7 +47,7 @@ void msm_camera_io_w_mb(u32 data, void __iomem *addr)
 u32 msm_camera_io_r(void __iomem *addr)
 {
 	uint32_t data = readl_relaxed(addr);
-	CDBG("%s: 0x%p %08x\n", __func__,  (addr), (data));
+	CDBG("%s: %08x %08x\n", __func__, (int) (addr), (data));
 	return data;
 }
 
@@ -57,7 +57,7 @@ u32 msm_camera_io_r_mb(void __iomem *addr)
 	rmb();
 	data = readl_relaxed(addr);
 	rmb();
-	CDBG("%s: 0x%p %08x\n", __func__,  (addr), (data));
+	CDBG("%s: %08x %08x\n", __func__, (int) (addr), (data));
 	return data;
 }
 
@@ -83,11 +83,11 @@ void msm_camera_io_dump(void __iomem *addr, int size)
 	p_str = line_str;
 	for (i = 0; i < size/4; i++) {
 		if (i % 4 == 0) {
-			snprintf(p_str, 12, "0x%p: ",  p);
+			snprintf(p_str, 12, "%08x: ", (u32) p);
 			p_str += 10;
 		}
 		data = readl_relaxed(p++);
-		snprintf(p_str, 12, "%d ", data);
+		snprintf(p_str, 12, "%08x ", data);
 		p_str += 9;
 		if ((i + 1) % 4 == 0) {
 			CDBG("%s\n", line_str);
@@ -107,40 +107,11 @@ void msm_camera_io_memcpy(void __iomem *dest_addr,
 	msm_camera_io_dump(dest_addr, len);
 }
 
-int msm_cam_clk_sel_src(struct device *dev, struct msm_cam_clk_info *clk_info,
-		struct msm_cam_clk_info *clk_src_info, int num_clk)
-{
-	int i;
-	int rc = 0;
-	struct clk *mux_clk = NULL;
-	struct clk *src_clk = NULL;
-
-	for (i = 0; i < num_clk; i++) {
-		if (clk_src_info[i].clk_name) {
-			mux_clk = clk_get(dev, clk_info[i].clk_name);
-			if (IS_ERR(mux_clk)) {
-				pr_err("%s get failed\n",
-					 clk_info[i].clk_name);
-				continue;
-			}
-			src_clk = clk_get(dev, clk_src_info[i].clk_name);
-			if (IS_ERR(src_clk)) {
-				pr_err("%s get failed\n",
-					clk_src_info[i].clk_name);
-				continue;
-			}
-			clk_set_parent(mux_clk, src_clk);
-		}
-	}
-	return rc;
-}
-
 int msm_cam_clk_enable(struct device *dev, struct msm_cam_clk_info *clk_info,
 		struct clk **clk_ptr, int num_clk, int enable)
 {
 	int i;
 	int rc = 0;
-	long clk_rate;
 	if (enable) {
 		for (i = 0; i < num_clk; i++) {
 			CDBG("%s enable %s\n", __func__,
@@ -151,31 +122,13 @@ int msm_cam_clk_enable(struct device *dev, struct msm_cam_clk_info *clk_info,
 				rc = PTR_ERR(clk_ptr[i]);
 				goto cam_clk_get_err;
 			}
-			if (clk_info[i].clk_rate > 0) {
+			if (clk_info[i].clk_rate >= 0) {
 				rc = clk_set_rate(clk_ptr[i],
 							clk_info[i].clk_rate);
 				if (rc < 0) {
 					pr_err("%s set failed\n",
 						   clk_info[i].clk_name);
 					goto cam_clk_set_err;
-				}
-			} else if (clk_info[i].clk_rate == INIT_RATE) {
-				clk_rate = clk_get_rate(clk_ptr[i]);
-				if (clk_rate == 0) {
-					clk_rate =
-						  clk_round_rate(clk_ptr[i], 0);
-					if (clk_rate < 0) {
-						pr_err("%s round rate failed\n",
-							  clk_info[i].clk_name);
-						goto cam_clk_set_err;
-					}
-					rc = clk_set_rate(clk_ptr[i],
-								clk_rate);
-					if (rc < 0) {
-						pr_err("%s set rate failed\n",
-							  clk_info[i].clk_name);
-						goto cam_clk_set_err;
-					}
 				}
 			}
 			rc = clk_prepare(clk_ptr[i]);
@@ -544,7 +497,7 @@ vreg_get_fail:
 int msm_camera_request_gpio_table(struct gpio *gpio_tbl, uint8_t size,
 	int gpio_en)
 {
-	int rc = 0, i = 0, err = 0;
+	int rc = 0, i = 0;
 
 	if (!gpio_tbl || !size) {
 		pr_err("%s:%d invalid gpio_tbl %p / size %d\n", __func__,
@@ -556,19 +509,11 @@ int msm_camera_request_gpio_table(struct gpio *gpio_tbl, uint8_t size,
 			gpio_tbl[i].gpio, gpio_tbl[i].flags);
 	}
 	if (gpio_en) {
-		for (i = 0; i < size; i++) {
-			err = gpio_request_one(gpio_tbl[i].gpio,
-				gpio_tbl[i].flags, gpio_tbl[i].label);
-			if (err) {
-				/*
-				* After GPIO request fails, contine to
-				* apply new gpios, outout a error message
-				* for driver bringup debug
-				*/
-				pr_err("%s:%d gpio %d:%s request fails\n",
-					__func__, __LINE__,
-					gpio_tbl[i].gpio, gpio_tbl[i].label);
-			}
+		rc = gpio_request_array(gpio_tbl, size);
+		if (rc < 0) {
+			pr_err("%s:%d camera gpio request failed\n", __func__,
+				__LINE__);
+			return rc;
 		}
 	} else {
 		gpio_free_array(gpio_tbl, size);

@@ -5,7 +5,7 @@
  * Copyright (C) 2003 Oliver Endriss
  * Copyright (C) 2004 Andrew de Quincey
  *
- * Copyright (c) 2012,2014, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012, The Linux Foundation. All rights reserved.
  *
  * based on code originally found in av7110.c & dvb_ci.c:
  * Copyright (C) 1999-2003 Ralph Metzler & Marcus Metzler
@@ -117,6 +117,10 @@ extern void dvb_ringbuffer_flush_spinlock_wakeup(struct dvb_ringbuffer *rbuf);
 #define DVB_RINGBUFFER_PUSH(rbuf, num)	\
 	{ ((rbuf)->pwrite = (((rbuf)->pwrite+(num))%(rbuf)->size));	\
 	atomic_add((num), &(rbuf)->fill); }
+
+/* advance write ptr by <num> bytes */
+#define DVB_RINGBUFFER_PUSH(rbuf, num)	\
+			((rbuf)->pwrite = (((rbuf)->pwrite+(num))%(rbuf)->size))
 
 /* advance write ptr by <num> bytes */
 #define DVB_RINGBUFFER_PUSH(rbuf, num)	\

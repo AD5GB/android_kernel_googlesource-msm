@@ -450,8 +450,6 @@ static int stm_trace_ost_tail_64bit(unsigned long ch_addr, uint32_t options)
 
 static int stm_send(void *addr, const void *data, uint32_t size)
 {
-	uint32_t len = size;
-
 	if (((unsigned long)data & 0x1) && (size >= 1)) {
 		stm_data_writeb(*(uint8_t *)data, addr);
 		data++;
@@ -481,7 +479,7 @@ static int stm_send(void *addr, const void *data, uint32_t size)
 		size--;
 	}
 
-	return len;
+	return size;
 }
 
 static int stm_trace_ost_header(unsigned long ch_addr, uint32_t options,
@@ -597,7 +595,7 @@ int stm_trace(uint32_t options, uint8_t entity_id, uint8_t proto_id,
 
 	return __stm_trace(options, entity_id, proto_id, data, size);
 }
-EXPORT_SYMBOL(stm_trace);
+EXPORT_SYMBOL_GPL(stm_trace);
 
 static ssize_t stm_write(struct file *file, const char __user *data,
 			 size_t size, loff_t *ppos)
@@ -792,9 +790,6 @@ static int stm_probe(struct platform_device *pdev)
 	struct resource *res;
 	size_t res_size, bitmap_size;
 	struct coresight_desc *desc;
-
-	if (coresight_fuse_access_disabled())
-		return -EPERM;
 
 	if (pdev->dev.of_node) {
 		pdata = of_get_coresight_platform_data(dev, pdev->dev.of_node);

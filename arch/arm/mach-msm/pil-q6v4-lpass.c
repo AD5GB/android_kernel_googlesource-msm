@@ -1,4 +1,4 @@
-/* Copyright (c) 2012,2013 The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -24,10 +24,9 @@
 #include <mach/scm.h>
 #include <mach/subsystem_restart.h>
 #include <mach/subsystem_notif.h>
-#include <mach/ramdump.h>
-#include <mach/msm_smem.h>
 
 #include "smd_private.h"
+#include "ramdump.h"
 #include "sysmon.h"
 #include "peripheral-loader.h"
 #include "pil-q6v4.h"
@@ -260,7 +259,7 @@ static irqreturn_t lpass_wdog_bite_irq(int irq, void *dev_id)
 	return IRQ_HANDLED;
 }
 
-static int __devinit pil_q6v4_lpass_driver_probe(struct platform_device *pdev)
+static int pil_q6v4_lpass_driver_probe(struct platform_device *pdev)
 {
 	const struct pil_q6v4_pdata *pdata = pdev->dev.platform_data;
 	struct lpass_q6v4 *drv;
@@ -378,7 +377,7 @@ err_ramdump:
 	return ret;
 }
 
-static int __devexit pil_q6v4_lpass_driver_exit(struct platform_device *pdev)
+static int pil_q6v4_lpass_driver_exit(struct platform_device *pdev)
 {
 	struct lpass_q6v4 *drv = platform_get_drvdata(pdev);
 	subsys_notif_unregister_notifier(drv->riva_notif_hdle, &rnb);
@@ -394,7 +393,7 @@ static int __devexit pil_q6v4_lpass_driver_exit(struct platform_device *pdev)
 
 static struct platform_driver pil_q6v4_lpass_driver = {
 	.probe = pil_q6v4_lpass_driver_probe,
-	.remove = __devexit_p(pil_q6v4_lpass_driver_exit),
+	.remove = pil_q6v4_lpass_driver_exit,
 	.driver = {
 		.name = "pil-q6v4-lpass",
 		.owner = THIS_MODULE,

@@ -1402,8 +1402,6 @@ static int ks8851_resume(struct device *dev)
 }
 #endif
 
-static SIMPLE_DEV_PM_OPS(ks8851_pm_ops, ks8851_suspend, ks8851_resume);
-
 static int ks8851_init_hw(struct spi_device *spi, struct ks8851_net *ks)
 {
 	struct ks8851_pdata *pdata = spi->dev.platform_data;
@@ -1430,25 +1428,23 @@ static int ks8851_init_hw(struct spi_device *spi, struct ks8851_net *ks)
 		gpio_direction_output(ks->rst_gpio, 0);
 	}
 
-	ks->vdd_io = devm_regulator_get(&spi->dev, "vdd-io");
+	ks->vdd_io = regulator_get(&spi->dev, "vdd-io");
+
 	if (IS_ERR(ks->vdd_io)) {
 		ret = PTR_ERR(ks->vdd_io);
 		goto fail_gpio;
 	}
 
-	ks->vdd_phy = devm_regulator_get(&spi->dev, "vdd-phy");
+	ks->vdd_phy = regulator_get(&spi->dev, "vdd-phy");
+
 	if (IS_ERR(ks->vdd_phy)) {
+		regulator_put(ks->vdd_io);
 		ret = PTR_ERR(ks->vdd_phy);
 		goto fail_gpio;
 	}
 
-	ret = regulator_enable(ks->vdd_io);
-	if (ret)
-		goto fail_gpio;
-
-	ret = regulator_enable(ks->vdd_phy);
-	if (ret)
-		goto fail_gpio;
+	regulator_enable(ks->vdd_io);
+	regulator_enable(ks->vdd_phy);
 
 	/* Wait for atleast 10ms after turning on regulator */
 	usleep_range(10000, 11000);
@@ -1586,6 +1582,16 @@ err_id:
 err_irq:
 	if (gpio_is_valid(ks->rst_gpio))
 		gpio_free(ks->rst_gpio);
+
+	if (!IS_ERR(ks->vdd_io)) {
+		regulator_disable(ks->vdd_io);
+		regulator_put(ks->vdd_io);
+	}
+
+	if (!IS_ERR(ks->vdd_phy)) {
+		regulator_disable(ks->vdd_phy);
+		regulator_put(ks->vdd_phy);
+	}
 
 err_init:
 	free_netdev(ndev);

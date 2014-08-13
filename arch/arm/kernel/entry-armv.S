@@ -1226,8 +1226,29 @@ vector_addrexcptn:
 vector_fiq:
 	subs	pc, lr, #4
 
+/*=============================================================================
+ * Address exception handler
+ *-----------------------------------------------------------------------------
+ * These aren't too critical.
+ * (they're not supposed to happen, and won't happen in 32-bit data mode).
+ */
+
+vector_addrexcptn:
+	b	vector_addrexcptn
+
+/*
+ * We group all the following data together to optimise
+ * for CPUs with separate I & D caches.
+ */
+	.align	5
+
+.LCvswi:
+	.word	vector_swi
 .krait_fixup:
 	.word	msm_krait_need_wfe_fixup
+
+	.globl	__stubs_end
+__stubs_end:
 
 	.globl	vector_fiq_offset
 	.equ	vector_fiq_offset, vector_fiq

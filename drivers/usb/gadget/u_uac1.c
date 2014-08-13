@@ -593,6 +593,60 @@ try_again:
 
 	set_fs(old_fs);
 
+	pr_debug("Done. Sent %d frames", (int)frames);
+
+	return 0;
+}
+
+static size_t u_audio_capture(struct gaudio *card, void *buf, size_t count)
+{
+	ssize_t result;
+	mm_segment_t old_fs;
+	snd_pcm_sframes_t frames;
+	int err = 0;
+
+	struct gaudio_snd_dev	 *snd = &card->capture;
+	struct snd_pcm_substream *substream = snd->substream;
+	struct snd_pcm_runtime   *runtime = substream->runtime;
+
+	if (!audio_reinit) {
+		err = gaudio_open_streams();
+		if (err) {
+			pr_err("Failed to init audio streams: err %d", err);
+			return 0;
+		}
+		audio_reinit = 1;
+	}
+
+try_again:
+	if (runtime->status->state == SNDRV_PCM_STATE_XRUN ||
+		runtime->status->state == SNDRV_PCM_STATE_SUSPENDED ||
+		runtime->status->state == SNDRV_PCM_STATE_SETUP) {
+		result = snd_pcm_kernel_ioctl(substream,
+				SNDRV_PCM_IOCTL_PREPARE, NULL);
+		if (result < 0) {
+			pr_err("Preparing capture failed: %d\n",
+					(int)result);
+			return result;
+		}
+	}
+
+	frames = bytes_to_frames(runtime, count);
+
+	old_fs = get_fs();
+	set_fs(KERNEL_DS);
+
+	pr_debug("frames = %d, count = %d", (int)frames, count);
+
+	result = snd_pcm_lib_read(substream, buf, frames);
+	if (result != frames) {
+		pr_err("Capture error: %d\n", (int)result);
+		set_fs(old_fs);
+		goto try_again;
+	}
+
+	set_fs(old_fs);
+
 	return 0;
 }
 

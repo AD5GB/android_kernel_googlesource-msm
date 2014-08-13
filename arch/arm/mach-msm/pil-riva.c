@@ -1,4 +1,4 @@
-/* Copyright (c) 2011-2013, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2011-2012, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -23,11 +23,10 @@
 #include <linux/wcnss_wlan.h>
 
 #include <mach/subsystem_restart.h>
-#include <mach/ramdump.h>
-#include <mach/msm_smem.h>
 
 #include "peripheral-loader.h"
 #include "scm-pas.h"
+#include "ramdump.h"
 #include "smd_private.h"
 
 #define RIVA_PMU_A2XB_CFG		0xB8
@@ -135,7 +134,7 @@ static int pil_riva_reset(struct pil_desc *pil)
 	u32 reg, sel;
 	struct riva_data *drv = dev_get_drvdata(pil->dev);
 	void __iomem *base = drv->base;
-	phys_addr_t start_addr = pil_get_entry_addr(pil);
+	unsigned long start_addr = pil_get_entry_addr(pil);
 	void __iomem *cbase = drv->cbase;
 	bool use_cxo = cxo_is_needed(drv);
 
@@ -313,7 +312,6 @@ static void smsm_state_cb_hdlr(void *data, uint32_t old_state,
 	}
 
 	pr_err("riva: smsm state changed to smsm reset\n");
-	wcnss_riva_dump_pmic_regs();
 
 	smem_reset_reason = smem_get_entry(SMEM_SSR_REASON_WCNSS0,
 		&smem_reset_size);
@@ -438,7 +436,7 @@ static void riva_crash_shutdown(const struct subsys_desc *desc)
 		smsm_change_state(SMSM_APPS_STATE, SMSM_RESET, SMSM_RESET);
 }
 
-static int __devinit pil_riva_probe(struct platform_device *pdev)
+static int pil_riva_probe(struct platform_device *pdev)
 {
 	struct riva_data *drv;
 	struct resource *res;
@@ -552,7 +550,7 @@ err_smsm:
 	return ret;
 }
 
-static int __devexit pil_riva_remove(struct platform_device *pdev)
+static int pil_riva_remove(struct platform_device *pdev)
 {
 	struct riva_data *drv = platform_get_drvdata(pdev);
 
@@ -567,7 +565,7 @@ static int __devexit pil_riva_remove(struct platform_device *pdev)
 
 static struct platform_driver pil_riva_driver = {
 	.probe = pil_riva_probe,
-	.remove = __devexit_p(pil_riva_remove),
+	.remove = pil_riva_remove,
 	.driver = {
 		.name = "pil_riva",
 		.owner = THIS_MODULE,

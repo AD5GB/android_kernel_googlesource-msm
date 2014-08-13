@@ -12,7 +12,6 @@
 #define IOPRIO_PRIO_VALUE(class, data)	(((class) << IOPRIO_CLASS_SHIFT) | data)
 
 #define ioprio_valid(mask)	(IOPRIO_PRIO_CLASS((mask)) != IOPRIO_CLASS_NONE)
-#endif /* __KERNEL__ */
 
 /*
  * Fallback BE priority

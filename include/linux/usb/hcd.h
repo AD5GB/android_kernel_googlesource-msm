@@ -216,8 +216,7 @@ struct hc_driver {
 #define	HCD_MEMORY	0x0001		/* HC regs use memory (else I/O) */
 #define	HCD_LOCAL_MEM	0x0002		/* HC needs local memory */
 #define	HCD_SHARED	0x0004		/* Two (or more) usb_hcds share HW */
-#define	HCD_RT_OLD_ENUM	0x0008		/* HC supports short enumeration
-					   on root port */
+#define	HCD_OLD_ENUM	0x0008		/* HC supports short enumeration */
 #define	HCD_USB11	0x0010		/* USB 1.1 */
 #define	HCD_USB2	0x0020		/* USB 2.0 */
 #define	HCD_USB3	0x0040		/* USB 3.0 */
@@ -406,6 +405,14 @@ extern int usb_hcd_is_primary_hcd(struct usb_hcd *hcd);
 extern int usb_add_hcd(struct usb_hcd *hcd,
 		unsigned int irqnum, unsigned long irqflags);
 extern void usb_remove_hcd(struct usb_hcd *hcd);
+#else
+static inline int
+usb_add_hcd(struct usb_hcd *hcd, unsigned int irqnum, unsigned long irqflags)
+{
+	return 0;
+}
+static inline void usb_remove_hcd(struct usb_hcd *hcd) {}
+#endif
 extern int usb_hcd_find_raw_port_number(struct usb_hcd *hcd, int port1);
 #else
 static inline int

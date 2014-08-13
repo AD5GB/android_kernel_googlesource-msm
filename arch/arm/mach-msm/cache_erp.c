@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2014, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -17,13 +17,12 @@
 #include <linux/errno.h>
 #include <linux/proc_fs.h>
 #include <linux/cpu.h>
-#include <linux/seq_file.h>
 #include <linux/io.h>
-#include <linux/of_address.h>
 #include <mach/msm-krait-l2-accessors.h>
 #include <mach/msm_iomap.h>
-#include <soc/qcom/socinfo.h>
+#include <mach/socinfo.h>
 #include <asm/cputype.h>
+#include "acpuclock.h"
 
 #define CESR_DCTPE		BIT(0)
 #define CESR_DCDPE		BIT(1)
@@ -124,20 +123,11 @@ struct msm_l2_err_stats {
 	unsigned int mplxrexnok;
 };
 
-struct msm_erp_dump_region {
-	struct resource *res;
-	void __iomem *va;
-};
-
 static DEFINE_PER_CPU(struct msm_l1_err_stats, msm_l1_erp_stats);
 static struct msm_l2_err_stats msm_l2_erp_stats;
 
 static int l1_erp_irq, l2_erp_irq;
 static struct proc_dir_entry *procfs_entry;
-static int num_dump_regions;
-static struct msm_erp_dump_region *dump_regions;
-
-static void __iomem *msm_erp_log_base;
 
 #ifdef CONFIG_MSM_L1_ERR_LOG
 static struct proc_dir_entry *procfs_log_entry;
@@ -162,23 +152,25 @@ static inline unsigned int read_cesynr(void)
 	return cesynr;
 }
 
-static int cache_erp_show(struct seq_file *m, void *v)
+static int proc_read_status(char *page, char **start, off_t off, int count,
+			    int *eof, void *data)
 {
 	struct msm_l1_err_stats *l1_stats;
-	int cpu;
+	char *p = page;
+	int len, cpu, ret, bytes_left = PAGE_SIZE;
 
 	for_each_present_cpu(cpu) {
 		l1_stats = &per_cpu(msm_l1_erp_stats, cpu);
 
-		seq_printf(m,
-			"CPU %d:\n"
-			"\tD-cache tag parity errors:\t%u\n"
-			"\tD-cache data parity errors:\t%u\n"
-			"\tI-cache tag parity errors:\t%u\n"
-			"\tI-cache data parity errors:\t%u\n"
-			"\tD-cache timing errors:\t\t%u\n"
-			"\tI-cache timing errors:\t\t%u\n"
-			"\tTLB multi-hit errors:\t\t%u\n\n",
+		ret = snprintf(p, bytes_left,
+			"CPU %d:\n"	\
+			"\tD-cache tag parity errors:\t%u\n"	\
+			"\tD-cache data parity errors:\t%u\n"	\
+			"\tI-cache tag parity errors:\t%u\n"	\
+			"\tI-cache data parity errors:\t%u\n"	\
+			"\tD-cache timing errors:\t\t%u\n"	\
+			"\tI-cache timing errors:\t\t%u\n"	\
+			"\tTLB multi-hit errors:\t\t%u\n\n",	\
 			cpu,
 			l1_stats->dctpe,
 			l1_stats->dcdpe,
@@ -187,16 +179,18 @@ static int cache_erp_show(struct seq_file *m, void *v)
 			l1_stats->dcte,
 			l1_stats->icte,
 			l1_stats->tlbmh);
+		p += ret;
+		bytes_left -= ret;
 	}
 
-	seq_printf(m,
-			"L2 master port decode errors:\t\t%u\n"
-			"L2 master port slave errors:\t\t%u\n"
-			"L2 tag soft errors, single-bit:\t\t%u\n"
-			"L2 tag soft errors, double-bit:\t\t%u\n"
-			"L2 data soft errors, single-bit:\t%u\n"
-			"L2 data soft errors, double-bit:\t%u\n"
-			"L2 modified soft errors:\t\t%u\n"
+	p += snprintf(p, bytes_left,
+			"L2 master port decode errors:\t\t%u\n"	\
+			"L2 master port slave errors:\t\t%u\n"		\
+			"L2 tag soft errors, single-bit:\t\t%u\n"	\
+			"L2 tag soft errors, double-bit:\t\t%u\n"	\
+			"L2 data soft errors, single-bit:\t%u\n"	\
+			"L2 data soft errors, double-bit:\t%u\n"	\
+			"L2 modified soft errors:\t\t%u\n"		\
 			"L2 master port LDREX NOK errors:\t%u\n",
 			msm_l2_erp_stats.mpdcd,
 			msm_l2_erp_stats.mpslv,
@@ -207,73 +201,50 @@ static int cache_erp_show(struct seq_file *m, void *v)
 			msm_l2_erp_stats.mse,
 			msm_l2_erp_stats.mplxrexnok);
 
-	return 0;
-}
+	len = (p - page) - off;
+	if (len < 0)
+		len = 0;
 
-static int cache_erp_open(struct inode *inode, struct file *file)
-{
-	return single_open(file, cache_erp_show, NULL);
-}
+	*eof = (len <= count) ? 1 : 0;
+	*start = page + off;
 
-static const struct file_operations cache_erp_fops = {
-	.open		= cache_erp_open,
-	.read		= seq_read,
-	.llseek		= seq_lseek,
-	.release	= single_release,
-};
-
-static int msm_erp_dump_regions(void)
-{
-	int i = 0;
-	struct msm_erp_dump_region *r;
-
-	for (i = 0; i < num_dump_regions; i++) {
-		r = &dump_regions[i];
-
-		pr_alert("%s %pR:\n", r->res->name, r->res);
-		print_hex_dump(KERN_ALERT, "", DUMP_PREFIX_OFFSET, 32, 4, r->va,
-			       resource_size(r->res), 0);
-	}
-
-	return 0;
+	return len;
 }
 
 #ifdef CONFIG_MSM_L1_ERR_LOG
-static int cache_erp_log_show(struct seq_file *m, void *v)
+static int proc_read_log(char *page, char **start, off_t off, int count,
+	int *eof, void *data)
 {
-	int log_value;
+	char *p = page;
+	int len, log_value;
+	log_value = __raw_readl(MSM_IMEM_BASE + ERP_LOG_MAGIC_ADDR) ==
+			ERP_LOG_MAGIC ? 1 : 0;
 
-	log_value = __raw_readl(msm_erp_log_base) == ERP_LOG_MAGIC ? 1 : 0;
+	p += snprintf(p, PAGE_SIZE, "%d\n", log_value);
 
-	seq_printf(m, "%d\n", log_value);
+	len = (p - page) - off;
+	if (len < 0)
+		len = 0;
 
-	return 0;
+	*eof = (len <= count) ? 1 : 0;
+	*start = page + off;
+
+	return len;
 }
-
-static int cache_erp_log_open(struct inode *inode, struct file *file)
-{
-	return single_open(file, cache_erp_log_show, NULL);
-}
-
-static const struct file_operations cache_erp_log_fops = {
-	.open		= cache_erp_log_open,
-	.read		= seq_read,
-	.llseek		= seq_lseek,
-	.release	= single_release,
-};
 
 static void log_cpu_event(void)
 {
-	__raw_writel(ERP_LOG_MAGIC, msm_erp_log_base);
+	__raw_writel(ERP_LOG_MAGIC, MSM_IMEM_BASE + ERP_LOG_MAGIC_ADDR);
 	mb();
 }
 
 static int procfs_event_log_init(void)
 {
-	procfs_log_entry = proc_create("cpu/msm_erp_log", S_IRUGO, NULL,
-			&cache_erp_log_fops);
+	procfs_log_entry = create_proc_entry("cpu/msm_erp_log", S_IRUGO, NULL);
+
 	if (!procfs_log_entry)
 		return -ENODEV;
+	procfs_log_entry->read_proc = proc_read_log;
 	return 0;
 }
 
@@ -294,8 +265,8 @@ static irqreturn_t msm_l1_erp_irq(int irq, void *dev_id)
 	if (print_regs) {
 		pr_alert("L1 / TLB Error detected on CPU %d!\n", cpu);
 		pr_alert("\tCESR      = 0x%08x\n", cesr);
+		pr_alert("\tCPU speed = %lu\n", acpuclk_get_rate(cpu));
 		pr_alert("\tMIDR      = 0x%08x\n", read_cpuid_id());
-		msm_erp_dump_regions();
 	}
 
 	if (cesr & CESR_DCTPE) {
@@ -454,9 +425,6 @@ static irqreturn_t msm_l2_erp_irq(int irq, void *dev_id)
 	if (port_error && print_alert)
 		ERP_PORT_ERR("L2 master port error detected");
 
-	if (soft_error && print_alert)
-		msm_erp_dump_regions();
-
 	if (soft_error && !unrecoverable)
 		ERP_1BIT_ERR("L2 single-bit error detected");
 
@@ -496,64 +464,17 @@ static struct notifier_block cache_erp_cpu_notifier = {
 	.notifier_call = cache_erp_cpu_callback,
 };
 
-static int msm_erp_read_dump_regions(struct platform_device *pdev)
-{
-	int i;
-	struct device_node *np = pdev->dev.of_node;
-	struct resource *res;
-
-	num_dump_regions = of_property_count_strings(np, "reg-names");
-
-	if (num_dump_regions <= 0) {
-		num_dump_regions = 0;
-		return 0; /* Not an error - this is an optional property */
-	}
-
-	dump_regions = devm_kzalloc(&pdev->dev,
-				    sizeof(*dump_regions) * num_dump_regions,
-				    GFP_KERNEL);
-	if (!dump_regions)
-		return -ENOMEM;
-
-	for (i = 0; i < num_dump_regions; i++) {
-		res = platform_get_resource(pdev, IORESOURCE_MEM, i);
-		dump_regions[i].res = res;
-		dump_regions[i].va = devm_ioremap(&pdev->dev, res->start,
-						  resource_size(res));
-		if (!dump_regions[i].va)
-			return -ENOMEM;
-	}
-
-	return 0;
-}
-
 static int msm_cache_erp_probe(struct platform_device *pdev)
 {
 	struct resource *r;
-	struct device_node *np = pdev->dev.of_node;
-	struct device_node *imem_node;
 	int ret, cpu;
-
-	imem_node = of_parse_phandle(np, "qcom,msm-imem-phandle", 0);
-	if (!imem_node) {
-		pr_err("Could not get imem handle\n");
-		ret = -ENODEV;
-		goto fail;
-	}
-
-	msm_erp_log_base = of_iomap(imem_node, 0);
-	if (!msm_erp_log_base) {
-		pr_err("Failed to map imem region\n");
-		ret = -ENODEV;
-		goto fail;
-	}
 
 	r = platform_get_resource_byname(pdev, IORESOURCE_IRQ, "l1_irq");
 
 	if (!r) {
 		pr_err("Could not get L1 resource\n");
 		ret = -ENODEV;
-		goto fail_imem_map;
+		goto fail;
 	}
 
 	l1_erp_irq = r->start;
@@ -563,7 +484,7 @@ static int msm_cache_erp_probe(struct platform_device *pdev)
 
 	if (ret) {
 		pr_err("Failed to request the L1 cache error interrupt\n");
-		goto fail_imem_map;
+		goto fail;
 	}
 
 	r = platform_get_resource_byname(pdev, IORESOURCE_IRQ, "l2_irq");
@@ -582,8 +503,7 @@ static int msm_cache_erp_probe(struct platform_device *pdev)
 		goto fail_l1;
 	}
 
-	procfs_entry = proc_create("cpu/msm_cache_erp", S_IRUGO, NULL,
-			&cache_erp_fops);
+	procfs_entry = create_proc_entry("cpu/msm_cache_erp", S_IRUGO, NULL);
 
 	if (!procfs_entry) {
 		pr_err("Failed to create procfs node for cache error reporting\n");
@@ -591,16 +511,13 @@ static int msm_cache_erp_probe(struct platform_device *pdev)
 		goto fail_l2;
 	}
 
-	ret = msm_erp_read_dump_regions(pdev);
-
-	if (ret)
-		goto fail_l2;
-
 	get_online_cpus();
 	register_hotcpu_notifier(&cache_erp_cpu_notifier);
 	for_each_cpu(cpu, cpu_online_mask)
 		smp_call_function_single(cpu, enable_erp_irq_callback, NULL, 1);
 	put_online_cpus();
+
+	procfs_entry->read_proc = proc_read_status;
 
 	ret = procfs_event_log_init();
 	if (ret)
@@ -612,8 +529,6 @@ fail_l2:
 	free_irq(l2_erp_irq, NULL);
 fail_l1:
 	free_percpu_irq(l1_erp_irq, NULL);
-fail_imem_map:
-	iounmap(msm_erp_log_base);
 fail:
 	return  ret;
 }

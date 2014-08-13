@@ -22,7 +22,6 @@
 #include <linux/cpufreq.h>
 #include <linux/cpu.h>
 #include <linux/regulator/consumer.h>
-#include <linux/iopoll.h>
 
 #include <asm/mach-types.h>
 #include <asm/cpu.h>
@@ -55,12 +54,8 @@ static unsigned long acpuclk_krait_get_rate(int cpu)
 	return drv.scalable[cpu].cur_speed->khz;
 }
 
-struct set_clk_src_args {
-	struct scalable *sc;
-	u32 src_sel;
-};
-
-static void __set_pri_clk_src(struct scalable *sc, u32 pri_src_sel)
+/* Select a source on the primary MUX. */
+static void set_pri_clk_src(struct scalable *sc, u32 pri_src_sel)
 {
 	u32 regval;
 
@@ -71,27 +66,6 @@ static void __set_pri_clk_src(struct scalable *sc, u32 pri_src_sel)
 	/* Wait for switch to complete. */
 	mb();
 	udelay(1);
-}
-
-static void __set_cpu_pri_clk_src(void *data)
-{
-	struct set_clk_src_args *args = data;
-	__set_pri_clk_src(args->sc, args->src_sel);
-}
-
-/* Select a source on the primary MUX. */
-static void set_pri_clk_src(struct scalable *sc, u32 pri_src_sel)
-{
-	int cpu = sc - drv.scalable;
-	if (sc != &drv.scalable[L2] && cpu_online(cpu)) {
-		struct set_clk_src_args args = {
-			.sc = sc,
-			.src_sel = pri_src_sel,
-		};
-		smp_call_function_single(cpu, __set_cpu_pri_clk_src, &args, 1);
-	} else {
-		__set_pri_clk_src(sc, pri_src_sel);
-	}
 }
 
 /* Select a source on the secondary MUX. */
@@ -157,14 +131,8 @@ static void hfpll_enable(struct scalable *sc, bool skip_regulators)
 	writel_relaxed(0x6, sc->hfpll_base + drv.hfpll_data->mode_offset);
 
 	/* Wait for PLL to lock. */
-	if (drv.hfpll_data->has_lock_status) {
-		u32 regval;
-		readl_tight_poll(sc->hfpll_base + drv.hfpll_data->status_offset,
-			   regval, regval & BIT(16));
-	} else {
-		mb();
-		udelay(60);
-	}
+	mb();
+	udelay(60);
 
 	/* Enable PLL output. */
 	writel_relaxed(0x7, sc->hfpll_base + drv.hfpll_data->mode_offset);

@@ -1949,12 +1949,6 @@ int qce_aead_req(void *handle, struct qce_req *q_req)
 	else
 		q_req->cryptlen = areq->cryptlen - authsize;
 
-	if ((q_req->cryptlen > ULONG_MAX - ivsize) ||
-		(q_req->cryptlen + ivsize > ULONG_MAX - areq->assoclen)) {
-		pr_err("Integer overflow on total aead req length.\n");
-		return -EINVAL;
-	}
-
 	totallen = q_req->cryptlen + ivsize + areq->assoclen;
 	pad_len = ALIGN(totallen, ADM_CE_BLOCK_SIZE) - totallen;
 
@@ -2208,18 +2202,6 @@ bad:
 	return rc;
 }
 EXPORT_SYMBOL(qce_process_sha_req);
-
-int qce_enable_clk(void *handle)
-{
-	return 0;
-}
-EXPORT_SYMBOL(qce_enable_clk);
-
-int qce_disable_clk(void *handle)
-{
-	return 0;
-}
-EXPORT_SYMBOL(qce_disable_clk);
 
 /*
  * crypto engine open function.

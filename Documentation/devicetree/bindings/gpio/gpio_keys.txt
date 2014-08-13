@@ -39,9 +39,6 @@ Example nodes:
 			#size-cells = <0>;
 			autorepeat;
 			input-name = "gpio-keys";
-			pinctrl-names = "tlmm_gpio_key_active","tlmm_gpio_key_suspend";
-			pinctrl-0 = <&gpio_key_active>;
-			pinctrl-1 = <&gpio_key_suspend>;
 			button@21 {
 				label = "GPIO Key UP";
 				linux,code = <103>;

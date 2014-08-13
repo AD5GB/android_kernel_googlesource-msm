@@ -86,6 +86,7 @@
 #include <mach/iommu_domains.h>
 
 #include <mach/kgsl.h>
+#include <linux/fmem.h>
 
 #include "timer.h"
 #include "devices.h"
@@ -97,6 +98,7 @@
 #include "rpm_resources.h"
 #include <mach/mpm.h>
 #include "clock.h"
+#include "smd_private.h"
 #include "pm-boot.h"
 #include "msm_watchdog.h"
 #include "platsmp.h"
@@ -193,6 +195,9 @@ static int __init msm_contig_mem_size_setup(char *p)
 early_param("msm_contig_mem_size", msm_contig_mem_size_setup);
 #endif
 
+struct fmem_platform_data msm8960_fmem_pdata = {
+};
+
 #define DSP_RAM_BASE_8960 0x8da00000
 #define DSP_RAM_SIZE_8960 0x1800000
 static int dspcrashd_pdata_8960 = 0xDEADDEAD;
@@ -231,7 +236,7 @@ static void __init reserve_rtb_memory(void)
 #endif
 }
 
-static int msm8960_paddr_to_memtype(phys_addr_t paddr)
+static int msm8960_paddr_to_memtype(unsigned int paddr)
 {
 	return MEMTYPE_EBI1;
 }
@@ -243,6 +248,8 @@ static int msm8960_paddr_to_memtype(phys_addr_t paddr)
 static struct ion_cp_heap_pdata cp_mm_msm8960_ion_pdata = {
 	.permission_type = IPT_TYPE_MM_CARVEOUT,
 	.align = SZ_64K,
+	.reusable = FMEM_ENABLED,
+	.mem_is_fmem = FMEM_ENABLED,
 	.fixed_position = FIXED_MIDDLE,
 	.iommu_map_all = 1,
 	.iommu_2x_map_domain = VIDEO_DOMAIN,
@@ -251,17 +258,21 @@ static struct ion_cp_heap_pdata cp_mm_msm8960_ion_pdata = {
 static struct ion_cp_heap_pdata cp_mfc_msm8960_ion_pdata = {
 	.permission_type = IPT_TYPE_MFC_SHAREDMEM,
 	.align = PAGE_SIZE,
+	.reusable = 0,
+	.mem_is_fmem = FMEM_ENABLED,
 	.fixed_position = FIXED_HIGH,
 };
 
 static struct ion_co_heap_pdata co_msm8960_ion_pdata = {
 	.adjacent_mem_id = INVALID_HEAP_ID,
 	.align = PAGE_SIZE,
+	.mem_is_fmem = 0,
 };
 
 static struct ion_co_heap_pdata fw_co_msm8960_ion_pdata = {
 	.adjacent_mem_id = ION_CP_MM_HEAP_ID,
 	.align = SZ_128K,
+	.mem_is_fmem = FMEM_ENABLED,
 	.fixed_position = FIXED_LOW,
 };
 #endif
@@ -384,6 +395,12 @@ static struct platform_device msm8960_ion_dev = {
 };
 #endif
 
+struct platform_device msm8960_fmem_device = {
+	.name = "fmem",
+	.id = 1,
+	.dev = { .platform_data = &msm8960_fmem_pdata },
+};
+
 static void __init adjust_mem_for_liquid(void)
 {
 	unsigned int i;
@@ -434,10 +451,15 @@ static void __init msm8960_reserve_fixed_area(unsigned long fixed_area_size)
 }
 
 /**
- * Reserve memory for ION. Also handle special case
+ * Reserve memory for ION and calculate amount of reusable memory for fmem.
+ * We only reserve memory for heaps that are not reusable. However, we only
+ * support one reusable heap at the moment so we ignore the reusable flag for
+ * other than the first heap with reusable flag set. Also handle special case
  * for video heaps (MM,FW, and MFC). Video requires heaps MM and MFC to be
  * at a higher address than FW in addition to not more than 256MB away from the
- * base address of the firmware. In addition the MM heap must be
+ * base address of the firmware. This means that if MM is reusable the other
+ * two heaps must be allocated in the same region as FW. This is handled by the
+ * mem_is_fmem flag in the platform data. In addition the MM heap must be
  * adjacent to the FW heap for content protection purposes.
  */
 static void __init reserve_ion_memory(void)
@@ -510,7 +532,7 @@ static void __init reserve_ion_memory(void)
 
 			if (fixed_position != NOT_FIXED)
 				fixed_size += heap->size;
-			else if (!use_cma)
+			else
 				reserve_mem_for_ion(MEMTYPE_EBI1, heap->size);
 
 			if (fixed_position == FIXED_LOW) {
@@ -1286,7 +1308,6 @@ static struct msm_tspp_platform_data tspp_platform_data = {
 	.gpios = tsif_gpios,
 	.tsif_pclk = "tsif_pclk",
 	.tsif_ref_clk = "tsif_ref_clk",
-	.tsif_vreg_present = 0,
 };
 
 static struct platform_device msm_device_tspp = {
@@ -1438,9 +1459,8 @@ static struct msm_otg_platform_data msm_otg_pdata = {
 #ifdef CONFIG_USB_EHCI_MSM_HSIC
 #define HSIC_HUB_RESET_GPIO	91
 static struct msm_hsic_host_platform_data msm_hsic_pdata = {
-	.strobe			= 150,
-	.data			= 151,
-	.phy_sof_workaround	= true,
+	.strobe		= 150,
+	.data		= 151,
 };
 
 static struct smsc_hub_platform_data hsic_hub_pdata = {
@@ -2406,7 +2426,7 @@ static struct platform_device battery_bcl_device = {
 };
 #endif
 
-static struct platform_device msm8960_device_ext_5v_vreg __devinitdata = {
+static struct platform_device msm8960_device_ext_5v_vreg = {
 	.name	= GPIO_REGULATOR_DEV_NAME,
 	.id	= PM8921_MPP_PM_TO_SYS(7),
 	.dev	= {
@@ -2414,7 +2434,7 @@ static struct platform_device msm8960_device_ext_5v_vreg __devinitdata = {
 	},
 };
 
-static struct platform_device msm8960_device_ext_l2_vreg __devinitdata = {
+static struct platform_device msm8960_device_ext_l2_vreg = {
 	.name	= GPIO_REGULATOR_DEV_NAME,
 	.id	= 91,
 	.dev	= {
@@ -2422,7 +2442,7 @@ static struct platform_device msm8960_device_ext_l2_vreg __devinitdata = {
 	},
 };
 
-static struct platform_device msm8960_device_ext_3p3v_vreg __devinitdata = {
+static struct platform_device msm8960_device_ext_3p3v_vreg = {
 	.name	= GPIO_REGULATOR_DEV_NAME,
 	.id	= PM8921_GPIO_PM_TO_SYS(17),
 	.dev	= {
@@ -2431,7 +2451,7 @@ static struct platform_device msm8960_device_ext_3p3v_vreg __devinitdata = {
 	},
 };
 
-static struct platform_device msm8960_device_ext_otg_sw_vreg __devinitdata = {
+static struct platform_device msm8960_device_ext_otg_sw_vreg = {
 	.name	= GPIO_REGULATOR_DEV_NAME,
 	.id	= PM8921_GPIO_PM_TO_SYS(42),
 	.dev	= {
@@ -2440,7 +2460,7 @@ static struct platform_device msm8960_device_ext_otg_sw_vreg __devinitdata = {
 	},
 };
 
-static struct platform_device msm8960_device_rpm_regulator __devinitdata = {
+static struct platform_device msm8960_device_rpm_regulator = {
 	.name	= "rpm-regulator",
 	.id	= -1,
 	.dev	= {
@@ -2708,6 +2728,7 @@ static struct platform_device *common_devices[] __initdata = {
 #ifdef CONFIG_BATTERY_BCL
 	&battery_bcl_device,
 #endif
+	&msm8960_fmem_device,
 	&msm_device_bam_dmux,
 	&msm_fm_platform_init,
 #if defined(CONFIG_TSIF) || defined(CONFIG_TSIF_MODULE)
@@ -3356,7 +3377,6 @@ MACHINE_START(MSM8960_CDP, "QCT MSM8960 CDP")
 	.map_io = msm8960_map_io,
 	.reserve = msm8960_reserve,
 	.init_irq = msm8960_init_irq,
-	.handle_irq = gic_handle_irq,
 	.timer = &msm_timer,
 	.init_machine = msm8960_cdp_init,
 	.init_early = msm8960_allocate_memory_regions,
@@ -3369,7 +3389,6 @@ MACHINE_START(MSM8960_MTP, "QCT MSM8960 MTP")
 	.map_io = msm8960_map_io,
 	.reserve = msm8960_reserve,
 	.init_irq = msm8960_init_irq,
-	.handle_irq = gic_handle_irq,
 	.timer = &msm_timer,
 	.init_machine = msm8960_cdp_init,
 	.init_early = msm8960_allocate_memory_regions,
@@ -3382,7 +3401,6 @@ MACHINE_START(MSM8960_FLUID, "QCT MSM8960 FLUID")
 	.map_io = msm8960_map_io,
 	.reserve = msm8960_reserve,
 	.init_irq = msm8960_init_irq,
-	.handle_irq = gic_handle_irq,
 	.timer = &msm_timer,
 	.init_machine = msm8960_cdp_init,
 	.init_early = msm8960_allocate_memory_regions,
@@ -3395,7 +3413,6 @@ MACHINE_START(MSM8960_LIQUID, "QCT MSM8960 LIQUID")
 	.map_io = msm8960_map_io,
 	.reserve = msm8960_reserve,
 	.init_irq = msm8960_init_irq,
-	.handle_irq = gic_handle_irq,
 	.timer = &msm_timer,
 	.init_machine = msm8960_cdp_init,
 	.init_early = msm8960_allocate_memory_regions,

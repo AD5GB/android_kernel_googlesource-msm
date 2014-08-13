@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2007 Google, Inc.
- * Copyright (c) 2009-2013, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2009-2012, The Linux Foundation. All rights reserved.
  * Author: Mike Lockwood <lockwood@android.com>
  *
  * This software is licensed under the terms of the GNU General Public
@@ -24,6 +24,7 @@
 
 #define FIRST_BOARD_GPIO	NR_GPIO_IRQS
 
+extern struct irq_chip msm_gpio_irq_extn;
 
 /**
  * struct msm_gpio - GPIO pin description
@@ -187,7 +188,6 @@ enum msm_tlmm_pull_tgt {
 	TLMM_PULL_SDC1_CLK,
 	TLMM_PULL_SDC1_CMD,
 	TLMM_PULL_SDC1_DATA,
-	TLMM_PULL_SDC1_RCLK,
 };
 
 #if defined(CONFIG_GPIO_MSM_V2) || defined(CONFIG_GPIO_MSM_V3)
@@ -226,6 +226,11 @@ static inline int msm_gpio_install_direct_irq(unsigned gpio, unsigned irq,
 {
 	return -ENOSYS;
 }
+#endif
+
+#ifdef CONFIG_OF
+int __init msm_gpio_of_init(struct device_node *node,
+			    struct device_node *parent);
 #endif
 
 #endif /* __ASM_ARCH_MSM_GPIO_H */

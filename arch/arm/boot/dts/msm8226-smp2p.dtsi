@@ -9,7 +9,7 @@
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
  */
-&soc {
+/ {
 	qcom,smp2p-modem {
 		compatible = "qcom,smp2p";
 		reg = <0xf9011008 0x4>;
@@ -148,29 +148,6 @@
 		gpios = <&smp2pgpio_smp2p_2_out 0 0>;
 	};
 
-	/* SMP2P SSR Driver for inbound entry from lpass. */
-	smp2pgpio_ssr_smp2p_2_in: qcom,smp2pgpio-ssr-smp2p-2-in {
-		compatible = "qcom,smp2pgpio";
-		qcom,entry-name = "slave-kernel";
-		qcom,remote-pid = <2>;
-		qcom,is-inbound;
-		gpio-controller;
-		#gpio-cells = <2>;
-		interrupt-controller;
-		#interrupt-cells = <2>;
-	};
-
-	/* SMP2P SSR Driver for outbound entry to lpass */
-	smp2pgpio_ssr_smp2p_2_out: qcom,smp2pgpio-ssr-smp2p-2-out {
-		compatible = "qcom,smp2pgpio";
-		qcom,entry-name = "master-kernel";
-		qcom,remote-pid = <2>;
-		gpio-controller;
-		#gpio-cells = <2>;
-		interrupt-controller;
-		#interrupt-cells = <2>;
-	};
-
 	smp2pgpio_smp2p_4_in: qcom,smp2pgpio-smp2p-4-in {
 		compatible = "qcom,smp2pgpio";
 		qcom,entry-name = "smp2p";
@@ -190,27 +167,6 @@
 	smp2pgpio_smp2p_4_out: qcom,smp2pgpio-smp2p-4-out {
 		compatible = "qcom,smp2pgpio";
 		qcom,entry-name = "smp2p";
-		qcom,remote-pid = <4>;
-		gpio-controller;
-		#gpio-cells = <2>;
-		interrupt-controller;
-		#interrupt-cells = <2>;
-	};
-
-	smp2pgpio_ssr_smp2p_4_in: qcom,smp2pgpio-ssr-smp2p-4-in {
-		compatible = "qcom,smp2pgpio";
-		qcom,entry-name = "slave-kernel";
-		qcom,remote-pid = <4>;
-		qcom,is-inbound;
-		gpio-controller;
-		#gpio-cells = <2>;
-		interrupt-controller;
-		#interrupt-cells = <2>;
-	};
-
-	smp2pgpio_ssr_smp2p_4_out: qcom,smp2pgpio-ssr-smp2p-4-out {
-		compatible = "qcom,smp2pgpio";
-		qcom,entry-name = "master-kernel";
 		qcom,remote-pid = <4>;
 		gpio-controller;
 		#gpio-cells = <2>;

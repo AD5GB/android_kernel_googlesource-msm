@@ -18,7 +18,11 @@
 
 #include <linux/export.h>
 #include <linux/kernel_stat.h>
-#include <linux/slab.h>
+#include <linux/mutex.h>
+#include <linux/tick.h>
+#include <linux/types.h>
+#include <linux/workqueue.h>
+#include <linux/input.h>
 
 #include "cpufreq_governor.h"
 
@@ -36,7 +40,11 @@ void dbs_check_cpu(struct dbs_data *dbs_data, int cpu)
 	struct od_dbs_tuners *od_tuners = dbs_data->tuners;
 	struct cs_dbs_tuners *cs_tuners = dbs_data->tuners;
 	struct cpufreq_policy *policy;
+	/* Extrapolated load of this CPU */
+	unsigned int load_at_max_freq = 0;
 	unsigned int max_load = 0;
+	/* Current load across this CPU */
+	unsigned int cur_load = 0;
 	unsigned int ignore_nice;
 	unsigned int j;
 
@@ -53,7 +61,8 @@ void dbs_check_cpu(struct dbs_data *dbs_data, int cpu)
 		u64 cur_wall_time, cur_idle_time;
 		unsigned int idle_time, wall_time;
 		unsigned int load;
-		int io_busy = 0;
+		struct od_cpu_dbs_info_s *od_j_dbs_info =
+			dbs_data->get_cpu_dbs_info_s(cpu);
 
 		j_cdbs = dbs_data->cdata->get_cpu_cdbs(j);
 
@@ -93,29 +102,62 @@ void dbs_check_cpu(struct dbs_data *dbs_data, int cpu)
 			idle_time += jiffies_to_usecs(cur_nice_jiffies);
 		}
 
+		if (dbs_data->governor == GOV_ONDEMAND) {
+			cur_iowait_time = get_cpu_iowait_time_us(j,
+					&cur_wall_time);
+			if (cur_iowait_time == -1ULL)
+				cur_iowait_time = 0;
+
+			iowait_time = (unsigned int) (cur_iowait_time -
+					od_j_dbs_info->prev_cpu_iowait);
+			od_j_dbs_info->prev_cpu_iowait = cur_iowait_time;
+
+			/*
+			 * For the purpose of ondemand, waiting for disk IO is
+			 * an indication that you're performance critical, and
+			 * not that the system is actually idle. So subtract the
+			 * iowait time from the cpu idle time.
+			 */
+			if (od_tuners->io_is_busy && idle_time >= iowait_time)
+				idle_time -= iowait_time;
+		}
+
 		if (unlikely(!wall_time || wall_time < idle_time))
 			continue;
 
-		load = 100 * (wall_time - idle_time) / wall_time;
+		cur_load = 100 * (wall_time - idle_time) / wall_time;
+		od_j_dbs_info->max_load  = max(cur_load,
+					       od_j_dbs_info->prev_load);
+		od_j_dbs_info->prev_load = cur_load;
+		if (dbs_data->governor == GOV_ONDEMAND) {
+			int freq_avg = __cpufreq_driver_getavg(policy, j);
+			if (freq_avg <= 0)
+				freq_avg = policy->cur;
+
+			cur_load *= freq_avg;
+		}
 
 		if (load > max_load)
 			max_load = load;
 	}
+	/* calculate the scaled load across CPU */
+	load_at_max_freq = (cur_load * policy->cur)/policy->cpuinfo.max_freq;
+
+	cpufreq_notify_utilization(policy, load_at_max_freq);
 
 	dbs_data->cdata->gov_check_cpu(cpu, max_load);
 }
 EXPORT_SYMBOL_GPL(dbs_check_cpu);
 
-static inline void __gov_queue_work(int cpu, struct dbs_data *dbs_data,
-		unsigned int delay)
+void dbs_timer_init(struct dbs_data *dbs_data, int cpu,
+				  unsigned int sampling_rate)
 {
 	struct cpu_dbs_common_info *cdbs = dbs_data->cdata->get_cpu_cdbs(cpu);
 
 	mod_delayed_work_on(cpu, system_wq, &cdbs->work, delay);
 }
 
-void gov_queue_work(struct dbs_data *dbs_data, struct cpufreq_policy *policy,
-		unsigned int delay, bool all_cpus)
+void dbs_timer_exit(struct dbs_data *dbs_data, int cpu)
 {
 	int i;
 
@@ -169,20 +211,29 @@ bool need_load_eval(struct cpu_dbs_common_info *cdbs,
 }
 EXPORT_SYMBOL_GPL(need_load_eval);
 
-static void set_sampling_rate(struct dbs_data *dbs_data,
-		unsigned int sampling_rate)
+int ondemand_powersave_bias_setspeed(struct cpufreq_policy *policy,
+				     struct cpufreq_policy *altpolicy,
+				     int level)
 {
-	if (dbs_data->cdata->governor == GOV_CONSERVATIVE) {
-		struct cs_dbs_tuners *cs_tuners = dbs_data->tuners;
-		cs_tuners->sampling_rate = sampling_rate;
-	} else {
-		struct od_dbs_tuners *od_tuners = dbs_data->tuners;
-		od_tuners->sampling_rate = sampling_rate;
+	if (level == POWERSAVE_BIAS_MAXLEVEL) {
+		/* maximum powersave; set to lowest frequency */
+		__cpufreq_driver_target(policy,
+			(altpolicy) ? altpolicy->min : policy->min,
+			CPUFREQ_RELATION_L);
+		return 1;
+	} else if (level == POWERSAVE_BIAS_MINLEVEL) {
+		/* minimum powersave; set to highest frequency */
+		__cpufreq_driver_target(policy,
+			(altpolicy) ? altpolicy->max : policy->max,
+			CPUFREQ_RELATION_H);
+		return 1;
 	}
+	return 0;
 }
 
-int cpufreq_governor_dbs(struct cpufreq_policy *policy,
-		struct common_dbs_data *cdata, unsigned int event)
+
+int cpufreq_governor_dbs(struct dbs_data *dbs_data,
+		struct cpufreq_policy *policy, unsigned int event)
 {
 	struct dbs_data *dbs_data;
 	struct od_cpu_dbs_info_s *od_dbs_info = NULL;
@@ -338,13 +389,36 @@ int cpufreq_governor_dbs(struct cpufreq_policy *policy,
 			od_ops->powersave_bias_init_cpu(cpu);
 		}
 
+		if (policy->governor->initialized)
+			goto unlock;
+
+		/* policy latency is in nS. Convert it to uS first */
+		latency = policy->cpuinfo.transition_latency / 1000;
+		if (latency == 0)
+			latency = 1;
+
+		/* Bring kernel and HW constraints together */
+		dbs_data->min_sampling_rate = max(dbs_data->min_sampling_rate,
+				MIN_LATENCY_MULTIPLIER * latency);
+		*sampling_rate = max(dbs_data->min_sampling_rate, latency *
+				LATENCY_MULTIPLIER);
+		if (od_tuners->optimal_freq == 0)
+			od_tuners->optimal_freq = policy->min;
+
+		if (od_tuners->sync_freq == 0)
+			od_tuners->sync_freq = policy->min;
+unlock:
+		if (dbs_data->governor != GOV_CONSERVATIVE && !cpu)
+			rc = input_register_handler(od_ops->input_handler);
 		mutex_unlock(&dbs_data->mutex);
 
 		/* Initiate timer time stamp */
 		cpu_cdbs->time_stamp = ktime_get();
 
-		gov_queue_work(dbs_data, policy,
-				delay_for_sampling_rate(sampling_rate), true);
+		if (!ondemand_powersave_bias_setspeed(cpu_cdbs->cur_policy,
+					NULL, od_tuners->powersave_bias))
+			for_each_cpu(j, policy->cpus)
+				dbs_timer_init(dbs_data, j, *sampling_rate);
 		break;
 
 	case CPUFREQ_GOV_STOP:
@@ -354,9 +428,21 @@ int cpufreq_governor_dbs(struct cpufreq_policy *policy,
 		gov_cancel_work(dbs_data, policy);
 
 		mutex_lock(&dbs_data->mutex);
-		mutex_destroy(&cpu_cdbs->timer_mutex);
-		cpu_cdbs->cur_policy = NULL;
 
+		if (policy->governor->initialized == 1) {
+			sysfs_remove_group(cpufreq_global_kobject,
+					dbs_data->attr_group);
+			if (dbs_data->governor == GOV_CONSERVATIVE)
+				cpufreq_unregister_notifier(cs_ops->notifier_block,
+						CPUFREQ_TRANSITION_NOTIFIER);
+		}
+		/*
+		 * If device is being removed, policy is no longer
+		 * valid.
+		 */
+		dbs_data->get_cpu_cdbs(cpu)->cur_policy = NULL;
+		if (dbs_data->governor != GOV_CONSERVATIVE && !cpu)
+			input_unregister_handler(od_ops->input_handler);
 		mutex_unlock(&dbs_data->mutex);
 
 		break;
@@ -369,6 +455,9 @@ int cpufreq_governor_dbs(struct cpufreq_policy *policy,
 		else if (policy->min > cpu_cdbs->cur_policy->cur)
 			__cpufreq_driver_target(cpu_cdbs->cur_policy,
 					policy->min, CPUFREQ_RELATION_L);
+		else if (od_tuners->powersave_bias != 0)
+			ondemand_powersave_bias_setspeed(cpu_cdbs->cur_policy,
+					policy, od_tuners->powersave_bias);
 		dbs_check_cpu(dbs_data, cpu);
 		mutex_unlock(&cpu_cdbs->timer_mutex);
 		break;

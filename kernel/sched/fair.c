@@ -3298,11 +3298,6 @@ static int select_idle_sibling(struct task_struct *p, int target)
 	    !(p->flags & PF_WAKE_UP_IDLE))
 		return target;
 
-	if (!sysctl_sched_wake_to_idle &&
-	    !(current->flags & PF_WAKE_UP_IDLE) &&
-	    !(p->flags & PF_WAKE_UP_IDLE))
-		return target;
-
 	/*
 	 * Otherwise, iterate the domains and find an elegible idle cpu.
 	 */

@@ -1,4 +1,4 @@
-/* Copyright (c) 2011, 2013-2014, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2011, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -19,9 +19,8 @@
 #include <linux/debugfs.h>
 #include <linux/bitops.h>
 #include <linux/termios.h>
-#include <linux/usb/usb_bridge.h>
-
-#include "usb_gadget_xport.h"
+#include <mach/usb_bridge.h>
+#include <mach/usb_gadget_xport.h>
 
 /* from cdc-acm.h */
 #define ACM_CTRL_RTS		(1 << 1)	/* unused with full duplex */
@@ -37,6 +36,12 @@
 
 static unsigned int	no_ctrl_ports;
 
+static const char	*ctrl_bridge_names[] = {
+	"dun_ctrl_hsic0",
+	"rmnet_ctrl_hsic0"
+};
+
+#define CTRL_BRIDGE_NAME_MAX_LEN	20
 #define READ_BUF_LEN			1024
 
 #define CH_OPENED 0
@@ -78,7 +83,6 @@ struct gctrl_port {
 static struct {
 	struct gctrl_port	*port;
 	struct platform_driver	pdrv;
-	char			port_name[BRIDGE_NAME_MAX_LEN];
 } gctrl_ports[NUM_PORTS];
 
 static int ghsic_ctrl_receive(void *dev, void *buf, size_t actual)
@@ -86,7 +90,7 @@ static int ghsic_ctrl_receive(void *dev, void *buf, size_t actual)
 	struct gctrl_port	*port = dev;
 	int retval = 0;
 
-	pr_debug_ratelimited("%s: read complete bytes read: %zu\n",
+	pr_debug_ratelimited("%s: read complete bytes read: %d\n",
 			__func__, actual);
 
 	/* send it to USB here */
@@ -115,11 +119,6 @@ ghsic_send_cpkt_tomodem(u8 portno, void *buf, size_t len)
 		return -ENODEV;
 	}
 
-	if (!len) {
-		pr_debug("%s: dropping 0 len command\n", __func__);
-		return 0;
-	}
-
 	cbuf = kmalloc(len, GFP_ATOMIC);
 	if (!cbuf)
 		return -ENOMEM;
@@ -133,7 +132,7 @@ ghsic_send_cpkt_tomodem(u8 portno, void *buf, size_t len)
 		return 0;
 	}
 
-	pr_debug("%s: ctrl_pkt:%zu bytes\n", __func__, len);
+	pr_debug("%s: ctrl_pkt:%d bytes\n", __func__, len);
 
 	ctrl_bridge_write(port->brdg.ch_id, cbuf, len);
 
@@ -184,7 +183,7 @@ static void ghsic_ctrl_connect_w(struct work_struct *w)
 	if (!port || !test_bit(CH_READY, &port->bridge_sts))
 		return;
 
-	pr_debug("%s: port:%p port type =%u\n", __func__, port, port->gtype);
+	pr_debug("%s: port:%p\n", __func__, port);
 
 	retval = ctrl_bridge_open(&port->brdg);
 	if (retval) {
@@ -199,10 +198,6 @@ static void ghsic_ctrl_connect_w(struct work_struct *w)
 		return;
 	}
 	set_bit(CH_OPENED, &port->bridge_sts);
-
-	if (port->cbits_tomodem)
-		ctrl_bridge_set_cbits(port->brdg.ch_id, port->cbits_tomodem);
-
 	spin_unlock_irqrestore(&port->port_lock, flags);
 
 	cbits = ctrl_bridge_get_cbits_tohost(port->brdg.ch_id);
@@ -341,35 +336,19 @@ static void ghsic_ctrl_status(void *ctxt, unsigned int ctrl_bits)
 		gser->send_modem_ctrl_bits(gser, ctrl_bits);
 }
 
-static int ghsic_ctrl_get_port_id(const char *pdev_name)
-{
-	struct gctrl_port	*port;
-	int			i;
-
-	for (i = 0; i < no_ctrl_ports; i++) {
-		port = gctrl_ports[i].port;
-		if (!strncmp(port->brdg.name, pdev_name, BRIDGE_NAME_MAX_LEN))
-			return i;
-	}
-
-	return -EINVAL;
-}
-
 static int ghsic_ctrl_probe(struct platform_device *pdev)
 {
 	struct gctrl_port	*port;
 	unsigned long		flags;
-	int			id;
 
 	pr_debug("%s: name:%s\n", __func__, pdev->name);
 
-	id = ghsic_ctrl_get_port_id(pdev->name);
-	if (id < 0 || id >= no_ctrl_ports) {
-		pr_err("%s: invalid port: %d\n", __func__, id);
+	if (pdev->id >= no_ctrl_ports) {
+		pr_err("%s: invalid port: %d\n", __func__, pdev->id);
 		return -EINVAL;
 	}
 
-	port = gctrl_ports[id].port;
+	port = gctrl_ports[pdev->id].port;
 	set_bit(CH_READY, &port->bridge_sts);
 
 	/* if usb is online, start read */
@@ -387,17 +366,15 @@ static int ghsic_ctrl_remove(struct platform_device *pdev)
 	struct gserial		*gser = NULL;
 	struct grmnet		*gr = NULL;
 	unsigned long		flags;
-	int			id;
 
 	pr_debug("%s: name:%s\n", __func__, pdev->name);
 
-	id = ghsic_ctrl_get_port_id(pdev->name);
-	if (id < 0 || id >= no_ctrl_ports) {
-		pr_err("%s: invalid port: %d\n", __func__, id);
+	if (pdev->id >= no_ctrl_ports) {
+		pr_err("%s: invalid port: %d\n", __func__, pdev->id);
 		return -EINVAL;
 	}
 
-	port = gctrl_ports[id].port;
+	port = gctrl_ports[pdev->id].port;
 
 	spin_lock_irqsave(&port->port_lock, flags);
 	if (!port->port_usb) {
@@ -444,17 +421,15 @@ static int gctrl_port_alloc(int portno, enum gadget_type gtype)
 {
 	struct gctrl_port	*port;
 	struct platform_driver	*pdrv;
-	char			*name;
 
 	port = kzalloc(sizeof(struct gctrl_port), GFP_KERNEL);
 	if (!port)
 		return -ENOMEM;
 
-	name = gctrl_ports[portno].port_name;
-
-	port->wq = create_singlethread_workqueue(name);
+	port->wq = create_singlethread_workqueue(ctrl_bridge_names[portno]);
 	if (!port->wq) {
-		pr_err("%s: Unable to create workqueue:%s\n", __func__, name);
+		pr_err("%s: Unable to create workqueue:%s\n",
+			__func__, ctrl_bridge_names[portno]);
 		return -ENOMEM;
 	}
 
@@ -466,7 +441,7 @@ static int gctrl_port_alloc(int portno, enum gadget_type gtype)
 	INIT_WORK(&port->connect_w, ghsic_ctrl_connect_w);
 	INIT_WORK(&port->disconnect_w, gctrl_disconnect_w);
 
-	port->brdg.name = name;
+	port->brdg.ch_id = portno;
 	port->brdg.ctx = port;
 	port->brdg.ops.send_pkt = ghsic_ctrl_receive;
 	if (port->gtype == USB_GADGET_SERIAL)
@@ -476,7 +451,7 @@ static int gctrl_port_alloc(int portno, enum gadget_type gtype)
 	pdrv = &gctrl_ports[portno].pdrv;
 	pdrv->probe = ghsic_ctrl_probe;
 	pdrv->remove = ghsic_ctrl_remove;
-	pdrv->driver.name = name;
+	pdrv->driver.name = ctrl_bridge_names[portno];
 	pdrv->driver.owner = THIS_MODULE;
 
 	platform_driver_register(pdrv);
@@ -484,31 +459,6 @@ static int gctrl_port_alloc(int portno, enum gadget_type gtype)
 	pr_debug("%s: port:%p portno:%d\n", __func__, port, portno);
 
 	return 0;
-}
-
-/*portname will be used to find the bridge channel index*/
-void ghsic_ctrl_set_port_name(const char *name, const char *xport_type)
-{
-	static unsigned int port_num;
-
-	if (port_num >= NUM_PORTS) {
-		pr_err("%s: setting xport name for invalid port num %d\n",
-				__func__, port_num);
-		return;
-	}
-
-	/*if no xport name is passed set it to xport type e.g. hsic*/
-	if (!name)
-		strlcpy(gctrl_ports[port_num].port_name, xport_type,
-				BRIDGE_NAME_MAX_LEN);
-	else
-		strlcpy(gctrl_ports[port_num].port_name, name,
-				BRIDGE_NAME_MAX_LEN);
-
-	/*append _ctrl to get ctrl bridge name e.g. serial_hsic_ctrl*/
-	strlcat(gctrl_ports[port_num].port_name, "_ctrl", BRIDGE_NAME_MAX_LEN);
-
-	port_num++;
 }
 
 int ghsic_ctrl_setup(unsigned int num_ports, enum gadget_type gtype)

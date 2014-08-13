@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2014, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2013, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -18,52 +18,39 @@
 #include <linux/atomic.h>
 #include <linux/wait.h>
 
+#include <mach/qdsp6v2/rtac.h>
+
 #include <sound/apr_audio-v2.h>
-#include <linux/qdsp6v2/apr.h>
+#include <mach/qdsp6v2/apr.h>
 #include <sound/q6adm-v2.h>
 #include <sound/q6audio-v2.h>
 #include <sound/q6afe-v2.h>
 
 #include "audio_acdb.h"
 
+
 #define TIMEOUT_MS 1000
 
 #define RESET_COPP_ID 99
 #define INVALID_COPP_ID 0xFF
-/* Used for inband payload copy, max size is 4k */
-/* 2 is to account for module & param ID in payload */
-#define ADM_GET_PARAMETER_LENGTH  (4096 - APR_HDR_SIZE - 2 * sizeof(uint32_t))
-
-#define ULL_SUPPORTED_SAMPLE_RATE 48000
-
-enum {
-	ADM_RX_AUDPROC_CAL,
-	ADM_TX_AUDPROC_CAL,
-	ADM_RX_AUDVOL_CAL,
-	ADM_TX_AUDVOL_CAL,
-	ADM_CUSTOM_TOP_CAL,
-	ADM_RTAC,
-	ADM_MAX_CAL_TYPES
-};
 
 struct adm_ctl {
 	void *apr;
 	atomic_t copp_id[AFE_MAX_PORTS];
 	atomic_t copp_cnt[AFE_MAX_PORTS];
-	atomic_t copp_low_latency_id[AFE_MAX_PORTS];
-	atomic_t copp_low_latency_cnt[AFE_MAX_PORTS];
-	atomic_t copp_perf_mode[AFE_MAX_PORTS];
 	atomic_t copp_stat[AFE_MAX_PORTS];
 	wait_queue_head_t wait[AFE_MAX_PORTS];
 
 	struct acdb_cal_block mem_addr_audproc[MAX_AUDPROC_TYPES];
 	struct acdb_cal_block mem_addr_audvol[MAX_AUDPROC_TYPES];
 
-	atomic_t mem_map_cal_handles[ADM_MAX_CAL_TYPES];
+/* 0 - (MAX_AUDPROC_TYPES -1):				audproc handles */
+/* (MAX_AUDPROC_TYPES -1) - (2 * MAX_AUDPROC_TYPES -1):	audvol handles */
+/* + 1 for custom ADM topology */
+	atomic_t mem_map_cal_handles[(2 * MAX_AUDPROC_TYPES) + 1];
 	atomic_t mem_map_cal_index;
 
 	int set_custom_topology;
-	int ec_ref_rx;
 };
 
 static struct adm_ctl			this_adm;
@@ -76,8 +63,6 @@ struct adm_multi_ch_map {
 static struct adm_multi_ch_map multi_ch_map = { false,
 						{0, 0, 0, 0, 0, 0, 0, 0}
 					      };
-
-static int adm_get_parameters[ADM_GET_PARAMETER_LENGTH];
 
 int srs_trumedia_open(int port_id, int srs_tech_id, void *srs_params)
 {
@@ -92,11 +77,6 @@ int srs_trumedia_open(int port_id, int srs_tech_id, void *srs_params)
 		sz = sizeof(struct adm_cmd_set_pp_params_inband_v5) +
 			sizeof(struct srs_trumedia_params_GLOBAL);
 		adm_params = kzalloc(sz, GFP_KERNEL);
-		if (!adm_params) {
-			pr_err("%s, adm params memory alloc failed\n",
-				__func__);
-			return -ENOMEM;
-		}
 		adm_params->payload_size =
 			sizeof(struct srs_trumedia_params_GLOBAL) +
 			sizeof(struct adm_param_data_v5);
@@ -121,11 +101,6 @@ int srs_trumedia_open(int port_id, int srs_tech_id, void *srs_params)
 		sz = sizeof(struct adm_cmd_set_pp_params_inband_v5) +
 			sizeof(struct srs_trumedia_params_WOWHD);
 		adm_params = kzalloc(sz, GFP_KERNEL);
-		if (!adm_params) {
-			pr_err("%s, adm params memory alloc failed\n",
-				__func__);
-			return -ENOMEM;
-		}
 		adm_params->payload_size =
 			sizeof(struct srs_trumedia_params_WOWHD) +
 			sizeof(struct adm_param_data_v5);
@@ -151,11 +126,6 @@ int srs_trumedia_open(int port_id, int srs_tech_id, void *srs_params)
 		sz = sizeof(struct adm_cmd_set_pp_params_inband_v5) +
 			sizeof(struct srs_trumedia_params_CSHP);
 		adm_params = kzalloc(sz, GFP_KERNEL);
-		if (!adm_params) {
-			pr_err("%s, adm params memory alloc failed\n",
-				__func__);
-			return -ENOMEM;
-		}
 		adm_params->payload_size =
 			sizeof(struct srs_trumedia_params_CSHP) +
 			sizeof(struct adm_param_data_v5);
@@ -180,11 +150,6 @@ int srs_trumedia_open(int port_id, int srs_tech_id, void *srs_params)
 		sz = sizeof(struct adm_cmd_set_pp_params_inband_v5) +
 			sizeof(struct srs_trumedia_params_HPF);
 		adm_params = kzalloc(sz, GFP_KERNEL);
-		if (!adm_params) {
-			pr_err("%s, adm params memory alloc failed\n",
-				__func__);
-			return -ENOMEM;
-		}
 		adm_params->payload_size =
 			sizeof(struct srs_trumedia_params_HPF) +
 			sizeof(struct adm_param_data_v5);
@@ -205,11 +170,6 @@ int srs_trumedia_open(int port_id, int srs_tech_id, void *srs_params)
 		sz = sizeof(struct adm_cmd_set_pp_params_inband_v5) +
 			sizeof(struct srs_trumedia_params_PEQ);
 		adm_params = kzalloc(sz, GFP_KERNEL);
-		if (!adm_params) {
-			pr_err("%s, adm params memory alloc failed\n",
-				__func__);
-			return -ENOMEM;
-		}
 		adm_params->payload_size =
 				sizeof(struct srs_trumedia_params_PEQ) +
 				sizeof(struct adm_param_data_v5);
@@ -232,11 +192,6 @@ int srs_trumedia_open(int port_id, int srs_tech_id, void *srs_params)
 		sz = sizeof(struct adm_cmd_set_pp_params_inband_v5) +
 			sizeof(struct srs_trumedia_params_HL);
 		adm_params = kzalloc(sz, GFP_KERNEL);
-		if (!adm_params) {
-			pr_err("%s, adm params memory alloc failed\n",
-				__func__);
-			return -ENOMEM;
-		}
 		adm_params->payload_size =
 			sizeof(struct srs_trumedia_params_HL) +
 			sizeof(struct adm_param_data_v5);
@@ -311,208 +266,6 @@ fail_cmd:
 	return ret;
 }
 
-int adm_set_stereo_to_custom_stereo(int port_id, unsigned int session_id,
-				    char *params, uint32_t params_length)
-{
-	struct adm_cmd_set_pspd_mtmx_strtr_params_v5 *adm_params = NULL;
-	int sz, rc = 0, index = afe_get_port_index(port_id);
-
-	pr_debug("%s\n", __func__);
-	if (index < 0 || index >= AFE_MAX_PORTS) {
-		pr_err("%s: invalid port idx %d port_id %#x\n", __func__, index,
-			port_id);
-		return -EINVAL;
-	}
-	sz = sizeof(struct adm_cmd_set_pspd_mtmx_strtr_params_v5) +
-		params_length;
-	adm_params = kzalloc(sz, GFP_KERNEL);
-	if (!adm_params) {
-		pr_err("%s, adm params memory alloc failed\n", __func__);
-		return -ENOMEM;
-	}
-
-	memcpy(((u8 *)adm_params +
-		sizeof(struct adm_cmd_set_pspd_mtmx_strtr_params_v5)),
-		params, params_length);
-	adm_params->hdr.hdr_field = APR_HDR_FIELD(APR_MSG_TYPE_SEQ_CMD,
-					APR_HDR_LEN(APR_HDR_SIZE), APR_PKT_VER);
-	adm_params->hdr.pkt_size = sz;
-	adm_params->hdr.src_svc = APR_SVC_ADM;
-	adm_params->hdr.src_domain = APR_DOMAIN_APPS;
-	adm_params->hdr.src_port = port_id;
-	adm_params->hdr.dest_svc = APR_SVC_ADM;
-	adm_params->hdr.dest_domain = APR_DOMAIN_ADSP;
-	adm_params->hdr.dest_port = atomic_read(&this_adm.copp_id[index]);
-	adm_params->hdr.token = port_id;
-	adm_params->hdr.opcode = ADM_CMD_SET_PSPD_MTMX_STRTR_PARAMS_V5;
-	adm_params->payload_addr_lsw = 0;
-	adm_params->payload_addr_msw = 0;
-	adm_params->mem_map_handle = 0;
-	adm_params->payload_size = params_length;
-	/* direction RX as 0 */
-	adm_params->direction = 0;
-	/* session id for this cmd to be applied on */
-	adm_params->sessionid = session_id;
-	/* valid COPP id for LPCM */
-	adm_params->deviceid = atomic_read(&this_adm.copp_id[index]);
-	adm_params->reserved = 0;
-	pr_debug("%s: deviceid %d, session_id %d, src_port %d, dest_port %d\n",
-		__func__, adm_params->deviceid, adm_params->sessionid,
-		adm_params->hdr.src_port, adm_params->hdr.dest_port);
-	atomic_set(&this_adm.copp_stat[index], 0);
-	rc = apr_send_pkt(this_adm.apr, (uint32_t *)adm_params);
-	if (rc < 0) {
-		pr_err("%s: Set params failed port = %#x\n",
-			__func__, port_id);
-		rc = -EINVAL;
-		goto set_stereo_to_custom_stereo_return;
-	}
-	/* Wait for the callback */
-	rc = wait_event_timeout(this_adm.wait[index],
-		atomic_read(&this_adm.copp_stat[index]),
-		msecs_to_jiffies(TIMEOUT_MS));
-	if (!rc) {
-		pr_err("%s: Set params timed out port = %#x\n", __func__,
-			port_id);
-		rc = -EINVAL;
-		goto set_stereo_to_custom_stereo_return;
-	}
-	rc = 0;
-set_stereo_to_custom_stereo_return:
-	kfree(adm_params);
-	return rc;
-}
-
-int adm_dolby_dap_send_params(int port_id, char *params, uint32_t params_length)
-{
-	struct adm_cmd_set_pp_params_v5	*adm_params = NULL;
-	int sz, rc = 0, index = afe_get_port_index(port_id);
-
-	pr_debug("%s\n", __func__);
-	if (index < 0 || index >= AFE_MAX_PORTS) {
-		pr_err("%s: invalid port idx %d portid %#x\n",
-			__func__, index, port_id);
-		return -EINVAL;
-	}
-	sz = sizeof(struct adm_cmd_set_pp_params_v5) + params_length;
-	adm_params = kzalloc(sz, GFP_KERNEL);
-	if (!adm_params) {
-		pr_err("%s, adm params memory alloc failed", __func__);
-		return -ENOMEM;
-	}
-
-	memcpy(((u8 *)adm_params + sizeof(struct adm_cmd_set_pp_params_v5)),
-			params, params_length);
-	adm_params->hdr.hdr_field = APR_HDR_FIELD(APR_MSG_TYPE_SEQ_CMD,
-				APR_HDR_LEN(APR_HDR_SIZE), APR_PKT_VER);
-	adm_params->hdr.pkt_size = sz;
-	adm_params->hdr.src_svc = APR_SVC_ADM;
-	adm_params->hdr.src_domain = APR_DOMAIN_APPS;
-	adm_params->hdr.src_port = port_id;
-	adm_params->hdr.dest_svc = APR_SVC_ADM;
-	adm_params->hdr.dest_domain = APR_DOMAIN_ADSP;
-	adm_params->hdr.dest_port = atomic_read(&this_adm.copp_id[index]);
-	adm_params->hdr.token = port_id;
-	adm_params->hdr.opcode = ADM_CMD_SET_PP_PARAMS_V5;
-	adm_params->payload_addr_lsw = 0;
-	adm_params->payload_addr_msw = 0;
-	adm_params->mem_map_handle = 0;
-	adm_params->payload_size = params_length;
-
-	atomic_set(&this_adm.copp_stat[index], 0);
-	rc = apr_send_pkt(this_adm.apr, (uint32_t *)adm_params);
-	if (rc < 0) {
-		pr_err("%s: Set params failed port = %#x\n",
-			__func__, port_id);
-		rc = -EINVAL;
-		goto dolby_dap_send_param_return;
-	}
-	/* Wait for the callback */
-	rc = wait_event_timeout(this_adm.wait[index],
-		atomic_read(&this_adm.copp_stat[index]),
-		msecs_to_jiffies(TIMEOUT_MS));
-	if (!rc) {
-		pr_err("%s: Set params timed out port = %#x\n",
-			 __func__, port_id);
-		rc = -EINVAL;
-		goto dolby_dap_send_param_return;
-	}
-	rc = 0;
-dolby_dap_send_param_return:
-	kfree(adm_params);
-	return rc;
-}
-
-int adm_get_params(int port_id, uint32_t module_id, uint32_t param_id,
-		uint32_t params_length, char *params)
-{
-	struct adm_cmd_get_pp_params_v5 *adm_params = NULL;
-	int sz, rc = 0, i = 0, index = afe_get_port_index(port_id);
-	int *params_data = (int *)params;
-
-	if (index < 0 || index >= AFE_MAX_PORTS) {
-		pr_err("%s: invalid port idx %d portid %#x\n",
-			__func__, index, port_id);
-		return -EINVAL;
-	}
-	sz = sizeof(struct adm_cmd_get_pp_params_v5) + params_length;
-	adm_params = kzalloc(sz, GFP_KERNEL);
-	if (!adm_params) {
-		pr_err("%s, adm params memory alloc failed", __func__);
-		return -ENOMEM;
-	}
-
-	memcpy(((u8 *)adm_params + sizeof(struct adm_cmd_get_pp_params_v5)),
-		params, params_length);
-	adm_params->hdr.hdr_field = APR_HDR_FIELD(APR_MSG_TYPE_SEQ_CMD,
-	APR_HDR_LEN(APR_HDR_SIZE), APR_PKT_VER);
-	adm_params->hdr.pkt_size = sz;
-	adm_params->hdr.src_svc = APR_SVC_ADM;
-	adm_params->hdr.src_domain = APR_DOMAIN_APPS;
-	adm_params->hdr.src_port = port_id;
-	adm_params->hdr.dest_svc = APR_SVC_ADM;
-	adm_params->hdr.dest_domain = APR_DOMAIN_ADSP;
-	adm_params->hdr.dest_port = atomic_read(&this_adm.copp_id[index]);
-	adm_params->hdr.token = port_id;
-	adm_params->hdr.opcode = ADM_CMD_GET_PP_PARAMS_V5;
-	adm_params->data_payload_addr_lsw = 0;
-	adm_params->data_payload_addr_msw = 0;
-	adm_params->mem_map_handle = 0;
-	adm_params->module_id = module_id;
-	adm_params->param_id = param_id;
-	adm_params->param_max_size = params_length;
-	adm_params->reserved = 0;
-
-	atomic_set(&this_adm.copp_stat[index], 0);
-	rc = apr_send_pkt(this_adm.apr, (uint32_t *)adm_params);
-	if (rc < 0) {
-		pr_err("%s: Failed to Get Params on port %d\n", __func__,
-			port_id);
-		rc = -EINVAL;
-		goto adm_get_param_return;
-	}
-	/* Wait for the callback with copp id */
-	rc = wait_event_timeout(this_adm.wait[index],
-	atomic_read(&this_adm.copp_stat[index]),
-		msecs_to_jiffies(TIMEOUT_MS));
-	if (!rc) {
-		pr_err("%s: get params timed out port = %d\n", __func__,
-			port_id);
-		rc = -EINVAL;
-		goto adm_get_param_return;
-	}
-	if (params_data) {
-		for (i = 0; i < adm_get_parameters[0]; i++)
-			params_data[i] = adm_get_parameters[1+i];
-	}
-	rc = 0;
-adm_get_param_return:
-	kfree(adm_params);
-
-	return rc;
-}
-
-
 static void adm_callback_debug_print(struct apr_client_data *data)
 {
 	uint32_t *payload;
@@ -550,12 +303,6 @@ static int32_t adm_callback(struct apr_client_data *data, void *priv)
 {
 	uint32_t *payload;
 	int i, index;
-
-	if (data == NULL) {
-		pr_err("%s: data paramter is null\n", __func__);
-		return -EINVAL;
-	}
-
 	payload = data->payload;
 
 	if (data->opcode == RESET_EVENTS) {
@@ -567,21 +314,12 @@ static int32_t adm_callback(struct apr_client_data *data, void *priv)
 			for (i = 0; i < AFE_MAX_PORTS; i++) {
 				atomic_set(&this_adm.copp_id[i],
 							RESET_COPP_ID);
-				atomic_set(&this_adm.copp_low_latency_id[i],
-							RESET_COPP_ID);
 				atomic_set(&this_adm.copp_cnt[i], 0);
-				atomic_set(&this_adm.copp_low_latency_cnt[i],
-						0);
-				atomic_set(&this_adm.copp_perf_mode[i], 0);
 				atomic_set(&this_adm.copp_stat[i], 0);
 			}
 			this_adm.apr = NULL;
 			reset_custom_topology_flags();
 			this_adm.set_custom_topology = 1;
-			for (i = 0; i < ADM_MAX_CAL_TYPES; i++)
-				atomic_set(&this_adm.mem_map_cal_handles[i],
-					0);
-			rtac_clear_mapping(ADM_RTAC_CAL);
 		}
 		pr_debug("Resetting calibration blocks");
 		for (i = 0; i < MAX_AUDPROC_TYPES; i++) {
@@ -635,11 +373,11 @@ static int32_t adm_callback(struct apr_client_data *data, void *priv)
 				/* Should only come here if there is an APR */
 				/* error or malformed APR packet. Otherwise */
 				/* response will be returned as */
+				/* ADM_CMDRSP_SHARED_MEM_MAP_REGIONS */
 				if (payload[1] != 0) {
 					pr_err("%s: ADM map error, resuming\n",
 						__func__);
-					atomic_set(&this_adm.copp_stat[index],
-							1);
+					atomic_set(&this_adm.copp_stat[0], 1);
 					wake_up(&this_adm.wait[index]);
 				}
 				break;
@@ -656,12 +394,6 @@ static int32_t adm_callback(struct apr_client_data *data, void *priv)
 					rtac_make_adm_callback(payload,
 						data->payload_size);
 				}
-				break;
-			case ADM_CMD_SET_PSPD_MTMX_STRTR_PARAMS_V5:
-				pr_debug("%s:ADM_CMD_SET_PSPD_MTMX_STRTR_PARAMS_V5\n",
-					__func__);
-				atomic_set(&this_adm.copp_stat[index], 1);
-				wake_up(&this_adm.wait[index]);
 				break;
 			default:
 				pr_err("%s: Unknown Cmd: 0x%x\n", __func__,
@@ -682,13 +414,7 @@ static int32_t adm_callback(struct apr_client_data *data, void *priv)
 				wake_up(&this_adm.wait[index]);
 				break;
 			}
-			if (atomic_read(&this_adm.copp_perf_mode[index])) {
-				atomic_set(&this_adm.copp_low_latency_id[index],
-						open->copp_id);
-			} else {
-				atomic_set(&this_adm.copp_id[index],
-					open->copp_id);
-			}
+			atomic_set(&this_adm.copp_id[index], open->copp_id);
 			atomic_set(&this_adm.copp_stat[index], 1);
 			pr_debug("%s: coppid rxed=%d\n", __func__,
 							open->copp_id);
@@ -700,20 +426,8 @@ static int32_t adm_callback(struct apr_client_data *data, void *priv)
 			if (payload[0] != 0)
 				pr_err("%s: ADM_CMDRSP_GET_PP_PARAMS_V5 returned error = 0x%x\n",
 					__func__, payload[0]);
-			if (rtac_make_adm_callback(payload,
-					data->payload_size))
-				break;
-
-			if (data->payload_size > (4 * sizeof(uint32_t))) {
-				adm_get_parameters[0] = payload[3];
-				pr_debug("GET_PP PARAM:received parameter length: %x\n",
-						adm_get_parameters[0]);
-				/* storing param size then params */
-				for (i = 0; i < payload[3]; i++)
-					adm_get_parameters[1+i] = payload[4+i];
-			}
-			atomic_set(&this_adm.copp_stat[index], 1);
-			wake_up(&this_adm.wait[index]);
+			rtac_make_adm_callback(payload,
+				data->payload_size);
 			break;
 		case ADM_CMDRSP_SHARED_MEM_MAP_REGIONS:
 			pr_debug("%s: ADM_CMDRSP_SHARED_MEM_MAP_REGIONS\n",
@@ -721,7 +435,7 @@ static int32_t adm_callback(struct apr_client_data *data, void *priv)
 			atomic_set(&this_adm.mem_map_cal_handles[
 				atomic_read(&this_adm.mem_map_cal_index)],
 				*payload);
-			atomic_set(&this_adm.copp_stat[index], 1);
+			atomic_set(&this_adm.copp_stat[0], 1);
 			wake_up(&this_adm.wait[index]);
 			break;
 		default:
@@ -743,8 +457,8 @@ void send_adm_custom_topology(int port_id)
 
 	get_adm_custom_topology(&cal_block);
 	if (cal_block.cal_size == 0) {
-		pr_debug("%s: no cal to send addr= 0x%pa\n",
-				__func__, &cal_block.cal_paddr);
+		pr_debug("%s: no cal to send addr= 0x%x\n",
+				__func__, cal_block.cal_paddr);
 		goto done;
 	}
 
@@ -757,16 +471,16 @@ void send_adm_custom_topology(int port_id)
 
 	if (this_adm.set_custom_topology) {
 		/* specific index 4 for adm topology memory */
-		atomic_set(&this_adm.mem_map_cal_index, ADM_CUSTOM_TOP_CAL);
+		atomic_set(&this_adm.mem_map_cal_index, 4);
 
 		/* Only call this once */
 		this_adm.set_custom_topology = 0;
 
-		result = adm_memory_map_regions(port_id,
-				&cal_block.cal_paddr, 0, &size, 1);
+		result = adm_memory_map_regions(port_id, &cal_block.cal_paddr,
+					0, &size, 1);
 		if (result < 0) {
-			pr_err("%s: mmap did not work! addr = 0x%pa, size = %zd\n",
-				__func__, &cal_block.cal_paddr,
+			pr_err("%s: mmap did not work! addr = 0x%x, size = %d\n",
+				__func__, cal_block.cal_paddr,
 			       cal_block.cal_size);
 			goto done;
 		}
@@ -785,10 +499,9 @@ void send_adm_custom_topology(int port_id)
 	adm_top.hdr.dest_port = atomic_read(&this_adm.copp_id[index]);
 	adm_top.hdr.token = port_id;
 	adm_top.hdr.opcode = ADM_CMD_ADD_TOPOLOGIES;
-	adm_top.payload_addr_lsw = lower_32_bits(cal_block.cal_paddr);
-	adm_top.payload_addr_msw = upper_32_bits(cal_block.cal_paddr);
-	adm_top.mem_map_handle =
-		atomic_read(&this_adm.mem_map_cal_handles[ADM_CUSTOM_TOP_CAL]);
+	adm_top.payload_addr_lsw = cal_block.cal_paddr;
+	adm_top.payload_addr_msw = 0;
+	adm_top.mem_map_handle = atomic_read(&this_adm.mem_map_cal_handles[4]);
 	adm_top.payload_size = cal_block.cal_size;
 
 	atomic_set(&this_adm.copp_stat[index], 0);
@@ -797,8 +510,8 @@ void send_adm_custom_topology(int port_id)
 		adm_top.payload_size);
 	result = apr_send_pkt(this_adm.apr, (uint32_t *)&adm_top);
 	if (result < 0) {
-		pr_err("%s: Set topologies failed port = 0x%x payload = 0x%pa\n",
-			__func__, port_id, &cal_block.cal_paddr);
+		pr_err("%s: Set topologies failed port = 0x%x payload = 0x%x\n",
+			__func__, port_id, cal_block.cal_paddr);
 		goto done;
 	}
 	/* Wait for the callback */
@@ -806,8 +519,8 @@ void send_adm_custom_topology(int port_id)
 		atomic_read(&this_adm.copp_stat[index]),
 		msecs_to_jiffies(TIMEOUT_MS));
 	if (!result) {
-		pr_err("%s: Set topologies timed out port = 0x%x, payload = 0x%pa\n",
-			__func__, port_id, &cal_block.cal_paddr);
+		pr_err("%s: Set topologies timed out port = 0x%x, payload = 0x%x\n",
+			__func__, port_id, cal_block.cal_paddr);
 		goto done;
 	}
 
@@ -815,8 +528,7 @@ done:
 	return;
 }
 
-static int send_adm_cal_block(int port_id, struct acdb_cal_block *aud_cal,
-			      int perf_mode)
+static int send_adm_cal_block(int port_id, struct acdb_cal_block *aud_cal)
 {
 	s32				result = 0;
 	struct adm_cmd_set_pp_params_v5	adm_params;
@@ -845,18 +557,11 @@ static int send_adm_cal_block(int port_id, struct acdb_cal_block *aud_cal,
 	adm_params.hdr.src_port = port_id;
 	adm_params.hdr.dest_svc = APR_SVC_ADM;
 	adm_params.hdr.dest_domain = APR_DOMAIN_ADSP;
-
-	if (perf_mode == LEGACY_PCM_MODE)
-		adm_params.hdr.dest_port =
-			atomic_read(&this_adm.copp_id[index]);
-	else
-		adm_params.hdr.dest_port =
-			atomic_read(&this_adm.copp_low_latency_id[index]);
-
+	adm_params.hdr.dest_port = atomic_read(&this_adm.copp_id[index]);
 	adm_params.hdr.token = port_id;
 	adm_params.hdr.opcode = ADM_CMD_SET_PP_PARAMS_V5;
-	adm_params.payload_addr_lsw = lower_32_bits(aud_cal->cal_paddr);
-	adm_params.payload_addr_msw = upper_32_bits(aud_cal->cal_paddr);
+	adm_params.payload_addr_lsw = aud_cal->cal_paddr;
+	adm_params.payload_addr_msw = 0;
 	adm_params.mem_map_handle = atomic_read(&this_adm.mem_map_cal_handles[
 				atomic_read(&this_adm.mem_map_cal_index)]);
 	adm_params.payload_size = aud_cal->cal_size;
@@ -867,8 +572,8 @@ static int send_adm_cal_block(int port_id, struct acdb_cal_block *aud_cal,
 		adm_params.payload_size);
 	result = apr_send_pkt(this_adm.apr, (uint32_t *)&adm_params);
 	if (result < 0) {
-		pr_err("%s: Set params failed port = %#x payload = 0x%pa\n",
-			__func__, port_id, &aud_cal->cal_paddr);
+		pr_err("%s: Set params failed port = %#x payload = 0x%x\n",
+			__func__, port_id, aud_cal->cal_paddr);
 		result = -EINVAL;
 		goto done;
 	}
@@ -877,8 +582,8 @@ static int send_adm_cal_block(int port_id, struct acdb_cal_block *aud_cal,
 		atomic_read(&this_adm.copp_stat[index]),
 		msecs_to_jiffies(TIMEOUT_MS));
 	if (!result) {
-		pr_err("%s: Set params timed out port = %#x, payload = 0x%pa\n",
-			__func__, port_id, &aud_cal->cal_paddr);
+		pr_err("%s: Set params timed out port = %#x, payload = 0x%x\n",
+			__func__, port_id, aud_cal->cal_paddr);
 		result = -EINVAL;
 		goto done;
 	}
@@ -888,20 +593,16 @@ done:
 	return result;
 }
 
-static void send_adm_cal(int port_id, int path, int perf_mode)
+static void send_adm_cal(int port_id, int path)
 {
 	int			result = 0;
 	s32			acdb_path;
 	struct acdb_cal_block	aud_cal;
-	int			size;
+	int			size = 4096;
 	pr_debug("%s\n", __func__);
 
 	/* Maps audio_dev_ctrl path definition to ACDB definition */
 	acdb_path = path - 1;
-	if (acdb_path == TX_CAL)
-		size = 4096 * 4;
-	else
-		size = 4096;
 
 	pr_debug("%s: Sending audproc cal\n", __func__);
 	get_audproc_cal(acdb_path, &aud_cal);
@@ -914,13 +615,15 @@ static void send_adm_cal(int port_id, int path, int perf_mode)
 		this_adm.mem_addr_audproc[acdb_path].cal_size)) {
 
 		if (this_adm.mem_addr_audproc[acdb_path].cal_paddr != 0)
-			adm_memory_unmap_regions(port_id);
+			adm_memory_unmap_regions(port_id,
+				&this_adm.mem_addr_audproc[acdb_path].
+				cal_paddr, &size, 1);
 
 		result = adm_memory_map_regions(port_id, &aud_cal.cal_paddr,
 						0, &size, 1);
 		if (result < 0) {
-			pr_err("ADM audproc mmap did not work! path = %d, addr = 0x%pa, size = %zd\n",
-				acdb_path, &aud_cal.cal_paddr,
+			pr_err("ADM audproc mmap did not work! path = %d, addr = 0x%x, size = %d\n",
+				acdb_path, aud_cal.cal_paddr,
 				aud_cal.cal_size);
 		} else {
 			this_adm.mem_addr_audproc[acdb_path].cal_paddr =
@@ -929,7 +632,7 @@ static void send_adm_cal(int port_id, int path, int perf_mode)
 		}
 	}
 
-	if (!send_adm_cal_block(port_id, &aud_cal, perf_mode))
+	if (!send_adm_cal_block(port_id, &aud_cal))
 		pr_debug("%s: Audproc cal sent for port id: %#x, path %d\n",
 			__func__, port_id, acdb_path);
 	else
@@ -948,13 +651,15 @@ static void send_adm_cal(int port_id, int path, int perf_mode)
 		this_adm.mem_addr_audvol[acdb_path].cal_size)) {
 
 		if (this_adm.mem_addr_audvol[acdb_path].cal_paddr != 0)
-			adm_memory_unmap_regions(port_id);
+			adm_memory_unmap_regions(port_id,
+				&this_adm.mem_addr_audvol[acdb_path].cal_paddr,
+				&size, 1);
 
 		result = adm_memory_map_regions(port_id, &aud_cal.cal_paddr,
 						0, &size, 1);
 		if (result < 0) {
-			pr_err("ADM audvol mmap did not work! path = %d, addr = 0x%pa, size = %zd\n",
-				acdb_path, &aud_cal.cal_paddr,
+			pr_err("ADM audvol mmap did not work! path = %d, addr = 0x%x, size = %d\n",
+				acdb_path, aud_cal.cal_paddr,
 				aud_cal.cal_size);
 		} else {
 			this_adm.mem_addr_audvol[acdb_path].cal_paddr =
@@ -963,139 +668,12 @@ static void send_adm_cal(int port_id, int path, int perf_mode)
 		}
 	}
 
-	if (!send_adm_cal_block(port_id, &aud_cal, perf_mode))
+	if (!send_adm_cal_block(port_id, &aud_cal))
 		pr_debug("%s: Audvol cal sent for port id: %#x, path %d\n",
 			__func__, port_id, acdb_path);
 	else
 		pr_debug("%s: Audvol cal not sent for port id: %#x, path %d\n",
 			__func__, port_id, acdb_path);
-}
-
-int adm_map_rtac_block(struct rtac_cal_block_data *cal_block)
-{
-	int	result = 0;
-	pr_debug("%s\n", __func__);
-
-	if (cal_block == NULL) {
-		pr_err("%s: cal_block is NULL!\n",
-			__func__);
-		result = -EINVAL;
-		goto done;
-	}
-
-	if (cal_block->cal_data.paddr == 0) {
-		pr_debug("%s: No address to map!\n",
-			__func__);
-		result = -EINVAL;
-		goto done;
-	}
-
-	if (cal_block->map_data.map_size == 0) {
-		pr_debug("%s: map size is 0!\n",
-			__func__);
-		result = -EINVAL;
-		goto done;
-	}
-
-	/* valid port ID needed for callback use primary I2S */
-	atomic_set(&this_adm.mem_map_cal_index, ADM_RTAC);
-	result = adm_memory_map_regions(PRIMARY_I2S_RX,
-			&cal_block->cal_data.paddr, 0,
-			&cal_block->map_data.map_size, 1);
-	if (result < 0) {
-		pr_err("%s: RTAC mmap did not work! addr = 0x%pa, size = %d\n",
-			__func__, &cal_block->cal_data.paddr,
-			cal_block->map_data.map_size);
-		goto done;
-	}
-
-	cal_block->map_data.map_handle = atomic_read(
-		&this_adm.mem_map_cal_handles[ADM_RTAC]);
-done:
-	return result;
-}
-
-int adm_unmap_rtac_block(uint32_t *mem_map_handle)
-{
-	int	result = 0;
-	pr_debug("%s\n", __func__);
-
-	if (mem_map_handle == NULL) {
-		pr_debug("%s: Map handle is NULL, nothing to unmap\n",
-			__func__);
-		goto done;
-	}
-
-	if (*mem_map_handle == 0) {
-		pr_debug("%s: Map handle is 0, nothing to unmap\n",
-			__func__);
-		goto done;
-	}
-
-	if (*mem_map_handle != atomic_read(
-			&this_adm.mem_map_cal_handles[ADM_RTAC])) {
-		pr_err("%s: Map handles do not match! Unmapping RTAC, RTAC map 0x%x, ADM map 0x%x\n",
-			__func__, *mem_map_handle, atomic_read(
-			&this_adm.mem_map_cal_handles[ADM_RTAC]));
-
-		/* if mismatch use handle passed in to unmap */
-		atomic_set(&this_adm.mem_map_cal_handles[ADM_RTAC],
-			   *mem_map_handle);
-	}
-
-	/* valid port ID needed for callback use primary I2S */
-	atomic_set(&this_adm.mem_map_cal_index, ADM_RTAC);
-	result = adm_memory_unmap_regions(PRIMARY_I2S_RX);
-	if (result < 0) {
-		pr_debug("%s: adm_memory_unmap_regions failed, error %d\n",
-			__func__, result);
-	} else {
-		atomic_set(&this_adm.mem_map_cal_handles[ADM_RTAC], 0);
-		*mem_map_handle = 0;
-	}
-done:
-	return result;
-}
-
-int adm_unmap_cal_blocks(void)
-{
-	int	i;
-	int	result = 0;
-	int	result2 = 0;
-
-	for (i = 0; i < ADM_MAX_CAL_TYPES; i++) {
-		if (atomic_read(&this_adm.mem_map_cal_handles[i]) != 0) {
-
-			if (i <= ADM_TX_AUDPROC_CAL) {
-				this_adm.mem_addr_audproc[i].cal_paddr = 0;
-				this_adm.mem_addr_audproc[i].cal_size = 0;
-			} else if (i <= ADM_TX_AUDVOL_CAL) {
-				this_adm.mem_addr_audvol
-					[(i - ADM_RX_AUDVOL_CAL)].cal_paddr
-					= 0;
-				this_adm.mem_addr_audvol
-					[(i - ADM_RX_AUDVOL_CAL)].cal_size
-					= 0;
-			} else if (i == ADM_CUSTOM_TOP_CAL) {
-				this_adm.set_custom_topology = 1;
-			} else {
-				continue;
-			}
-
-			/* valid port ID needed for callback use primary I2S */
-			atomic_set(&this_adm.mem_map_cal_index, i);
-			result2 = adm_memory_unmap_regions(PRIMARY_I2S_RX);
-			if (result2 < 0) {
-				pr_err("%s: adm_memory_unmap_regions failed, err %d\n",
-						__func__, result2);
-				result = result2;
-			} else {
-				atomic_set(&this_adm.mem_map_cal_handles[i],
-					0);
-			}
-		}
-	}
-	return result;
 }
 
 int adm_connect_afe_port(int mode, int session_id, int port_id)
@@ -1169,15 +747,15 @@ fail_cmd:
 }
 
 int adm_open(int port_id, int path, int rate, int channel_mode, int topology,
-			int perf_mode, uint16_t bits_per_sample)
+			bool perf_mode, uint16_t bits_per_sample)
 {
 	struct adm_cmd_device_open_v5	open;
 	int ret = 0;
 	int index;
 	int tmp_port = q6audio_get_port_id(port_id);
 
-	pr_debug("%s: port %#x path:%d rate:%d mode:%d perf_mode:%d\n",
-		 __func__, port_id, path, rate, channel_mode, perf_mode);
+	pr_debug("%s: port %#x path:%d rate:%d mode:%d\n", __func__,
+				port_id, path, rate, channel_mode);
 
 	port_id = q6audio_convert_virtual_to_portid(port_id);
 
@@ -1200,20 +778,11 @@ int adm_open(int port_id, int path, int rate, int channel_mode, int topology,
 		rtac_set_adm_handle(this_adm.apr);
 	}
 
-	if (perf_mode == LEGACY_PCM_MODE) {
-		atomic_set(&this_adm.copp_perf_mode[index], 0);
-		send_adm_custom_topology(port_id);
-	} else {
-		atomic_set(&this_adm.copp_perf_mode[index], 1);
-	}
+	send_adm_custom_topology(port_id);
 
 	/* Create a COPP if port id are not enabled */
-	if ((perf_mode == LEGACY_PCM_MODE &&
-		(atomic_read(&this_adm.copp_cnt[index]) == 0)) ||
-		(perf_mode != LEGACY_PCM_MODE &&
-		(atomic_read(&this_adm.copp_low_latency_cnt[index]) == 0))) {
-		pr_debug("%s:opening ADM: perf_mode: %d\n", __func__,
-			perf_mode);
+	if (atomic_read(&this_adm.copp_cnt[index]) == 0) {
+
 		open.hdr.hdr_field = APR_HDR_FIELD(APR_MSG_TYPE_SEQ_CMD,
 				APR_HDR_LEN(APR_HDR_SIZE), APR_PKT_VER);
 		open.hdr.pkt_size = sizeof(open);
@@ -1225,37 +794,36 @@ int adm_open(int port_id, int path, int rate, int channel_mode, int topology,
 		open.hdr.dest_port = tmp_port;
 		open.hdr.token = port_id;
 		open.hdr.opcode = ADM_CMD_DEVICE_OPEN_V5;
-		if (perf_mode == ULTRA_LOW_LATENCY_PCM_MODE)
-			open.flags = ADM_ULTRA_LOW_LATENCY_DEVICE_SESSION;
-		else if (perf_mode == LOW_LATENCY_PCM_MODE)
-			open.flags = ADM_LOW_LATENCY_DEVICE_SESSION;
-		else
-			open.flags = ADM_LEGACY_DEVICE_SESSION;
+		open.flags = 0x00;
+		if (perf_mode) {
+			open.flags |= ADM_LOW_LATENCY_DEVICE_SESSION <<
+				ADM_BIT_SHIFT_DEVICE_PERF_MODE_FLAG;
+		} else {
+			open.flags |= ADM_LEGACY_DEVICE_SESSION <<
+				ADM_BIT_SHIFT_DEVICE_PERF_MODE_FLAG;
+		}
 
 		open.mode_of_operation = path;
 		open.endpoint_id_1 = tmp_port;
+		open.endpoint_id_2 = 0xFFFF;
 
-		if (this_adm.ec_ref_rx == -1) {
-			open.endpoint_id_2 = 0xFFFF;
-		} else if (this_adm.ec_ref_rx && (path != 1)) {
-			open.endpoint_id_2 = this_adm.ec_ref_rx;
-			this_adm.ec_ref_rx = -1;
-		}
-
-		open.topology_id = topology;
-		if ((open.topology_id == VPM_TX_SM_ECNS_COPP_TOPOLOGY) ||
-			(open.topology_id == VPM_TX_DM_FLUENCE_COPP_TOPOLOGY))
+		/* convert path to acdb path */
+		if (path == ADM_PATH_PLAYBACK)
+			open.topology_id = get_adm_rx_topology();
+		else {
+			open.topology_id = get_adm_tx_topology();
+			if ((open.topology_id ==
+				VPM_TX_SM_ECNS_COPP_TOPOLOGY) ||
+			    (open.topology_id ==
+				VPM_TX_DM_FLUENCE_COPP_TOPOLOGY))
 				rate = 16000;
-
-		if (perf_mode == ULTRA_LOW_LATENCY_PCM_MODE) {
-			open.topology_id = NULL_COPP_TOPOLOGY;
-			rate = ULL_SUPPORTED_SAMPLE_RATE;
 		}
+
+		if (open.topology_id  == 0)
+			open.topology_id = topology;
 
 		open.dev_num_channel = channel_mode & 0x00FF;
 		open.bit_width = bits_per_sample;
-		WARN_ON(perf_mode == ULTRA_LOW_LATENCY_PCM_MODE &&
-							(rate != 48000));
 		open.sample_rate  = rate;
 		memset(open.dev_channel_mapping, 0, 8);
 
@@ -1266,8 +834,8 @@ int adm_open(int port_id, int path, int rate, int channel_mode, int topology,
 			open.dev_channel_mapping[1] = PCM_CHANNEL_FR;
 		} else if (channel_mode == 3)	{
 			open.dev_channel_mapping[0] = PCM_CHANNEL_FL;
-			open.dev_channel_mapping[1] = PCM_CHANNEL_FR;
-			open.dev_channel_mapping[2] = PCM_CHANNEL_FC;
+			open.dev_channel_mapping[0] = PCM_CHANNEL_FR;
+			open.dev_channel_mapping[1] = PCM_CHANNEL_FC;
 		} else if (channel_mode == 4) {
 			open.dev_channel_mapping[0] = PCM_CHANNEL_FL;
 			open.dev_channel_mapping[1] = PCM_CHANNEL_FR;
@@ -1284,8 +852,8 @@ int adm_open(int port_id, int path, int rate, int channel_mode, int topology,
 			open.dev_channel_mapping[1] = PCM_CHANNEL_FR;
 			open.dev_channel_mapping[2] = PCM_CHANNEL_LFE;
 			open.dev_channel_mapping[3] = PCM_CHANNEL_FC;
-			open.dev_channel_mapping[4] = PCM_CHANNEL_LS;
-			open.dev_channel_mapping[5] = PCM_CHANNEL_RS;
+			open.dev_channel_mapping[4] = PCM_CHANNEL_LB;
+			open.dev_channel_mapping[5] = PCM_CHANNEL_RB;
 		} else if (channel_mode == 8) {
 			open.dev_channel_mapping[0] = PCM_CHANNEL_FL;
 			open.dev_channel_mapping[1] = PCM_CHANNEL_FR;
@@ -1293,8 +861,8 @@ int adm_open(int port_id, int path, int rate, int channel_mode, int topology,
 			open.dev_channel_mapping[3] = PCM_CHANNEL_FC;
 			open.dev_channel_mapping[4] = PCM_CHANNEL_LB;
 			open.dev_channel_mapping[5] = PCM_CHANNEL_RB;
-			open.dev_channel_mapping[6] = PCM_CHANNEL_FLC;
-			open.dev_channel_mapping[7] = PCM_CHANNEL_FRC;
+			open.dev_channel_mapping[6] = PCM_CHANNEL_RLC;
+			open.dev_channel_mapping[7] = PCM_CHANNEL_RRC;
 		} else {
 			pr_err("%s invalid num_chan %d\n", __func__,
 					channel_mode);
@@ -1330,16 +898,7 @@ int adm_open(int port_id, int path, int rate, int channel_mode, int topology,
 			goto fail_cmd;
 		}
 	}
-	if (perf_mode == ULTRA_LOW_LATENCY_PCM_MODE ||
-			perf_mode == LOW_LATENCY_PCM_MODE) {
-		atomic_inc(&this_adm.copp_low_latency_cnt[index]);
-		pr_debug("%s: index: %d coppid: %d", __func__, index,
-			atomic_read(&this_adm.copp_low_latency_id[index]));
-	} else {
-		atomic_inc(&this_adm.copp_cnt[index]);
-		pr_debug("%s: index: %d coppid: %d", __func__, index,
-			atomic_read(&this_adm.copp_id[index]));
-	}
+	atomic_inc(&this_adm.copp_cnt[index]);
 	return 0;
 
 fail_cmd:
@@ -1348,7 +907,7 @@ fail_cmd:
 }
 
 int adm_multi_ch_copp_open(int port_id, int path, int rate, int channel_mode,
-			int topology, int perf_mode, uint16_t bits_per_sample)
+			int topology, bool perf_mode, uint16_t bits_per_sample)
 {
 	int ret = 0;
 
@@ -1359,7 +918,7 @@ int adm_multi_ch_copp_open(int port_id, int path, int rate, int channel_mode,
 }
 
 int adm_matrix_map(int session_id, int path, int num_copps,
-			unsigned int *port_id, int copp_id, int perf_mode)
+			unsigned int *port_id, int copp_id)
 {
 	struct adm_cmd_matrix_map_routings_v5	*route;
 	struct adm_session_map_node_v5 *node;
@@ -1398,13 +957,7 @@ int adm_matrix_map(int session_id, int path, int num_copps,
 	route->hdr.src_port = copp_id;
 	route->hdr.dest_svc = APR_SVC_ADM;
 	route->hdr.dest_domain = APR_DOMAIN_ADSP;
-	if (perf_mode == ULTRA_LOW_LATENCY_PCM_MODE ||
-			perf_mode == LOW_LATENCY_PCM_MODE) {
-		route->hdr.dest_port =
-			atomic_read(&this_adm.copp_low_latency_id[index]);
-	} else {
-		route->hdr.dest_port = atomic_read(&this_adm.copp_id[index]);
-	}
+	route->hdr.dest_port = atomic_read(&this_adm.copp_id[index]);
 	route->hdr.token = copp_id;
 	route->hdr.opcode = ADM_CMD_MATRIX_MAP_ROUTINGS_V5;
 	route->num_sessions = 1;
@@ -1436,19 +989,14 @@ int adm_matrix_map(int session_id, int path, int num_copps,
 		tmp = q6audio_get_port_index(port_id[i]);
 
 
-		if (tmp >= 0 && tmp < AFE_MAX_PORTS) {
-			if (perf_mode == ULTRA_LOW_LATENCY_PCM_MODE ||
-					perf_mode == LOW_LATENCY_PCM_MODE)
-				copps_list[i] =
-				atomic_read(&this_adm.copp_low_latency_id[tmp]);
-			else
-				copps_list[i] =
+		if (tmp >= 0 && tmp < AFE_MAX_PORTS)
+			copps_list[i] =
 					atomic_read(&this_adm.copp_id[tmp]);
-		}
 		else
 			continue;
 		pr_debug("%s: port_id[%#x]: %d, index: %d act coppid[0x%x]\n",
-			__func__, i, port_id[i], tmp, copps_list[i]);
+			__func__, i, port_id[i], tmp,
+			atomic_read(&this_adm.copp_id[tmp]));
 	}
 	atomic_set(&this_adm.copp_stat[index], 0);
 
@@ -1468,29 +1016,19 @@ int adm_matrix_map(int session_id, int path, int num_copps,
 		ret = -EINVAL;
 		goto fail_cmd;
 	}
+	for (i = 0; i < num_copps; i++)
+		send_adm_cal(port_id[i], path);
 
-	if (perf_mode != ULTRA_LOW_LATENCY_PCM_MODE) {
-		for (i = 0; i < num_copps; i++)
-			send_adm_cal(port_id[i], path, perf_mode);
-
-		for (i = 0; i < num_copps; i++) {
-			int tmp, copp_id;
-			tmp = afe_get_port_index(port_id[i]);
-			if (tmp >= 0 && tmp < AFE_MAX_PORTS) {
-				if (perf_mode == LEGACY_PCM_MODE)
-					copp_id = atomic_read(
-					&this_adm.copp_id[tmp]);
-				else
-					copp_id = atomic_read(
-					&this_adm.copp_low_latency_id[tmp]);
-				rtac_add_adm_device(port_id[i],
-						copp_id, path, session_id);
-				pr_debug("%s, copp_id: %d\n",
-							__func__, copp_id);
-			} else
-				pr_debug("%s: Invalid port index %d",
-							__func__, tmp);
-		}
+	for (i = 0; i < num_copps; i++) {
+		int tmp;
+		tmp = afe_get_port_index(port_id[i]);
+		if (tmp >= 0 && tmp < AFE_MAX_PORTS)
+			rtac_add_adm_device(port_id[i],
+				atomic_read(&this_adm.copp_id[tmp]),
+				path, session_id);
+		else
+			pr_debug("%s: Invalid port index %d",
+				__func__, tmp);
 	}
 
 fail_cmd:
@@ -1499,7 +1037,7 @@ fail_cmd:
 }
 
 int adm_memory_map_regions(int port_id,
-		phys_addr_t *buf_add, uint32_t mempool_id,
+		uint32_t *buf_add, uint32_t mempool_id,
 		uint32_t *bufsz, uint32_t bufcnt)
 {
 	struct  avs_cmd_shared_mem_map_regions *mmap_regions = NULL;
@@ -1561,13 +1099,13 @@ int adm_memory_map_regions(int port_id,
 	mregions = (struct avs_shared_map_region_payload *)payload;
 
 	for (i = 0; i < bufcnt; i++) {
-		mregions->shm_addr_lsw = lower_32_bits(buf_add[i]);
-		mregions->shm_addr_msw = upper_32_bits(buf_add[i]);
+		mregions->shm_addr_lsw = buf_add[i];
+		mregions->shm_addr_msw = 0x00;
 		mregions->mem_size_bytes = bufsz[i];
 		++mregions;
 	}
 
-	atomic_set(&this_adm.copp_stat[index], 0);
+	atomic_set(&this_adm.copp_stat[0], 0);
 	ret = apr_send_pkt(this_adm.apr, (uint32_t *) mmap_region_cmd);
 	if (ret < 0) {
 		pr_err("%s: mmap_regions op[0x%x]rc[%d]\n", __func__,
@@ -1577,7 +1115,7 @@ int adm_memory_map_regions(int port_id,
 	}
 
 	ret = wait_event_timeout(this_adm.wait[index],
-			atomic_read(&this_adm.copp_stat[index]), 5 * HZ);
+			atomic_read(&this_adm.copp_stat[0]), 5 * HZ);
 	if (!ret) {
 		pr_err("%s: timeout. waited for memory_map\n", __func__);
 		ret = -EINVAL;
@@ -1588,10 +1126,12 @@ fail_cmd:
 	return ret;
 }
 
-int adm_memory_unmap_regions(int32_t port_id)
+int adm_memory_unmap_regions(int32_t port_id, uint32_t *buf_add,
+			uint32_t *bufsz, uint32_t bufcnt)
 {
 	struct  avs_cmd_shared_mem_unmap_regions unmap_regions;
 	int     ret = 0;
+	int     cmd_size = 0;
 	int     index = 0;
 
 	pr_debug("%s\n", __func__);
@@ -1612,14 +1152,14 @@ int adm_memory_unmap_regions(int32_t port_id)
 	unmap_regions.hdr.hdr_field = APR_HDR_FIELD(APR_MSG_TYPE_SEQ_CMD,
 						APR_HDR_LEN(APR_HDR_SIZE),
 							APR_PKT_VER);
-	unmap_regions.hdr.pkt_size = sizeof(unmap_regions);
+	unmap_regions.hdr.pkt_size = cmd_size;
 	unmap_regions.hdr.src_port = 0;
 	unmap_regions.hdr.dest_port = atomic_read(&this_adm.copp_id[index]);
 	unmap_regions.hdr.token = port_id;
 	unmap_regions.hdr.opcode = ADM_CMD_SHARED_MEM_UNMAP_REGIONS;
 	unmap_regions.mem_map_handle = atomic_read(&this_adm.
 		mem_map_cal_handles[atomic_read(&this_adm.mem_map_cal_index)]);
-	atomic_set(&this_adm.copp_stat[index], 0);
+	atomic_set(&this_adm.copp_stat[0], 0);
 	ret = apr_send_pkt(this_adm.apr, (uint32_t *) &unmap_regions);
 	if (ret < 0) {
 		pr_err("%s: mmap_regions op[0x%x]rc[%d]\n", __func__,
@@ -1629,40 +1169,17 @@ int adm_memory_unmap_regions(int32_t port_id)
 	}
 
 	ret = wait_event_timeout(this_adm.wait[index],
-				 atomic_read(&this_adm.copp_stat[index]),
-				 5 * HZ);
+			atomic_read(&this_adm.copp_stat[0]), 5 * HZ);
 	if (!ret) {
-		pr_err("%s: timeout. waited for memory_unmap index %d\n",
-		       __func__, index);
+		pr_err("%s: timeout. waited for memory_unmap\n", __func__);
 		ret = -EINVAL;
 		goto fail_cmd;
-	} else {
-		pr_debug("%s: Unmap handle 0x%x succeeded\n", __func__,
-			 unmap_regions.mem_map_handle);
 	}
 fail_cmd:
 	return ret;
 }
 
-#ifdef CONFIG_RTAC
 int adm_get_copp_id(int port_index)
-{
-	int copp_id;
-	pr_debug("%s\n", __func__);
-
-	if (port_index < 0) {
-		pr_err("%s: invalid port_id = %d\n", __func__, port_index);
-		return -EINVAL;
-	}
-
-	copp_id = atomic_read(&this_adm.copp_id[port_index]);
-	if (copp_id == RESET_COPP_ID)
-		copp_id = atomic_read(
-			&this_adm.copp_low_latency_id[port_index]);
-	return copp_id;
-}
-
-int adm_get_lowlatency_copp_id(int port_index)
 {
 	pr_debug("%s\n", __func__);
 
@@ -1671,33 +1188,15 @@ int adm_get_lowlatency_copp_id(int port_index)
 		return -EINVAL;
 	}
 
-	return atomic_read(&this_adm.copp_low_latency_id[port_index]);
-}
-#else
-int adm_get_copp_id(int port_index)
-{
-	return -EINVAL;
+	return atomic_read(&this_adm.copp_id[port_index]);
 }
 
-int adm_get_lowlatency_copp_id(int port_index)
-{
-	return -EINVAL;
-}
-#endif /* #ifdef CONFIG_RTAC */
-
-void adm_ec_ref_rx_id(int port_id)
-{
-	this_adm.ec_ref_rx = port_id;
-	pr_debug("%s ec_ref_rx:%d", __func__, this_adm.ec_ref_rx);
-}
-
-int adm_close(int port_id, int perf_mode)
+int adm_close(int port_id)
 {
 	struct apr_hdr close;
 
 	int ret = 0;
 	int index = 0;
-	int copp_id = RESET_COPP_ID;
 
 	port_id = q6audio_convert_virtual_to_portid(port_id);
 
@@ -1705,32 +1204,16 @@ int adm_close(int port_id, int perf_mode)
 	if (q6audio_validate_port(port_id) < 0)
 		return -EINVAL;
 
-	pr_debug("%s port_id=%#x index %d perf_mode: %d\n", __func__, port_id,
-		index, perf_mode);
+	pr_debug("%s port_id=%#x index %d\n", __func__, port_id, index);
 
-	if (perf_mode == ULTRA_LOW_LATENCY_PCM_MODE ||
-				perf_mode == LOW_LATENCY_PCM_MODE) {
-		if (!(atomic_read(&this_adm.copp_low_latency_cnt[index]))) {
-			pr_err("%s: copp count for port[%#x]is 0\n", __func__,
-				port_id);
-			goto fail_cmd;
-		}
-		atomic_dec(&this_adm.copp_low_latency_cnt[index]);
-	} else {
-		if (!(atomic_read(&this_adm.copp_cnt[index]))) {
-			pr_err("%s: copp count for port[%#x]is 0\n", __func__,
-				port_id);
-			goto fail_cmd;
-		}
-		atomic_dec(&this_adm.copp_cnt[index]);
+	if (!(atomic_read(&this_adm.copp_cnt[index]))) {
+		pr_err("%s: copp count for port[%#x]is 0\n", __func__, port_id);
+
+		goto fail_cmd;
 	}
-	if ((perf_mode == LEGACY_PCM_MODE &&
-		!(atomic_read(&this_adm.copp_cnt[index]))) ||
-		((perf_mode != LEGACY_PCM_MODE) &&
-		!(atomic_read(&this_adm.copp_low_latency_cnt[index])))) {
+	atomic_dec(&this_adm.copp_cnt[index]);
+	if (!(atomic_read(&this_adm.copp_cnt[index]))) {
 
-		pr_debug("%s:Closing ADM: perf_mode: %d\n", __func__,
-				perf_mode);
 		close.hdr_field = APR_HDR_FIELD(APR_MSG_TYPE_SEQ_CMD,
 			APR_HDR_LEN(APR_HDR_SIZE), APR_PKT_VER);
 		close.pkt_size = sizeof(close);
@@ -1739,39 +1222,19 @@ int adm_close(int port_id, int perf_mode)
 		close.src_port = port_id;
 		close.dest_svc = APR_SVC_ADM;
 		close.dest_domain = APR_DOMAIN_ADSP;
-		if (perf_mode == ULTRA_LOW_LATENCY_PCM_MODE ||
-				perf_mode == LOW_LATENCY_PCM_MODE)
-			close.dest_port =
-			     atomic_read(&this_adm.copp_low_latency_id[index]);
-		else
-			close.dest_port = atomic_read(&this_adm.copp_id[index]);
+		close.dest_port = atomic_read(&this_adm.copp_id[index]);
 		close.token = port_id;
 		close.opcode = ADM_CMD_DEVICE_CLOSE_V5;
 
+		atomic_set(&this_adm.copp_id[index], RESET_COPP_ID);
 		atomic_set(&this_adm.copp_stat[index], 0);
 
-		if (perf_mode == ULTRA_LOW_LATENCY_PCM_MODE ||
-				perf_mode == LOW_LATENCY_PCM_MODE) {
-			copp_id = atomic_read(
-				&this_adm.copp_low_latency_id[index]);
-			pr_debug("%s:coppid %d portid=%#x index=%d coppcnt=%d\n",
+
+		pr_debug("%s:coppid %d portid=%#x index=%d coppcnt=%d\n",
 				__func__,
-				copp_id,
-				port_id, index,
-				atomic_read(
-					&this_adm.copp_low_latency_cnt[index]));
-			atomic_set(&this_adm.copp_low_latency_id[index],
-				RESET_COPP_ID);
-		} else {
-			copp_id = atomic_read(&this_adm.copp_id[index]);
-			pr_debug("%s:coppid %d portid=%#x index=%d coppcnt=%d\n",
-				__func__,
-				copp_id,
+				atomic_read(&this_adm.copp_id[index]),
 				port_id, index,
 				atomic_read(&this_adm.copp_cnt[index]));
-			atomic_set(&this_adm.copp_id[index],
-				RESET_COPP_ID);
-		}
 
 		ret = apr_send_pkt(this_adm.apr, (uint32_t *)&close);
 		if (ret < 0) {
@@ -1789,11 +1252,8 @@ int adm_close(int port_id, int perf_mode)
 			ret = -EINVAL;
 			goto fail_cmd;
 		}
-	}
 
-	if (perf_mode != ULTRA_LOW_LATENCY_PCM_MODE) {
-		pr_debug("%s: remove adm device from rtac\n", __func__);
-		rtac_remove_adm_device(port_id, copp_id);
+		rtac_remove_adm_device(port_id);
 	}
 
 fail_cmd:
@@ -1805,15 +1265,11 @@ static int __init adm_init(void)
 	int i = 0;
 	this_adm.apr = NULL;
 	this_adm.set_custom_topology = 1;
-	this_adm.ec_ref_rx = -1;
 
 	for (i = 0; i < AFE_MAX_PORTS; i++) {
 		atomic_set(&this_adm.copp_id[i], RESET_COPP_ID);
-		atomic_set(&this_adm.copp_low_latency_id[i], RESET_COPP_ID);
 		atomic_set(&this_adm.copp_cnt[i], 0);
-		atomic_set(&this_adm.copp_low_latency_cnt[i], 0);
 		atomic_set(&this_adm.copp_stat[i], 0);
-		atomic_set(&this_adm.copp_perf_mode[i], 0);
 		init_waitqueue_head(&this_adm.wait[i]);
 	}
 	return 0;

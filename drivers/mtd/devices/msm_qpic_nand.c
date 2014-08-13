@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2007 Google, Inc.
- * Copyright (c) 2012-2014, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2013, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -15,8 +15,6 @@
 
 #define pr_fmt(fmt) "%s: " fmt, __func__
 
-#include <linux/clk.h>
-#include <linux/pm_runtime.h>
 #include <linux/slab.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
@@ -30,21 +28,12 @@
 #include <linux/bitrev.h>
 #include <linux/mutex.h>
 #include <linux/of.h>
-#include <linux/ctype.h>
-#include <linux/msm-sps.h>
-#include <linux/msm-bus.h>
-#include <soc/qcom/smem.h>
+#include <mach/sps.h>
 
 #define PAGE_SIZE_2K 2048
 #define PAGE_SIZE_4K 4096
-
-#undef WRITE /* To avoid redefinition in above header files */
 #define WRITE 1
 #define READ 0
-
-#define MSM_NAND_IDLE_TIMEOUT   200 /* msecs */
-#define MSM_NAND_BUS_VOTE_MAX_RATE  100000000 /* Hz */
-
 /*
  * The maximum no of descriptors per transfer (page read/write) won't be more
  * than 64. For more details on what those commands are, please refer to the
@@ -99,7 +88,6 @@
 
 /* QPIC NANDc (NAND Controller) Register Set */
 #define MSM_NAND_REG(info, off)		    (info->nand_phys + off)
-#define MSM_NAND_QPIC_VERSION(info)	    MSM_NAND_REG(info, 0x20100)
 #define MSM_NAND_FLASH_CMD(info)	    MSM_NAND_REG(info, 0x30000)
 #define MSM_NAND_ADDR0(info)                MSM_NAND_REG(info, 0x30004)
 #define MSM_NAND_ADDR1(info)                MSM_NAND_REG(info, 0x30008)
@@ -149,7 +137,7 @@
 
 #define MSM_NAND_CTRL(info)		    MSM_NAND_REG(info, 0x30F00)
 #define BAM_MODE_EN	0
-#define MSM_NAND_VERSION(info)         MSM_NAND_REG(info, 0x30F08)
+
 #define MSM_NAND_READ_LOCATION_0(info)      MSM_NAND_REG(info, 0x30F20)
 #define MSM_NAND_READ_LOCATION_1(info)      MSM_NAND_REG(info, 0x30F24)
 
@@ -162,12 +150,6 @@
 #define MSM_NAND_CMD_PRG_PAGE_ALL       0x39
 #define MSM_NAND_CMD_BLOCK_ERASE        0x3A
 #define MSM_NAND_CMD_FETCH_ID           0x0B
-
-/* Version Mask */
-#define MSM_NAND_VERSION_MAJOR_MASK	0xF0000000
-#define MSM_NAND_VERSION_MAJOR_SHIFT	28
-#define MSM_NAND_VERSION_MINOR_MASK	0x0FFF0000
-#define MSM_NAND_VERSION_MINOR_SHIFT	16
 
 /* Structure that defines a NAND SPS command element */
 struct msm_nand_sps_cmd {
@@ -215,7 +197,7 @@ struct msm_nand_sps_endpt {
  * for each BAM pipe.
  */
 struct msm_nand_sps_info {
-	unsigned long bam_handle;
+	uint32_t bam_handle;
 	struct msm_nand_sps_endpt data_prod;
 	struct msm_nand_sps_endpt data_cons;
 	struct msm_nand_sps_endpt cmd_pipe;
@@ -227,20 +209,12 @@ struct msm_nand_sps_info {
  */
 struct flash_identification {
 	uint32_t flash_id;
-	uint64_t density;
+	uint32_t density;
 	uint32_t widebus;
 	uint32_t pagesize;
 	uint32_t blksize;
 	uint32_t oobsize;
 	uint32_t ecc_correctability;
-};
-
-struct msm_nand_clk_data {
-	struct clk *qpic_clk;
-	struct msm_bus_scale_pdata *use_cases;
-	uint32_t client_handle;
-	atomic_t clk_enabled;
-	atomic_t curr_vote;
 };
 
 /* Structure that defines NANDc private data. */
@@ -263,9 +237,8 @@ struct msm_nand_info {
 	 * Othewise, data and command descriptors can be submitted out of
 	 * order for a request which can cause data corruption.
 	 */
-	struct mutex lock;
+	struct mutex bam_lock;
 	struct flash_identification flash_dev;
-	struct msm_nand_clk_data clk_data;
 };
 
 /* Structure that defines an ONFI parameter page (512B) */
@@ -311,36 +284,6 @@ struct onfi_param_page {
 	uint8_t  vendor_specific[88];
 	uint16_t integrity_crc;
 } __attribute__((__packed__));
-
-#define FLASH_PART_MAGIC1	0x55EE73AA
-#define FLASH_PART_MAGIC2	0xE35EBDDB
-#define FLASH_PTABLE_V3		3
-#define FLASH_PTABLE_V4		4
-#define FLASH_PTABLE_MAX_PARTS_V3 16
-#define FLASH_PTABLE_MAX_PARTS_V4 32
-#define FLASH_PTABLE_HDR_LEN (4*sizeof(uint32_t))
-#define FLASH_PTABLE_ENTRY_NAME_SIZE 16
-
-struct flash_partition_entry {
-	char name[FLASH_PTABLE_ENTRY_NAME_SIZE];
-	u32 offset;     /* Offset in blocks from beginning of device */
-	u32 length;     /* Length of the partition in blocks */
-	u8 attr;	/* Flags for this partition */
-};
-
-struct flash_partition_table {
-	u32 magic1;
-	u32 magic2;
-	u32 version;
-	u32 numparts;
-	struct flash_partition_entry part_entry[FLASH_PTABLE_MAX_PARTS_V4];
-};
-
-#ifdef CONFIG_MSM_SMD
-static struct flash_partition_table ptable;
-#endif
-
-static struct mtd_partition mtd_part[FLASH_PTABLE_MAX_PARTS_V4];
 
 /*
  * Get the DMA memory for requested amount of size. It returns the pointer
@@ -422,187 +365,6 @@ static dma_addr_t msm_nand_dma_map(struct device *dev, void *addr, size_t size,
 	return dma_map_page(dev, page, offset, size, dir);
 }
 
-static int msm_nand_bus_set_vote(struct msm_nand_info *info,
-			unsigned int vote)
-{
-	int ret = 0;
-
-	ret = msm_bus_scale_client_update_request(info->clk_data.client_handle,
-			vote);
-	if (ret)
-		pr_err("msm_bus_scale_client_update_request() failed, bus_client_handle=0x%x, vote=%d, err=%d\n",
-			info->clk_data.client_handle, vote, ret);
-	return ret;
-}
-
-static int msm_nand_setup_clocks_and_bus_bw(struct msm_nand_info *info,
-				bool vote)
-{
-	int ret = 0;
-
-	if (IS_ERR_OR_NULL(info->clk_data.qpic_clk)) {
-		ret = -EINVAL;
-		goto out;
-	}
-	if (atomic_read(&info->clk_data.clk_enabled) == vote)
-		goto out;
-	if (!atomic_read(&info->clk_data.clk_enabled) && vote) {
-		ret = msm_nand_bus_set_vote(info, 1);
-		if (ret) {
-			pr_err("Failed to vote for bus with %d\n", ret);
-			goto out;
-		}
-		ret = clk_prepare_enable(info->clk_data.qpic_clk);
-		if (ret) {
-			pr_err("Failed to enable the bus-clock with error %d\n",
-				ret);
-			msm_nand_bus_set_vote(info, 0);
-			goto out;
-		}
-	} else if (atomic_read(&info->clk_data.clk_enabled) && !vote) {
-		clk_disable_unprepare(info->clk_data.qpic_clk);
-		msm_nand_bus_set_vote(info, 0);
-	}
-	atomic_set(&info->clk_data.clk_enabled, vote);
-out:
-	return ret;
-}
-
-#ifdef CONFIG_PM_RUNTIME
-static int msm_nand_runtime_suspend(struct device *dev)
-{
-	int ret = 0;
-	struct msm_nand_info *info = dev_get_drvdata(dev);
-
-	ret = msm_nand_setup_clocks_and_bus_bw(info, false);
-
-	return ret;
-}
-
-static int msm_nand_runtime_resume(struct device *dev)
-{
-	int ret = 0;
-	struct msm_nand_info *info = dev_get_drvdata(dev);
-
-	ret = msm_nand_setup_clocks_and_bus_bw(info, true);
-
-	return ret;
-}
-
-static void msm_nand_print_rpm_info(struct device *dev)
-{
-	pr_err("RPM: runtime_status=%d, usage_count=%d," \
-		" is_suspended=%d, disable_depth=%d, runtime_error=%d," \
-		" request_pending=%d, request=%d\n",
-		dev->power.runtime_status, atomic_read(&dev->power.usage_count),
-		dev->power.is_suspended, dev->power.disable_depth,
-		dev->power.runtime_error, dev->power.request_pending,
-		dev->power.request);
-}
-#else
-static int msm_nand_runtime_suspend(struct device *dev)
-{
-	return 0;
-}
-
-static int msm_nand_runtime_resume(struct device *dev)
-{
-	return 0;
-}
-
-static void msm_nand_print_rpm_info(struct device *dev)
-{
-}
-#endif
-
-#ifdef CONFIG_PM
-static int msm_nand_suspend(struct device *dev)
-{
-	int ret = 0;
-
-	if (!pm_runtime_suspended(dev))
-		ret = msm_nand_runtime_suspend(dev);
-
-	return ret;
-}
-
-static int msm_nand_resume(struct device *dev)
-{
-	int ret = 0;
-
-	if (!pm_runtime_suspended(dev))
-		ret = msm_nand_runtime_resume(dev);
-
-	return ret;
-}
-#else
-static int msm_nand_suspend(struct device *dev)
-{
-	return 0;
-}
-
-static int msm_nand_resume(struct device *dev)
-{
-	return 0;
-}
-#endif
-
-static int msm_nand_get_device(struct device *dev)
-{
-	int ret = 0;
-
-	ret = pm_runtime_get_sync(dev);
-	if (ret < 0) {
-		pr_err("Failed to resume with %d\n", ret);
-		msm_nand_print_rpm_info(dev);
-	} else { /* Reset to success */
-		ret = 0;
-	}
-	return ret;
-}
-
-static int msm_nand_put_device(struct device *dev)
-{
-	int ret = 0;
-
-	pm_runtime_mark_last_busy(dev);
-	ret = pm_runtime_put_autosuspend(dev);
-	if (ret < 0) {
-		pr_err("Failed to suspend with %d\n", ret);
-		msm_nand_print_rpm_info(dev);
-	} else { /* Reset to success */
-		ret = 0;
-	}
-	return ret;
-}
-
-static int msm_nand_bus_register(struct platform_device *pdev,
-		struct msm_nand_info *info)
-{
-	int ret = 0;
-
-	info->clk_data.use_cases = msm_bus_cl_get_pdata(pdev);
-	if (!info->clk_data.use_cases) {
-		ret = -EINVAL;
-		pr_err("msm_bus_cl_get_pdata failed\n");
-		goto out;
-	}
-	info->clk_data.client_handle =
-		msm_bus_scale_register_client(info->clk_data.use_cases);
-	if (!info->clk_data.client_handle) {
-		ret = -EINVAL;
-		pr_err("msm_bus_scale_register_client failed\n");
-	}
-out:
-	return ret;
-}
-
-static void msm_nand_bus_unregister(struct msm_nand_info *info)
-{
-	if (info->clk_data.client_handle)
-		msm_bus_scale_unregister_client(info->clk_data.client_handle);
-}
-
 /*
  * Wrapper function to prepare a SPS command element with the data that is
  * passed to this function.
@@ -649,25 +411,16 @@ static int msm_nand_flash_rd_reg(struct msm_nand_info *info, uint32_t addr,
 	msm_nand_prep_ce(cmd, addr, READ, msm_virt_to_dma(chip,
 			&dma_buffer->data), SPS_IOVEC_FLAG_INT);
 
-	mutex_lock(&info->lock);
-	ret = msm_nand_get_device(chip->dev);
-	if (ret)
-		goto out;
 	ret = sps_transfer_one(info->sps.cmd_pipe.handle,
 			msm_virt_to_dma(chip, &cmd->ce),
 			sizeof(struct sps_command_element), NULL, cmd->flags);
 	if (ret) {
 		pr_err("failed to submit command %x ret %d\n", addr, ret);
-		msm_nand_put_device(chip->dev);
 		goto out;
 	}
 	wait_for_completion_io(&info->sps.cmd_pipe.completion);
-	ret = msm_nand_put_device(chip->dev);
-	if (ret)
-		goto out;
 	*val = dma_buffer->data;
 out:
-	mutex_unlock(&info->lock);
 	msm_nand_release_dma_buffer(chip, dma_buffer, sizeof(*dma_buffer));
 	return ret;
 }
@@ -741,24 +494,15 @@ static int msm_nand_flash_read_id(struct msm_nand_info *info,
 		iovec++;
 	}
 
-	mutex_lock(&info->lock);
-	err = msm_nand_get_device(chip->dev);
-	if (err) {
-		mutex_unlock(&info->lock);
-		goto out;
-	}
+	mutex_lock(&info->bam_lock);
 	err =  sps_transfer(info->sps.cmd_pipe.handle, &dma_buffer->xfer);
 	if (err) {
 		pr_err("Failed to submit commands %d\n", err);
-		msm_nand_put_device(chip->dev);
-		mutex_unlock(&info->lock);
+		mutex_unlock(&info->bam_lock);
 		goto out;
 	}
 	wait_for_completion_io(&info->sps.cmd_pipe.completion);
-	err = msm_nand_put_device(chip->dev);
-	mutex_unlock(&info->lock);
-	if (err)
-		goto out;
+	mutex_unlock(&info->bam_lock);
 
 	pr_debug("Read ID register value 0x%x\n", dma_buffer->data[3]);
 	if (!read_onfi_signature)
@@ -850,48 +594,6 @@ struct msm_nand_flash_onfi_data {
 	uint32_t ecc_bch_cfg;
 };
 
-struct version {
-	uint16_t nand_major;
-	uint16_t nand_minor;
-	uint16_t qpic_major;
-	uint16_t qpic_minor;
-};
-
-static int msm_nand_version_check(struct msm_nand_info *info,
-			struct version *nandc_version)
-{
-	uint32_t qpic_ver = 0, nand_ver = 0;
-	int err = 0;
-
-	/* Lookup the version to identify supported features */
-	err = msm_nand_flash_rd_reg(info, MSM_NAND_VERSION(info),
-		&nand_ver);
-	if (err) {
-		pr_err("Failed to read NAND_VERSION, err=%d\n", err);
-		goto out;
-	}
-	nandc_version->nand_major = (nand_ver & MSM_NAND_VERSION_MAJOR_MASK) >>
-		MSM_NAND_VERSION_MAJOR_SHIFT;
-	nandc_version->nand_minor = (nand_ver & MSM_NAND_VERSION_MINOR_MASK) >>
-		MSM_NAND_VERSION_MINOR_SHIFT;
-
-	err = msm_nand_flash_rd_reg(info, MSM_NAND_QPIC_VERSION(info),
-		&qpic_ver);
-	if (err) {
-		pr_err("Failed to read QPIC_VERSION, err=%d\n", err);
-		goto out;
-	}
-	nandc_version->qpic_major = (qpic_ver & MSM_NAND_VERSION_MAJOR_MASK) >>
-			MSM_NAND_VERSION_MAJOR_SHIFT;
-	nandc_version->qpic_minor = (qpic_ver & MSM_NAND_VERSION_MINOR_MASK) >>
-			MSM_NAND_VERSION_MINOR_SHIFT;
-	pr_info("nand_major:%d, nand_minor:%d, qpic_major:%d, qpic_minor:%d\n",
-		nandc_version->nand_major, nandc_version->nand_minor,
-		nandc_version->qpic_major, nandc_version->qpic_minor);
-out:
-	return err;
-}
-
 /*
  * Function to identify whether the attached NAND flash device is
  * complaint to ONFI spec or not. If yes, then it reads the ONFI parameter
@@ -914,7 +616,7 @@ static int msm_nand_flash_onfi_probe(struct msm_nand_info *info)
 	dma_addr_t dma_addr_param_info = 0;
 	struct onfi_param_page *onfi_param_page_ptr;
 	struct msm_nand_flash_onfi_data data;
-	uint32_t onfi_signature = 0;
+	uint32_t onfi_signature;
 
 	/* SPS command/data descriptors */
 	uint32_t total_cnt = 13;
@@ -930,18 +632,6 @@ static int msm_nand_flash_onfi_probe(struct msm_nand_info *info)
 		uint32_t flash_status;
 	} *dma_buffer;
 
-
-	/* Lookup the version to identify supported features */
-	struct version nandc_version = {0};
-
-	ret = msm_nand_version_check(info, &nandc_version);
-	if (!ret && !(nandc_version.nand_major == 1 &&
-			nandc_version.nand_minor == 1 &&
-			nandc_version.qpic_major == 1 &&
-			nandc_version.qpic_minor == 1)) {
-		ret = -EPERM;
-		goto out;
-	}
 	wait_event(chip->dma_wait_queue, (onfi_param_info_buf =
 		msm_nand_get_dma_buffer(chip, ONFI_PARAM_INFO_LENGTH)));
 	dma_addr_param_info = msm_virt_to_dma(chip, onfi_param_info_buf);
@@ -970,14 +660,6 @@ static int msm_nand_flash_onfi_probe(struct msm_nand_info *info)
 	if (ret < 0)
 		goto free_dma;
 
-	/* Lookup the 'APPS' partition's first page address */
-	for (i = 0; i < FLASH_PTABLE_MAX_PARTS_V4; i++) {
-		if (!strncmp("apps", mtd_part[i].name,
-				strlen(mtd_part[i].name))) {
-			page_address = mtd_part[i].offset << 6;
-			break;
-		}
-	}
 	data.cfg.cmd = MSM_NAND_CMD_PAGE_READ_ALL;
 	data.exec = 1;
 	data.cfg.addr0 = (page_address << 16) |
@@ -1043,19 +725,13 @@ static int msm_nand_flash_onfi_probe(struct msm_nand_info *info)
 		iovec->flags = dma_buffer->cmd[i].flags;
 		iovec++;
 	}
-	mutex_lock(&info->lock);
-	ret = msm_nand_get_device(chip->dev);
-	if (ret) {
-		mutex_unlock(&info->lock);
-		goto free_dma;
-	}
+	mutex_lock(&info->bam_lock);
 	/* Submit data descriptor */
 	ret = sps_transfer_one(info->sps.data_prod.handle, dma_addr_param_info,
 			ONFI_PARAM_INFO_LENGTH, NULL, SPS_IOVEC_FLAG_INT);
 	if (ret) {
 		pr_err("Failed to submit data descriptors %d\n", ret);
-		msm_nand_put_device(chip->dev);
-		mutex_unlock(&info->lock);
+		mutex_unlock(&info->bam_lock);
 		goto free_dma;
 	}
 	/* Submit command descriptors */
@@ -1063,16 +739,12 @@ static int msm_nand_flash_onfi_probe(struct msm_nand_info *info)
 			&dma_buffer->xfer);
 	if (ret) {
 		pr_err("Failed to submit commands %d\n", ret);
-		msm_nand_put_device(chip->dev);
-		mutex_unlock(&info->lock);
+		mutex_unlock(&info->bam_lock);
 		goto free_dma;
 	}
 	wait_for_completion_io(&info->sps.cmd_pipe.completion);
 	wait_for_completion_io(&info->sps.data_prod.completion);
-	ret = msm_nand_put_device(chip->dev);
-	mutex_unlock(&info->lock);
-	if (ret)
-		goto free_dma;
+	mutex_unlock(&info->bam_lock);
 
 	/* Check for flash status errors */
 	if (dma_buffer->flash_status & (FS_OP_ERR | FS_MPU_ERR)) {
@@ -1130,7 +802,6 @@ free_dma:
 	msm_nand_release_dma_buffer(chip, dma_buffer, sizeof(*dma_buffer));
 	msm_nand_release_dma_buffer(chip, onfi_param_info_buf,
 			ONFI_PARAM_INFO_LENGTH);
-out:
 	return ret;
 }
 
@@ -1592,20 +1263,14 @@ static int msm_nand_read_oob(struct mtd_info *mtd, loff_t from,
 			iovec->flags = dma_buffer->cmd[n].flags;
 			iovec++;
 		}
-		mutex_lock(&info->lock);
-		err = msm_nand_get_device(chip->dev);
-		if (err) {
-			mutex_unlock(&info->lock);
-			goto free_dma;
-		}
+		mutex_lock(&info->bam_lock);
 		/* Submit data descriptors */
 		for (n = rw_params.start_sector; n < cwperpage; n++) {
 			err = msm_nand_submit_rw_data_desc(ops,
 						&rw_params, info, n);
 			if (err) {
 				pr_err("Failed to submit data descs %d\n", err);
-				msm_nand_put_device(chip->dev);
-				mutex_unlock(&info->lock);
+				mutex_unlock(&info->bam_lock);
 				goto free_dma;
 			}
 		}
@@ -1614,16 +1279,12 @@ static int msm_nand_read_oob(struct mtd_info *mtd, loff_t from,
 				&dma_buffer->xfer);
 		if (err) {
 			pr_err("Failed to submit commands %d\n", err);
-			msm_nand_put_device(chip->dev);
-			mutex_unlock(&info->lock);
+			mutex_unlock(&info->bam_lock);
 			goto free_dma;
 		}
 		wait_for_completion_io(&info->sps.cmd_pipe.completion);
 		wait_for_completion_io(&info->sps.data_prod.completion);
-		err = msm_nand_put_device(chip->dev);
-		mutex_unlock(&info->lock);
-		if (err)
-			goto free_dma;
+		mutex_unlock(&info->bam_lock);
 		/* Check for flash status errors */
 		pageerr = rawerr = 0;
 		for (n = rw_params.start_sector; n < cwperpage; n++) {
@@ -1750,80 +1411,6 @@ validate_mtd_params_failed:
 	return err;
 }
 
-/**
- * msm_nand_read_partial_page() - read partial page
- * @mtd: pointer to mtd info
- * @from: start address of the page
- * @ops: pointer to mtd_oob_ops
- *
- * Reads a page into a bounce buffer and copies the required
- * number of bytes to actual buffer. The pages that are aligned
- * do not use bounce buffer.
- */
-static int msm_nand_read_partial_page(struct mtd_info *mtd,
-		loff_t from, struct mtd_oob_ops *ops)
-{
-	int err = 0;
-	unsigned char *actual_buf;
-	unsigned char *bounce_buf;
-	loff_t aligned_from;
-	loff_t offset;
-	size_t len;
-	size_t actual_len, ret_len;
-
-	actual_len = ops->len;
-	ret_len = 0;
-	actual_buf = ops->datbuf;
-
-	bounce_buf = kmalloc(mtd->writesize, GFP_KERNEL);
-	if (!bounce_buf) {
-		pr_err("%s: could not allocate memory\n", __func__);
-		err = -ENOMEM;
-		goto out;
-	}
-
-	/* Get start address of page to read from */
-	ops->len = mtd->writesize;
-	offset = from & (mtd->writesize - 1);
-	aligned_from = from - offset;
-
-	for (;;) {
-		bool no_copy = false;
-
-		len = mtd->writesize - offset;
-		if (len > actual_len)
-			len = actual_len;
-
-		if (offset == 0 && len == mtd->writesize)
-			no_copy = true;
-
-		ops->datbuf = no_copy ? actual_buf : bounce_buf;
-		err = msm_nand_read_oob(mtd, aligned_from, ops);
-		if (err < 0) {
-			ret_len = ops->retlen;
-			break;
-		}
-
-		if (!no_copy)
-			memcpy(actual_buf, bounce_buf + offset, len);
-
-		actual_len -= len;
-		ret_len += len;
-
-		if (actual_len == 0)
-			break;
-
-		actual_buf += len;
-		offset = 0;
-		aligned_from += mtd->writesize;
-	}
-
-	ops->retlen = ret_len;
-	kfree(bounce_buf);
-out:
-	return err;
-}
-
 /*
  * Function that gets called from upper layers such as MTD/YAFFS2 to read a
  * page with only main data.
@@ -1834,55 +1421,14 @@ static int msm_nand_read(struct mtd_info *mtd, loff_t from, size_t len,
 	int ret;
 	struct mtd_oob_ops ops;
 
-	ops.mode = MTD_OPS_AUTO_OOB;
+	ops.mode = MTD_OPS_PLACE_OOB;
+	ops.len = len;
 	ops.retlen = 0;
 	ops.ooblen = 0;
+	ops.datbuf = buf;
 	ops.oobbuf = NULL;
-
-	if (!(from & (mtd->writesize - 1)) && !(len % mtd->writesize)) {
-		/*
-		 * Handle reading of large size read buffer in vmalloc
-		 * address space that does not fit in an MMU page.
-		 */
-		if (!virt_addr_valid(buf) &&
-		   ((unsigned long) buf & ~PAGE_MASK) + len > PAGE_SIZE) {
-			ops.len = mtd->writesize;
-
-			for (;;) {
-				ops.datbuf = buf;
-				ret = msm_nand_read_oob(mtd, from, &ops);
-				if (ret < 0)
-					break;
-
-				len -= ops.retlen;
-				*retlen += ops.retlen;
-				if (len == 0)
-					break;
-				buf += ops.retlen;
-				from += ops.retlen;
-
-				if (len < mtd->writesize) {
-					ops.len = len;
-					ops.datbuf = buf;
-					ret = msm_nand_read_partial_page(
-						mtd, from, &ops);
-					*retlen += ops.retlen;
-					break;
-				}
-			}
-		} else {
-			ops.len = len;
-			ops.datbuf = buf;
-			ret =  msm_nand_read_oob(mtd, from, &ops);
-			*retlen = ops.retlen;
-		}
-	} else {
-		ops.len = len;
-		ops.datbuf = buf;
-		ret = msm_nand_read_partial_page(mtd, from, &ops);
-		*retlen = ops.retlen;
-	}
-
+	ret =  msm_nand_read_oob(mtd, from, &ops);
+	*retlen = ops.retlen;
 	return ret;
 }
 
@@ -1977,20 +1523,14 @@ static int msm_nand_write_oob(struct mtd_info *mtd, loff_t to,
 			iovec->flags = dma_buffer->cmd[n].flags;
 			iovec++;
 		}
-		mutex_lock(&info->lock);
-		err = msm_nand_get_device(chip->dev);
-		if (err) {
-			mutex_unlock(&info->lock);
-			goto free_dma;
-		}
+		mutex_lock(&info->bam_lock);
 		/* Submit data descriptors */
 		for (n = 0; n < cwperpage; n++) {
 			err = msm_nand_submit_rw_data_desc(ops,
 						&rw_params, info, n);
 			if (err) {
 				pr_err("Failed to submit data descs %d\n", err);
-				msm_nand_put_device(chip->dev);
-				mutex_unlock(&info->lock);
+				mutex_unlock(&info->bam_lock);
 				goto free_dma;
 			}
 		}
@@ -1999,16 +1539,12 @@ static int msm_nand_write_oob(struct mtd_info *mtd, loff_t to,
 				&dma_buffer->xfer);
 		if (err) {
 			pr_err("Failed to submit commands %d\n", err);
-			msm_nand_put_device(chip->dev);
-			mutex_unlock(&info->lock);
+			mutex_unlock(&info->bam_lock);
 			goto free_dma;
 		}
 		wait_for_completion_io(&info->sps.cmd_pipe.completion);
 		wait_for_completion_io(&info->sps.data_cons.completion);
-		err = msm_nand_put_device(chip->dev);
-		mutex_unlock(&info->lock);
-		if (err)
-			goto free_dma;
+		mutex_unlock(&info->bam_lock);
 
 		for (n = 0; n < cwperpage; n++)
 			pr_debug("write pg %d: flash_status[%d] = %x\n",
@@ -2070,48 +1606,14 @@ static int msm_nand_write(struct mtd_info *mtd, loff_t to, size_t len,
 	int ret;
 	struct mtd_oob_ops ops;
 
-	ops.mode = MTD_OPS_AUTO_OOB;
+	ops.mode = MTD_OPS_PLACE_OOB;
+	ops.len = len;
 	ops.retlen = 0;
 	ops.ooblen = 0;
+	ops.datbuf = (uint8_t *)buf;
 	ops.oobbuf = NULL;
-
-	/* partial page writes are not supported */
-	if ((to & (mtd->writesize - 1)) || (len % mtd->writesize)) {
-		ret = -EINVAL;
-		*retlen = ops.retlen;
-		pr_err("%s: partial page writes are not supported\n", __func__);
-		goto out;
-	}
-
-	/*
-	 * Handle writing of large size write buffer in vmalloc
-	 * address space that does not fit in an MMU page.
-	 */
-	if (!virt_addr_valid(buf) &&
-		((unsigned long) buf & ~PAGE_MASK) + len > PAGE_SIZE) {
-		ops.len = mtd->writesize;
-
-		for (;;) {
-			ops.datbuf = (uint8_t *) buf;
-			ret = msm_nand_write_oob(mtd, to, &ops);
-			if (ret < 0)
-				break;
-
-			len -= mtd->writesize;
-			*retlen += mtd->writesize;
-			if (len == 0)
-				break;
-
-			buf += mtd->writesize;
-			to += mtd->writesize;
-		}
-	} else {
-		ops.len = len;
-		ops.datbuf = (uint8_t *)buf;
-		ret =  msm_nand_write_oob(mtd, to, &ops);
-		*retlen = ops.retlen;
-	}
-out:
+	ret =  msm_nand_write_oob(mtd, to, &ops);
+	*retlen = ops.retlen;
 	return ret;
 }
 
@@ -2219,24 +1721,15 @@ static int msm_nand_erase(struct mtd_info *mtd, struct erase_info *instr)
 		iovec->flags = dma_buffer->cmd[i].flags;
 		iovec++;
 	}
-	mutex_lock(&info->lock);
-	err = msm_nand_get_device(chip->dev);
-	if (err) {
-		mutex_unlock(&info->lock);
-		goto free_dma;
-	}
+	mutex_lock(&info->bam_lock);
 	err =  sps_transfer(info->sps.cmd_pipe.handle, &dma_buffer->xfer);
 	if (err) {
 		pr_err("Failed to submit commands %d\n", err);
-		msm_nand_put_device(chip->dev);
-		mutex_unlock(&info->lock);
+		mutex_unlock(&info->bam_lock);
 		goto free_dma;
 	}
 	wait_for_completion_io(&info->sps.cmd_pipe.completion);
-	err = msm_nand_put_device(chip->dev);
-	mutex_unlock(&info->lock);
-	if (err)
-		goto free_dma;
+	mutex_unlock(&info->bam_lock);
 
 	/*  Check for flash status errors */
 	if (dma_buffer->flash_status & (FS_OP_ERR |
@@ -2327,7 +1820,7 @@ static int msm_nand_block_isbad(struct mtd_info *mtd, loff_t ofs)
 	buf = (uint8_t *)dma_buffer + sizeof(*dma_buffer);
 
 	cmd = dma_buffer->cmd;
-	memset(&data, 0, sizeof(struct msm_nand_blk_isbad_data));
+	memset(&data, 0, sizeof(struct msm_nand_erase_reg_data));
 	data.cfg.cmd = MSM_NAND_CMD_PAGE_READ_ALL;
 	data.cfg.cfg0 = chip->cfg0_raw & ~(7U << CW_PER_PAGE);
 	data.cfg.cfg1 = chip->cfg1_raw;
@@ -2379,12 +1872,7 @@ static int msm_nand_block_isbad(struct mtd_info *mtd, loff_t ofs)
 		iovec->flags = dma_buffer->cmd[i].flags;
 		iovec++;
 	}
-	mutex_lock(&info->lock);
-	ret = msm_nand_get_device(chip->dev);
-	if (ret) {
-		mutex_unlock(&info->lock);
-		goto free_dma;
-	}
+	mutex_lock(&info->bam_lock);
 	/* Submit data descriptor */
 	ret = sps_transfer_one(info->sps.data_prod.handle,
 			msm_virt_to_dma(chip, buf),
@@ -2392,24 +1880,19 @@ static int msm_nand_block_isbad(struct mtd_info *mtd, loff_t ofs)
 
 	if (ret) {
 		pr_err("Failed to submit data desc %d\n", ret);
-		msm_nand_put_device(chip->dev);
-		mutex_unlock(&info->lock);
+		mutex_unlock(&info->bam_lock);
 		goto free_dma;
 	}
 	/* Submit command descriptor */
 	ret =  sps_transfer(info->sps.cmd_pipe.handle, &dma_buffer->xfer);
 	if (ret) {
 		pr_err("Failed to submit commands %d\n", ret);
-		msm_nand_put_device(chip->dev);
-		mutex_unlock(&info->lock);
+		mutex_unlock(&info->bam_lock);
 		goto free_dma;
 	}
 	wait_for_completion_io(&info->sps.cmd_pipe.completion);
 	wait_for_completion_io(&info->sps.data_prod.completion);
-	ret = msm_nand_put_device(chip->dev);
-	mutex_unlock(&info->lock);
-	if (ret)
-		goto free_dma;
+	mutex_unlock(&info->bam_lock);
 
 	/* Check for flash status errors */
 	if (dma_buffer->flash_status & (FS_OP_ERR | FS_MPU_ERR)) {
@@ -2509,7 +1992,7 @@ int msm_nand_scan(struct mtd_info *mtd)
 			if (nand_manuf_ids[i].id == manid)
 				flashman = &nand_manuf_ids[i];
 		for (i = 0; !flashdev && nand_flash_ids[i].id; ++i)
-			if (nand_flash_ids[i].dev_id == devid)
+			if (nand_flash_ids[i].id == devid)
 				flashdev = &nand_flash_ids[i];
 		if (!flashdev || !flashman) {
 			pr_err("unknown nand flashid=%x manuf=%x devid=%x\n",
@@ -2533,7 +2016,7 @@ int msm_nand_scan(struct mtd_info *mtd)
 			supported_flash->oobsize = flashdev->pagesize >> 5;
 		}
 		supported_flash->flash_id = flash_id;
-		supported_flash->density = ((uint64_t)flashdev->chipsize) << 20;
+		supported_flash->density = flashdev->chipsize << 20;
 	}
 
 	if (dev_found) {
@@ -2542,7 +2025,6 @@ int msm_nand_scan(struct mtd_info *mtd)
 		mtd->writesize = supported_flash->pagesize;
 		mtd->oobsize   = supported_flash->oobsize;
 		mtd->erasesize = supported_flash->blksize;
-		mtd->writebufsize = mtd->writesize;
 		mtd_writesize = mtd->writesize;
 
 		/* Check whether NAND device support 8bit ECC*/
@@ -2648,8 +2130,7 @@ out:
 	return err;
 }
 
-#define BAM_APPS_PIPE_LOCK_GRP0 0
-#define BAM_APPS_PIPE_LOCK_GRP1 1
+#define BAM_APPS_PIPE_LOCK_GRP 0
 /*
  * This function allocates, configures, connects an end point and
  * also registers event notification for an end point. It also allocates
@@ -2693,13 +2174,7 @@ static int msm_nand_init_endpoint(struct msm_nand_info *info,
 	}
 
 	sps_config->options = SPS_O_AUTO_ENABLE | SPS_O_DESC_DONE;
-
-	if (pipe_index == SPS_DATA_PROD_PIPE_INDEX ||
-			pipe_index == SPS_DATA_CONS_PIPE_INDEX)
-		sps_config->lock_group = BAM_APPS_PIPE_LOCK_GRP0;
-	else if (pipe_index == SPS_CMD_CONS_PIPE_INDEX)
-		sps_config->lock_group = BAM_APPS_PIPE_LOCK_GRP1;
-
+	sps_config->lock_group = BAM_APPS_PIPE_LOCK_GRP;
 	/*
 	 * Descriptor FIFO is a cyclic FIFO. If SPS_MAX_DESC_NUM descriptors
 	 * are allowed to be submitted before we get any ack for any of them,
@@ -2798,7 +2273,7 @@ static int msm_nand_bam_init(struct msm_nand_info *nand_info)
 			__func__, rc);
 		goto out;
 	}
-	pr_info("%s: BAM device registered: bam_handle 0x%lx\n",
+	pr_info("%s: BAM device registered: bam_handle 0x%x\n",
 			__func__, nand_info->sps.bam_handle);
 init_sps_ep:
 	rc = msm_nand_init_endpoint(nand_info, &nand_info->sps.data_prod,
@@ -2848,100 +2323,20 @@ static int msm_nand_enable_dma(struct msm_nand_info *info)
 	msm_nand_prep_ce(sps_cmd, MSM_NAND_CTRL(info), WRITE,
 			(1 << BAM_MODE_EN), SPS_IOVEC_FLAG_INT);
 
-	mutex_lock(&info->lock);
-	ret = msm_nand_get_device(chip->dev);
-	if (ret) {
-		mutex_unlock(&info->lock);
-		goto out;
-	}
 	ret = sps_transfer_one(info->sps.cmd_pipe.handle,
 			msm_virt_to_dma(chip, &sps_cmd->ce),
 			sizeof(struct sps_command_element), NULL,
 			sps_cmd->flags);
 	if (ret) {
 		pr_err("Failed to submit command: %d\n", ret);
-		msm_nand_put_device(chip->dev);
 		goto out;
 	}
 	wait_for_completion_io(&info->sps.cmd_pipe.completion);
-	ret = msm_nand_put_device(chip->dev);
 out:
-	mutex_unlock(&info->lock);
 	msm_nand_release_dma_buffer(chip, sps_cmd, sizeof(*sps_cmd));
 	return ret;
 
 }
-
-#ifdef CONFIG_MSM_SMD
-static int msm_nand_parse_smem_ptable(int *nr_parts)
-{
-
-	uint32_t  i, j;
-	uint32_t len = FLASH_PTABLE_HDR_LEN;
-	struct flash_partition_entry *pentry;
-	char *delimiter = ":";
-
-	pr_info("Parsing partition table info from SMEM\n");
-	/* Read only the header portion of ptable */
-	ptable = *(struct flash_partition_table *)
-			(smem_get_entry(SMEM_AARM_PARTITION_TABLE, &len,
-							0, SMEM_ANY_HOST_FLAG));
-	/* Verify ptable magic */
-	if (ptable.magic1 != FLASH_PART_MAGIC1 ||
-			ptable.magic2 != FLASH_PART_MAGIC2) {
-		pr_err("Partition table magic verification failed\n");
-		goto out;
-	}
-	/* Ensure that # of partitions is less than the max we have allocated */
-	if (ptable.numparts > FLASH_PTABLE_MAX_PARTS_V4) {
-		pr_err("Partition numbers exceed the max limit\n");
-		goto out;
-	}
-	/* Find out length of partition data based on table version. */
-	if (ptable.version <= FLASH_PTABLE_V3) {
-		len = FLASH_PTABLE_HDR_LEN + FLASH_PTABLE_MAX_PARTS_V3 *
-			sizeof(struct flash_partition_entry);
-	} else if (ptable.version == FLASH_PTABLE_V4) {
-		len = FLASH_PTABLE_HDR_LEN + FLASH_PTABLE_MAX_PARTS_V4 *
-			sizeof(struct flash_partition_entry);
-	} else {
-		pr_err("Unknown ptable version (%d)", ptable.version);
-		goto out;
-	}
-
-	*nr_parts = ptable.numparts;
-	ptable = *(struct flash_partition_table *)
-			(smem_get_entry(SMEM_AARM_PARTITION_TABLE, &len,
-							0, SMEM_ANY_HOST_FLAG));
-	for (i = 0; i < ptable.numparts; i++) {
-		pentry = &ptable.part_entry[i];
-		if (pentry->name == '\0')
-			continue;
-		/* Convert name to lower case and discard the initial chars */
-		mtd_part[i].name        = pentry->name;
-		for (j = 0; j < strlen(mtd_part[i].name); j++)
-			*(mtd_part[i].name + j) =
-				tolower(*(mtd_part[i].name + j));
-		strsep(&(mtd_part[i].name), delimiter);
-		mtd_part[i].offset      = pentry->offset;
-		mtd_part[i].mask_flags  = pentry->attr;
-		mtd_part[i].size        = pentry->length;
-		pr_debug("%d: %s offs=0x%08x size=0x%08x attr:0x%08x\n",
-			i, pentry->name, pentry->offset, pentry->length,
-			pentry->attr);
-	}
-	pr_info("SMEM partition table found: ver: %d len: %d\n",
-		ptable.version, ptable.numparts);
-	return 0;
-out:
-	return -EINVAL;
-}
-#else
-static int msm_nand_parse_smem_ptable(int *nr_parts)
-{
-	return -ENODEV;
-}
-#endif
 
 /*
  * This function gets called when its device named msm-nand is added to
@@ -2957,13 +2352,26 @@ static int msm_nand_probe(struct platform_device *pdev)
 {
 	struct msm_nand_info *info;
 	struct resource *res;
-	int i, err, nr_parts;
+	int err;
+	struct device_node *pnode;
+	struct mtd_part_parser_data parser_data;
+
+	if (!pdev->dev.of_node) {
+		pr_err("No valid device tree info for NANDc\n");
+		err = -ENODEV;
+		goto out;
+	}
 
 	/*
 	 * The partition information can also be passed from kernel command
 	 * line. Also, the MTD core layer supports adding the whole device as
 	 * one MTD device when no partition information is available at all.
+	 * Hence, do not bail out when partition information is not availabe
+	 * in device tree.
 	 */
+	pnode = of_find_node_by_path("/qcom,mtd-partitions");
+	if (!pnode)
+		pr_info("No partition info available in device tree\n");
 	info = devm_kzalloc(&pdev->dev, sizeof(struct msm_nand_info),
 				GFP_KERNEL);
 	if (!info) {
@@ -2971,6 +2379,7 @@ static int msm_nand_probe(struct platform_device *pdev)
 		err = -ENOMEM;
 		goto out;
 	}
+
 	res = platform_get_resource_byname(pdev, IORESOURCE_MEM,
 						"nand_phys");
 	if (!res || !res->start) {
@@ -3008,7 +2417,7 @@ static int msm_nand_probe(struct platform_device *pdev)
 	info->mtd.owner = THIS_MODULE;
 	info->nand_chip.dev = &pdev->dev;
 	init_waitqueue_head(&info->nand_chip.dma_wait_queue);
-	mutex_init(&info->lock);
+	mutex_init(&info->bam_lock);
 
 	info->nand_chip.dma_virt_addr =
 		dmam_alloc_coherent(&pdev->dev, MSM_NAND_DMA_BUFFER_SIZE,
@@ -3019,44 +2428,14 @@ static int msm_nand_probe(struct platform_device *pdev)
 		err = -ENOMEM;
 		goto out;
 	}
-	err = msm_nand_bus_register(pdev, info);
-	if (err)
-		goto out;
-	info->clk_data.qpic_clk = devm_clk_get(&pdev->dev, "core_clk");
-	if (!IS_ERR_OR_NULL(info->clk_data.qpic_clk)) {
-		err = clk_set_rate(info->clk_data.qpic_clk,
-			MSM_NAND_BUS_VOTE_MAX_RATE);
-	} else {
-		err = PTR_ERR(info->clk_data.qpic_clk);
-		pr_err("Failed to get clock handle, err=%d\n", err);
-	}
-	if (err)
-		goto bus_unregister;
-
-	err = msm_nand_setup_clocks_and_bus_bw(info, true);
-	if (err)
-		goto bus_unregister;
-	dev_set_drvdata(&pdev->dev, info);
-	err = pm_runtime_set_active(&pdev->dev);
-	if (err)
-		pr_err("pm_runtime_set_active() failed with error %d", err);
-	pm_runtime_enable(&pdev->dev);
-	pm_runtime_use_autosuspend(&pdev->dev);
-	pm_runtime_set_autosuspend_delay(&pdev->dev, MSM_NAND_IDLE_TIMEOUT);
-
 	err = msm_nand_bam_init(info);
 	if (err) {
 		pr_err("msm_nand_bam_init() failed %d\n", err);
-		goto clk_rpm_disable;
+		goto out;
 	}
 	err = msm_nand_enable_dma(info);
 	if (err) {
 		pr_err("Failed to enable DMA in NANDc\n");
-		goto free_bam;
-	}
-	err = msm_nand_parse_smem_ptable(&nr_parts);
-	if (err < 0) {
-		pr_err("Failed to parse partition table in SMEM\n");
 		goto free_bam;
 	}
 	if (msm_nand_scan(&info->mtd)) {
@@ -3064,16 +2443,14 @@ static int msm_nand_probe(struct platform_device *pdev)
 		err = -ENXIO;
 		goto free_bam;
 	}
-	for (i = 0; i < nr_parts; i++) {
-		mtd_part[i].offset *= info->mtd.erasesize;
-		mtd_part[i].size *= info->mtd.erasesize;
-	}
-	err = mtd_device_parse_register(&info->mtd, NULL, NULL,
-		&mtd_part[0], nr_parts);
+	parser_data.of_node = pnode;
+	err = mtd_device_parse_register(&info->mtd, NULL, &parser_data,
+					NULL, 0);
 	if (err < 0) {
 		pr_err("Unable to register MTD partitions %d\n", err);
 		goto free_bam;
 	}
+	dev_set_drvdata(&pdev->dev, info);
 
 	pr_info("NANDc phys addr 0x%lx, BAM phys addr 0x%lx, BAM IRQ %d\n",
 			info->nand_phys, info->bam_phys, info->bam_irq);
@@ -3082,12 +2459,6 @@ static int msm_nand_probe(struct platform_device *pdev)
 	goto out;
 free_bam:
 	msm_nand_bam_free(info);
-clk_rpm_disable:
-	msm_nand_setup_clocks_and_bus_bw(info, false);
-	pm_runtime_disable(&(pdev)->dev);
-	pm_runtime_set_suspended(&(pdev)->dev);
-bus_unregister:
-	msm_nand_bus_unregister(info);
 out:
 	return err;
 }
@@ -3099,16 +2470,6 @@ out:
 static int msm_nand_remove(struct platform_device *pdev)
 {
 	struct msm_nand_info *info = dev_get_drvdata(&pdev->dev);
-
-	if (pm_runtime_suspended(&(pdev)->dev))
-		pm_runtime_resume(&(pdev)->dev);
-
-	if (info->clk_data.client_handle)
-		msm_nand_bus_unregister(info);
-
-	pm_runtime_disable(&(pdev)->dev);
-	pm_runtime_set_suspended(&(pdev)->dev);
-	msm_nand_setup_clocks_and_bus_bw(info, false);
 
 	dev_set_drvdata(&pdev->dev, NULL);
 	if (info) {
@@ -3123,21 +2484,12 @@ static const struct of_device_id msm_nand_match_table[] = {
 	{ .compatible = "qcom,msm-nand", },
 	{},
 };
-
-static const struct dev_pm_ops msm_nand_pm_ops = {
-	.suspend		= msm_nand_suspend,
-	.resume			= msm_nand_resume,
-	.runtime_suspend	= msm_nand_runtime_suspend,
-	.runtime_resume		= msm_nand_runtime_resume,
-};
-
 static struct platform_driver msm_nand_driver = {
 	.probe		= msm_nand_probe,
 	.remove		= msm_nand_remove,
 	.driver = {
 		.name		= DRIVER_NAME,
 		.of_match_table = msm_nand_match_table,
-		.pm		= &msm_nand_pm_ops,
 	},
 };
 

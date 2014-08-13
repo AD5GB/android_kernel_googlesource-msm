@@ -8,6 +8,8 @@ struct pwm_device;
 struct seq_file;
 
 #if IS_ENABLED(CONFIG_PWM) || IS_ENABLED(CONFIG_HAVE_PWM)
+/* Add __weak functions to support PWM */
+
 /*
  * pwm_request - request a PWM device
  */
@@ -31,7 +33,7 @@ int __weak pwm_enable(struct pwm_device *pwm);
 /*
  * pwm_disable - stop a PWM output toggling
  */
-void pwm_disable(struct pwm_device *pwm);
+void __weak pwm_disable(struct pwm_device *pwm);
 #else
 static inline struct pwm_device *pwm_request(int pwm_id, const char *label)
 {

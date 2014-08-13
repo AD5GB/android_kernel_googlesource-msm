@@ -93,7 +93,7 @@ static inline int gen_pool_add(struct gen_pool *pool, u64 addr,
 	return gen_pool_add_virt(pool, addr, -1, size, nid);
 }
 extern void gen_pool_destroy(struct gen_pool *);
-extern void gen_pool_free(struct gen_pool *, u64, size_t);
+extern void gen_pool_free(struct gen_pool *, unsigned long, size_t);
 extern void gen_pool_for_each_chunk(struct gen_pool *,
 	void (*)(struct gen_pool *, struct gen_pool_chunk *, void *), void *);
 extern size_t gen_pool_avail(struct gen_pool *);
@@ -108,11 +108,7 @@ extern u64 gen_pool_first_fit(unsigned long *map, unsigned long size,
 extern u64 gen_pool_best_fit(unsigned long *map, unsigned long size,
 		unsigned long start, unsigned int nr, void *data);
 
-extern struct gen_pool *devm_gen_pool_create(struct device *dev,
-		int min_alloc_order, int nid);
-extern struct gen_pool *dev_get_gen_pool(struct device *dev);
-
-u64 __must_check
+unsigned long __must_check
 gen_pool_alloc_aligned(struct gen_pool *pool, size_t size,
                        unsigned alignment_order);
 
@@ -124,20 +120,9 @@ gen_pool_alloc_aligned(struct gen_pool *pool, size_t size,
  * Allocate the requested number of bytes from the specified pool.
  * Uses a first-fit algorithm.
  */
-static inline u64 __must_check
+static inline unsigned long __must_check
 gen_pool_alloc(struct gen_pool *pool, size_t size)
 {
         return gen_pool_alloc_aligned(pool, size, 0);
 }
-
-#ifdef CONFIG_OF
-extern struct gen_pool *of_get_named_gen_pool(struct device_node *np,
-	const char *propname, int index);
-#else
-static inline struct gen_pool *of_get_named_gen_pool(struct device_node *np,
-	const char *propname, int index)
-{
-	return NULL;
-}
-#endif
 #endif /* __GENALLOC_H__ */

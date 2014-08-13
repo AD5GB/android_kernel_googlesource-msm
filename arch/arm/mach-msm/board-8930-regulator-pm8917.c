@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012-2013, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -194,7 +194,7 @@ VREG_CONSUMERS(S4) = {
 	REGULATOR_SUPPLY("VDDIO_CDC",		"sitar1p1-slim"),
 	REGULATOR_SUPPLY("CDC_VDDA_TX",		"sitar1p1-slim"),
 	REGULATOR_SUPPLY("CDC_VDDA_RX",		"sitar1p1-slim"),
-	REGULATOR_SUPPLY("vcc_i2c",		"0-0048"),
+	REGULATOR_SUPPLY("vddp",		"0-0048"),
 	REGULATOR_SUPPLY("mhl_iovcc18",		"0-0039"),
 	REGULATOR_SUPPLY("CDC_VDD_CP",		"sitar-slim"),
 	REGULATOR_SUPPLY("CDC_VDD_CP",		"sitar1p1-slim"),
@@ -233,6 +233,7 @@ VREG_CONSUMERS(LVS4) = {
 	REGULATOR_SUPPLY("8917_lvs4",		NULL),
 	REGULATOR_SUPPLY("vcc_i2c",		"3-004a"),
 	REGULATOR_SUPPLY("vcc_i2c",		"3-0024"),
+	REGULATOR_SUPPLY("vcc_i2c",		"0-0048"),
 	REGULATOR_SUPPLY("vddio",		"12-0018"),
 	REGULATOR_SUPPLY("vlogic",		"12-0068"),
 };
@@ -497,7 +498,7 @@ VREG_CONSUMERS(VDD_DIG_CORNER) = {
 
 /* GPIO regulator constraints */
 struct gpio_regulator_platform_data
-msm8930_pm8917_gpio_regulator_pdata[] __devinitdata = {
+msm8930_pm8917_gpio_regulator_pdata[] = {
 	/*        ID          vreg_name     gpio_label     gpio  supply */
 };
 
@@ -510,7 +511,7 @@ struct regulator_init_data msm8930_pm8917_saw_regulator_core1_pdata =
 
 /* PM8917 regulator constraints */
 struct pm8xxx_regulator_platform_data
-msm8930_pm8917_regulator_pdata[] __devinitdata = {
+msm8930_pm8917_regulator_pdata[] = {
 	/*
 	 *               ID  name always_on pd min_uV   max_uV   en_t supply
 	 *	system_uA reg_ID
@@ -547,7 +548,7 @@ msm8930_pm8917_regulator_pdata[] __devinitdata = {
 };
 
 static struct rpm_regulator_init_data
-msm8930_rpm_regulator_init_data[] __devinitdata = {
+msm8930_rpm_regulator_init_data[] = {
 	/*	ID a_on pd ss min_uV   max_uV  supply sys_uA  freq  fm  ss_fm */
 	RPM_SMPS(S1, 1, 1, 0, 1300000, 1300000, NULL, 100000, 3p20, NONE, NONE),
 	RPM_SMPS(S2, 0, 1, 0, 1300000, 1300000, NULL,      0, 1p60, NONE, NONE),
@@ -593,7 +594,7 @@ msm8930_rpm_regulator_init_data[] __devinitdata = {
 		RPM_VREG_CORNER_HIGH, NULL),
 };
 
-int msm8930_pm8917_regulator_pdata_len __devinitdata =
+int msm8930_pm8917_regulator_pdata_len =
 	ARRAY_SIZE(msm8930_pm8917_regulator_pdata);
 
 #define RPM_REG_MAP(_id, _sleep_also, _voter, _supply, _dev_name) \
@@ -606,7 +607,7 @@ int msm8930_pm8917_regulator_pdata_len __devinitdata =
 	}
 
 static struct rpm_regulator_consumer_mapping
-	      msm_rpm_regulator_consumer_mapping[] __devinitdata = {
+	      msm_rpm_regulator_consumer_mapping[] = {
 	RPM_REG_MAP(L23,            0, 1, "krait0_l23",   "acpuclk-8930"),
 	RPM_REG_MAP(S8,             0, 1, "krait0_s8",    "acpuclk-8930"),
 	RPM_REG_MAP(L23,            0, 2, "krait1_l23",   "acpuclk-8930"),
@@ -648,7 +649,7 @@ static struct rpm_regulator_consumer_mapping
 };
 
 struct rpm_regulator_platform_data
-msm8930_pm8917_rpm_regulator_pdata __devinitdata = {
+msm8930_pm8917_rpm_regulator_pdata = {
 	.init_data		= msm8930_rpm_regulator_init_data,
 	.num_regulators		= ARRAY_SIZE(msm8930_rpm_regulator_init_data),
 	.version		= RPM_VREG_VERSION_8930_PM8917,

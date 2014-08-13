@@ -269,6 +269,20 @@ config GENERIC_BUG
 	def_bool y
 	depends on BUG
 
+config GENERIC_TIME_VSYSCALL
+	bool "Enable gettimeofday updates"
+	depends on CPU_V7
+	help
+	  Enables updating the kernel user helper area with the xtime struct
+	  data for gettimeofday via kernel user helpers.
+
+config ARM_USE_USER_ACCESSIBLE_TIMERS
+	bool "Enables mapping a timer counter page to user space"
+	depends on USE_USER_ACCESSIBLE_TIMERS && GENERIC_TIME_VSYSCALL
+	help
+	 Enables ARM-specific user-accessible timers via a shared
+	 memory page containing the cycle counter.
+
 config ARM_USER_ACCESSIBLE_TIMER_BASE
 	hex "Base address of user-accessible timer counter page"
 	default 0xfffef000
@@ -277,15 +291,6 @@ config ARM_USER_ACCESSIBLE_TIMER_BASE
 	 Specify the base user-space virtual address where the user-accessible
 	 timer counter page should be mapped by the kernel.  User-space apps
 	 will read directly from the page at this address.
-
-config ARCH_RANDOM
-	bool "SOC specific random number generation"
-	help
-	 Allow the kernel to use an architecture specific implementation for
-	 random number generation
-
-	 If unsure, say N
-
 
 source "init/Kconfig"
 
@@ -656,9 +661,6 @@ config ARCH_MSM
 	select NEED_MACH_IO_H
 	select NEED_MACH_GPIO_H
 	select SOC_BUS
-	select MULTI_IRQ_HANDLER
-	select SPARSE_IRQ
-	select USE_OF
 	help
 	  Support for Qualcomm MSM/QSD based systems.  This runs on the
 	  apps processor of the MSM/QSD and depends on a shared memory
@@ -1399,11 +1401,17 @@ config ARM_ERRATA_798181
 	  which sends an IPI to the CPUs that are running the same ASID
 	  as the one being invalidated.
 
-config PERFMAP
-        tristate "Perfmap support (EXPERIMENTAL)"
-	depends on ARCH_MSM_KRAIT
+config KSAPI
+        tristate "KSAPI support (EXPERIMENTAL)"
+	depends on ARCH_MSM_SCORPION || ARCH_MSM_KRAIT
+        default n
         help
-          Perfmap: memory mapped interface for performance monitors.
+          KSAPI: Performance monitoring tool for linux.
+          KSAPI records performance statistics for Snapdragon linux platform.
+          It uses the /proc FS as a means to exchange configuration data and
+          counter statistics. It can monitor the counter statistics for
+          Scorpion processor supported hardware performance counters on a per
+          thread basis or AXI counters on an overall system basis.
 
 endmenu
 
@@ -1488,6 +1496,8 @@ config SMP
 	depends on GENERIC_CLOCKEVENTS
 	depends on HAVE_SMP
 	depends on MMU
+	select HAVE_ARM_SCU
+	select USE_GENERIC_SMP_HELPERS
 	help
 	  This enables support for systems with more than one CPU. If you have
 	  a system with only one CPU, like most personal computers, say N. If
@@ -1619,6 +1629,7 @@ config LOCAL_TIMERS
 	bool "Use local timer interrupts"
 	depends on SMP
 	default y
+	select HAVE_ARM_TWD if (!MSM_SMP && !EXYNOS4_MCT)
 	help
 	  Enable support for local timers on SMP platforms, rather then the
 	  legacy IPI broadcast method.  Local timers allows the system
@@ -1790,28 +1801,8 @@ config ARCH_MEMORY_REMOVE
 config ENABLE_DMM
 	def_bool n
 
-choice
-	prompt "Virtual Memory Reclaim"
-	default NO_VM_RECLAIM
-	help
-	  Select the method of reclaiming virtual memory
-
-config ENABLE_VMALLOC_SAVING
-	bool "Reclaim memory for each subsystem"
-	help
-	  Enable this config to reclaim the virtual space belonging
-	  to any subsystem which is expected to have a lifetime of
-	  the entire system. This feature allows lowmem to be non-
-	  contiguous.
-
-config NO_VM_RECLAIM
-	bool "Do not reclaim memory"
-	help
-	  Do not reclaim any memory. This might result in less lowmem
-	  and wasting virtual memory space which could otherwise be
-	  reclaimed by using any of the other two config options.
-
-endchoice
+config DONT_MAP_HOLE_AFTER_MEMBANK0
+	def_bool n
 
 config HOLES_IN_ZONE
 	def_bool n
@@ -1903,26 +1894,6 @@ config XEN
 	select SWIOTLB_XEN
 	help
 	  Say Y if you want to run Linux in a Virtual Machine on Xen on ARM.
-
-config CP_ACCESS
-	tristate "CP register access tool"
-	default m
-	help
-	  Provide support for Coprocessor register access using /sys
-	  interface. Read and write to CP registers from userspace
-	  through sysfs interface. A sys file (cp_rw) will be created under
-	  /sys/devices/cpaccess/cpaccess0.
-
-	  If unsure, say N.
-
-config ARM_FLUSH_CONSOLE_ON_RESTART
-	bool "Force flush the console on restart"
-	help
-	  If the console is locked while the system is rebooted, the messages
-	  in the temporary logbuffer would not have propogated to all the
-	  console drivers. This option forces the console lock to be
-	  released if it failed to be acquired, which will cause all the
-	  pending messages to be flushed.
 
 config ARM_FLUSH_CONSOLE_ON_RESTART
 	bool "Force flush the console on restart"

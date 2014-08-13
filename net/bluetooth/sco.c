@@ -367,7 +367,7 @@ static void __sco_sock_close(struct sock *sk)
 			sk->sk_state = BT_DISCONN;
 			sco_sock_set_timer(sk, SCO_DISCONN_TIMEOUT);
 			if (sco_pi(sk)->conn->hcon != NULL) {
-				hci_conn_drop(sco_pi(sk)->conn->hcon);
+				hci_conn_put(sco_pi(sk)->conn->hcon);
 				sco_pi(sk)->conn->hcon = NULL;
 			}
 		} else
@@ -501,7 +501,7 @@ static int sco_sock_connect(struct socket *sock, struct sockaddr *addr, int alen
 {
 	struct sock *sk = sock->sk;
 	struct sockaddr_sco sa;
-	int len, err;
+	int len, err = 0;
 
 	BT_DBG("sk %p", sk);
 

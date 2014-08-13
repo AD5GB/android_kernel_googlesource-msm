@@ -101,7 +101,7 @@ unreg_led_cdev:
 
 }
 
-static int __devexit pmic_mpp_led_remove(struct platform_device *pdev)
+static int pmic_mpp_led_remove(struct platform_device *pdev)
 {
 	const struct led_platform_data *pdata = pdev->dev.platform_data;
 	struct pmic_mpp_led_data *led = platform_get_drvdata(pdev);
@@ -117,7 +117,7 @@ static int __devexit pmic_mpp_led_remove(struct platform_device *pdev)
 
 static struct platform_driver pmic_mpp_led_driver = {
 	.probe		= pmic_mpp_led_probe,
-	.remove		= __devexit_p(pmic_mpp_led_remove),
+	.remove		= pmic_mpp_led_remove,
 	.driver		= {
 		.name	= "pmic-mpp-leds",
 		.owner	= THIS_MODULE,

@@ -26,32 +26,6 @@ EXPORT_SYMBOL_GPL(power_supply_class);
 
 static struct device_type power_supply_dev_type;
 
-static bool __power_supply_is_supplied_by(struct power_supply *supplier,
-					 struct power_supply *supply)
-{
-	int i;
-
-	if (!supply->supplied_from && !supplier->supplied_to)
-		return false;
-
-	/* Support both supplied_to and supplied_from modes */
-	if (supply->supplied_from) {
-		if (!supplier->name)
-			return false;
-		for (i = 0; i < supply->num_supplies; i++)
-			if (!strcmp(supplier->name, supply->supplied_from[i]))
-				return true;
-	} else {
-		if (!supply->name)
-			return false;
-		for (i = 0; i < supplier->num_supplicants; i++)
-			if (!strcmp(supplier->supplied_to[i], supply->name))
-				return true;
-	}
-
-	return false;
-}
-
 /**
  * power_supply_set_current_limit - set current limit
  * @psy:	the power supply to control
@@ -124,23 +98,6 @@ int power_supply_set_online(struct power_supply *psy, bool enable)
 	return -ENXIO;
 }
 EXPORT_SYMBOL_GPL(power_supply_set_online);
-
-
-/** power_supply_set_health_state - set health state of the power supply
- * @psy:       the power supply to control
- * @health:    sets health property of power supply
- */
-int power_supply_set_health_state(struct power_supply *psy, int health)
-{
-	const union power_supply_propval ret = {health,};
-
-	if (psy->set_property)
-		return psy->set_property(psy, POWER_SUPPLY_PROP_HEALTH,
-		&ret);
-	return -ENXIO;
-}
-EXPORT_SYMBOL(power_supply_set_health_state);
-
 
 /**
  * power_supply_set_scope - set scope of the power supply

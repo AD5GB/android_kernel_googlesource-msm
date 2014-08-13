@@ -30,6 +30,7 @@
 #include <sound/q6adm.h>
 #include <asm/dma.h>
 #include <linux/memory_alloc.h>
+#include <mach/msm_subsystem_map.h>
 #include "msm-pcm-afe.h"
 #include "msm-pcm-q6.h"
 
@@ -577,7 +578,7 @@ static struct snd_soc_platform_driver msm_soc_platform = {
 	.probe		= msm_afe_afe_probe,
 };
 
-static __devinit int msm_afe_probe(struct platform_device *pdev)
+static int msm_afe_probe(struct platform_device *pdev)
 {
 	pr_debug("%s: dev name %s\n", __func__, dev_name(&pdev->dev));
 	return snd_soc_register_platform(&pdev->dev,
@@ -597,7 +598,7 @@ static struct platform_driver msm_afe_driver = {
 		.owner = THIS_MODULE,
 	},
 	.probe = msm_afe_probe,
-	.remove = __devexit_p(msm_afe_remove),
+	.remove = msm_afe_remove,
 };
 
 static int __init msm_soc_platform_init(void)

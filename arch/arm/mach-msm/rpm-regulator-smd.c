@@ -73,17 +73,6 @@ enum rpm_regulator_param_index {
 	RPM_REGULATOR_PARAM_MAX,
 };
 
-enum rpm_regulator_smps_mode {
-	RPM_REGULATOR_SMPS_MODE_AUTO	= 0,
-	RPM_REGULATOR_SMPS_MODE_IPEAK	= 1,
-	RPM_REGULATOR_SMPS_MODE_PWM	= 2,
-};
-
-enum rpm_regulator_ldo_mode {
-	RPM_REGULATOR_LDO_MODE_IPEAK	= 0,
-	RPM_REGULATOR_LDO_MODE_HPM	= 1,
-};
-
 #define RPM_SET_CONFIG_ACTIVE			BIT(0)
 #define RPM_SET_CONFIG_SLEEP			BIT(1)
 #define RPM_SET_CONFIG_BOTH			(RPM_SET_CONFIG_ACTIVE \
@@ -127,20 +116,6 @@ static struct rpm_regulator_param params[RPM_REGULATOR_PARAM_MAX] = {
 	PARAM(CORNER,          1,  1,  0,  0, "corn", 0, 6,          "qcom,init-voltage-corner"),
 	PARAM(BYPASS,          1,  0,  0,  0, "bypa", 0, 1,          "qcom,init-disallow-bypass"),
 	PARAM(FLOOR_CORNER,    1,  1,  0,  0, "vfc",  0, 6,          "qcom,init-voltage-floor-corner"),
-};
-
-struct rpm_regulator_mode_map {
-	int			ldo_mode;
-	int			smps_mode;
-};
-
-static struct rpm_regulator_mode_map mode_mapping[] = {
-	[RPM_REGULATOR_MODE_AUTO]
-		= {-1,				 RPM_REGULATOR_SMPS_MODE_AUTO},
-	[RPM_REGULATOR_MODE_IPEAK]
-		= {RPM_REGULATOR_LDO_MODE_IPEAK, RPM_REGULATOR_SMPS_MODE_IPEAK},
-	[RPM_REGULATOR_MODE_HPM]
-		= {RPM_REGULATOR_LDO_MODE_HPM,   RPM_REGULATOR_SMPS_MODE_PWM},
 };
 
 struct rpm_vreg_request {
@@ -1102,71 +1077,6 @@ int rpm_regulator_set_voltage(struct rpm_regulator *regulator, int min_uV,
 }
 EXPORT_SYMBOL_GPL(rpm_regulator_set_voltage);
 
-/**
- * rpm_regulator_set_mode() - set regulator operating mode
- * @regulator: RPM regulator handle
- * @mode: operating mode requested for the regulator
- *
- * Requests that the mode of the regulator be set to the mode specified.  This
- * parameter is aggregated using a max function such that AUTO < IPEAK < HPM.
- *
- * Returns 0 on success or errno on failure.
- */
-int rpm_regulator_set_mode(struct rpm_regulator *regulator,
-				enum rpm_regulator_mode mode)
-{
-	int index = 0;
-	u32 new_mode, prev_mode;
-	int rc;
-
-	rc = rpm_regulator_check_input(regulator);
-	if (rc)
-		return rc;
-
-	if (mode < 0 || mode >= ARRAY_SIZE(mode_mapping)) {
-		vreg_err(regulator, "invalid mode requested: %d\n", mode);
-		return -EINVAL;
-	}
-
-	switch (regulator->rpm_vreg->regulator_type) {
-	case RPM_REGULATOR_SMD_TYPE_SMPS:
-		index = RPM_REGULATOR_PARAM_MODE_SMPS;
-		new_mode = mode_mapping[mode].smps_mode;
-		break;
-	case RPM_REGULATOR_SMD_TYPE_LDO:
-		index = RPM_REGULATOR_PARAM_MODE_LDO;
-		new_mode = mode_mapping[mode].ldo_mode;
-		break;
-	default:
-		vreg_err(regulator, "unsupported regulator type: %d\n",
-			regulator->rpm_vreg->regulator_type);
-		return -EINVAL;
-	};
-
-	if (new_mode < params[index].min || new_mode > params[index].max) {
-		vreg_err(regulator, "invalid mode requested: %d for type: %d\n",
-			mode, regulator->rpm_vreg->regulator_type);
-		return -EINVAL;
-	}
-
-	rpm_vreg_lock(regulator->rpm_vreg);
-
-	prev_mode = regulator->req.param[index];
-	regulator->req.param[index] = new_mode;
-	regulator->req.modified |= BIT(index);
-
-	rc = rpm_vreg_aggregate_requests(regulator);
-	if (rc) {
-		vreg_err(regulator, "set mode failed, rc=%d", rc);
-		regulator->req.param[index] = prev_mode;
-	}
-
-	rpm_vreg_unlock(regulator->rpm_vreg);
-
-	return rc;
-}
-EXPORT_SYMBOL_GPL(rpm_regulator_set_mode);
-
 static struct regulator_ops ldo_ops = {
 	.enable			= rpm_vreg_enable,
 	.disable		= rpm_vreg_disable,
@@ -1262,7 +1172,7 @@ static struct regulator_ops *vreg_ops[] = {
 	[RPM_REGULATOR_SMD_TYPE_NCP]	= &ncp_ops,
 };
 
-static int __devexit rpm_vreg_device_remove(struct platform_device *pdev)
+static int rpm_vreg_device_remove(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
 	struct rpm_regulator *reg;
@@ -1284,7 +1194,7 @@ static int __devexit rpm_vreg_device_remove(struct platform_device *pdev)
 	return 0;
 }
 
-static int __devexit rpm_vreg_resource_remove(struct platform_device *pdev)
+static int rpm_vreg_resource_remove(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
 	struct rpm_regulator *reg, *reg_temp;
@@ -1326,13 +1236,14 @@ static int __devexit rpm_vreg_resource_remove(struct platform_device *pdev)
  * properties which are required to configure individual regulator
  * framework regulators for a given RPM regulator resource.
  */
-static int __devinit rpm_vreg_device_probe(struct platform_device *pdev)
+static int rpm_vreg_device_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
 	struct device_node *node = dev->of_node;
 	struct regulator_init_data *init_data;
 	struct rpm_vreg *rpm_vreg;
 	struct rpm_regulator *reg;
+	struct regulator_config reg_config = {};
 	int rc = 0;
 	int i, regulator_type;
 	u32 val;
@@ -1488,7 +1399,11 @@ static int __devinit rpm_vreg_device_probe(struct platform_device *pdev)
 	list_add(&reg->list, &rpm_vreg->reg_list);
 	rpm_vreg_unlock(rpm_vreg);
 
-	reg->rdev = regulator_register(&reg->rdesc, dev, init_data, reg, node);
+	reg_config.dev = dev;
+	reg_config.init_data = init_data;
+	reg_config.of_node = node;
+	reg_config.driver_data = reg;
+	reg->rdev = regulator_register(&reg->rdesc, &reg_config);
 	if (IS_ERR(reg->rdev)) {
 		rc = PTR_ERR(reg->rdev);
 		reg->rdev = NULL;
@@ -1517,7 +1432,7 @@ fail_free_reg:
  * This probe is called for parent rpm-regulator devices which have
  * properties which are required to identify a given RPM resource.
  */
-static int __devinit rpm_vreg_resource_probe(struct platform_device *pdev)
+static int rpm_vreg_resource_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
 	struct device_node *node = dev->of_node;
@@ -1645,7 +1560,7 @@ static struct of_device_id rpm_vreg_match_table_resource[] = {
 
 static struct platform_driver rpm_vreg_device_driver = {
 	.probe = rpm_vreg_device_probe,
-	.remove = __devexit_p(rpm_vreg_device_remove),
+	.remove = rpm_vreg_device_remove,
 	.driver = {
 		.name = "qcom,rpm-regulator-smd",
 		.owner = THIS_MODULE,
@@ -1655,7 +1570,7 @@ static struct platform_driver rpm_vreg_device_driver = {
 
 static struct platform_driver rpm_vreg_resource_driver = {
 	.probe = rpm_vreg_resource_probe,
-	.remove = __devexit_p(rpm_vreg_resource_remove),
+	.remove = rpm_vreg_resource_remove,
 	.driver = {
 		.name = "qcom,rpm-regulator-smd-resource",
 		.owner = THIS_MODULE,

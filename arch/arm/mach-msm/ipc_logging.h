@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2013, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -12,8 +12,6 @@
  */
 #ifndef _IPC_LOGGING_H
 #define _IPC_LOGGING_H
-
-#include <mach/msm_ipc_logging.h>
 
 struct ipc_log_page_header {
 	uint32_t magic;
@@ -66,9 +64,8 @@ enum {
 #define MIN(x, y) ((x) < (y) ? (x) : (y))
 #define IS_MSG_TYPE(x) (((x) > TSV_TYPE_MSG_START) && \
 			((x) < TSV_TYPE_MSG_END))
-#define MAX_MSG_DECODED_SIZE (MAX_MSG_SIZE*4)
 
-extern rwlock_t ipc_log_context_list_lock;
+extern spinlock_t ipc_log_context_list_lock;
 
 extern int msg_read(struct ipc_log_context *ilctxt,
 		    struct encode_context *ectxt);

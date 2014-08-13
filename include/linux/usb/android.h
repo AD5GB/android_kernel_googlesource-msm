@@ -19,14 +19,11 @@
 
 #include <linux/usb/composite.h>
 
-#define MAX_STREAMING_FUNCS 3
-#define FUNC_NAME_LEN 10
 struct android_usb_platform_data {
 	int (*update_pid_and_serial_num)(uint32_t, const char *);
 	u32 swfi_latency;
 	u8 usb_core_id;
-	char streaming_func[MAX_STREAMING_FUNCS][FUNC_NAME_LEN];
-	int  streaming_func_count;
+	bool cdrom;
 };
 
 #ifndef CONFIG_TARGET_CORE
@@ -46,14 +43,5 @@ static inline int tcm_bind_config(struct usb_configuration *c)
 	return -ENODEV;
 }
 #endif
-
-extern int gport_setup(struct usb_configuration *c);
-extern void gport_cleanup(void);
-extern int gserial_init_port(int port_num, const char *name,
-					const char *port_name);
-
-int acm_port_setup(struct usb_configuration *c);
-void acm_port_cleanup(void);
-int acm_init_port(int port_num, const char *name);
 
 #endif	/* __LINUX_USB_ANDROID_H */

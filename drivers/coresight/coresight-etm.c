@@ -1,4 +1,4 @@
-/* Copyright (c) 2011-2014, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2011-2013, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -31,8 +31,8 @@
 #include <linux/of_coresight.h>
 #include <linux/coresight.h>
 #include <asm/sections.h>
-#include <soc/qcom/socinfo.h>
-#include <soc/qcom/memory_dump.h>
+#include <mach/socinfo.h>
+#include <mach/msm_memory_dump.h>
 
 #include "coresight-priv.h"
 
@@ -261,7 +261,6 @@ struct etm_drvdata {
 	bool				pcsave_sticky_enable;
 	bool				pcsave_boot_enable;
 	bool				round_robin;
-	struct msm_dump_data		reg_data;
 };
 
 static struct etm_drvdata *etmdrvdata[NR_CPUS];
@@ -277,32 +276,23 @@ static bool etm_os_lock_present(struct etm_drvdata *drvdata)
 }
 
 /*
- * Unlock OS lock to allow memory mapped access on Krait and in general
- * so that ETMSR[1] can be polled while clearing the ETMCR[10] prog bit
- * since ETMSR[1] is set when prog bit is set or OS lock is set.
+ * Memory mapped writes to clear os lock are not supported on Krait v1, v2
+ * and OS lock must be unlocked before any memory mapped access, otherwise
+ * memory mapped reads/writes will be invalid.
  */
 static void etm_os_unlock(void *info)
 {
 	struct etm_drvdata *drvdata = (struct etm_drvdata *) info;
 
-	/*
-	 * Memory mapped writes to clear os lock are not supported on Krait v1,
-	 * v2 and OS lock must be unlocked before any memory mapped access,
-	 * otherwise memory mapped reads/writes will be invalid.
-	 */
+	ETM_UNLOCK(drvdata);
 	if (cpu_is_krait()) {
 		etm_writel_cp14(0x0, ETMOSLAR);
-		/* ensure os lock is unlocked before we return */
 		isb();
-	} else {
-		ETM_UNLOCK(drvdata);
-		if (etm_os_lock_present(drvdata)) {
-			etm_writel(drvdata, 0x0, ETMOSLAR);
-			/* ensure os lock is unlocked before we return */
-			mb();
-		}
-		ETM_LOCK(drvdata);
+	} else if (etm_os_lock_present(drvdata)) {
+		etm_writel(drvdata, 0x0, ETMOSLAR);
+		mb();
 	}
+	ETM_LOCK(drvdata);
 }
 
 /*
@@ -1886,26 +1876,11 @@ static int etm_cpu_callback(struct notifier_block *nfb, unsigned long action,
 			    void *hcpu)
 {
 	unsigned int cpu = (unsigned long)hcpu;
-	static bool clk_disable[NR_CPUS];
-	int ret;
 
 	if (!etmdrvdata[cpu])
 		goto out;
 
 	switch (action & (~CPU_TASKS_FROZEN)) {
-	case CPU_UP_PREPARE:
-		if (!etmdrvdata[cpu]->os_unlock) {
-			ret = clk_prepare_enable(etmdrvdata[cpu]->clk);
-			if (ret) {
-				dev_err(etmdrvdata[cpu]->dev,
-					"ETM clk enable during hotplug failed"
-					"for cpu: %d, ret: %d\n", cpu, ret);
-				return notifier_from_errno(ret);
-			}
-			clk_disable[cpu] = true;
-		}
-		break;
-
 	case CPU_STARTING:
 		spin_lock(&etmdrvdata[cpu]->spinlock);
 		if (!etmdrvdata[cpu]->os_unlock) {
@@ -1919,11 +1894,6 @@ static int etm_cpu_callback(struct notifier_block *nfb, unsigned long action,
 		break;
 
 	case CPU_ONLINE:
-		if (clk_disable[cpu]) {
-			clk_disable_unprepare(etmdrvdata[cpu]->clk);
-			clk_disable[cpu] = false;
-		}
-
 		if (etmdrvdata[cpu]->boot_enable &&
 		    !etmdrvdata[cpu]->sticky_enable)
 			coresight_enable(etmdrvdata[cpu]->csdev);
@@ -1931,13 +1901,6 @@ static int etm_cpu_callback(struct notifier_block *nfb, unsigned long action,
 		if (etmdrvdata[cpu]->pcsave_boot_enable &&
 		    !etmdrvdata[cpu]->pcsave_sticky_enable)
 			__etm_store_pcsave(etmdrvdata[cpu], 1);
-		break;
-
-	case CPU_UP_CANCELED:
-		if (clk_disable[cpu]) {
-			clk_disable_unprepare(etmdrvdata[cpu]->clk);
-			clk_disable[cpu] = false;
-		}
 		break;
 
 	case CPU_DYING:
@@ -2112,12 +2075,7 @@ static int etm_probe(struct platform_device *pdev)
 	static int count;
 	void *baddr;
 	struct msm_client_dump dump;
-	struct msm_dump_entry dump_entry;
 	struct coresight_desc *desc;
-
-	if (coresight_fuse_access_disabled() ||
-	    coresight_fuse_apps_access_disabled())
-		return -EPERM;
 
 	if (pdev->dev.of_node) {
 		pdata = of_get_coresight_platform_data(dev, pdev->dev.of_node);
@@ -2160,20 +2118,14 @@ static int etm_probe(struct platform_device *pdev)
 
 	drvdata->cpu = count++;
 
+	get_online_cpus();
 	etmdrvdata[drvdata->cpu] = drvdata;
 
-	/*
-	 * This is safe wrt CPU_UP_PREPARE and CPU_STARTING hotplug callbacks
-	 * on the secondary cores that may enable the clock and perform
-	 * etm_os_unlock since they occur before the cpu online mask is updated
-	 * for the cpu which is checked by this smp call.
-	 */
 	if (!smp_call_function_single(drvdata->cpu, etm_os_unlock, drvdata, 1))
 		drvdata->os_unlock = true;
-
 	/*
-	 * OS unlock must have happened on cpu0 so use it to populate read-only
-	 * configuration data for ETM0. For other ETMs copy it over from ETM0.
+	 * Use CPU0 to populate read-only configuration data for ETM0. For
+	 * other ETMs copy it over from ETM0.
 	 */
 	if (drvdata->cpu == 0) {
 		register_hotcpu_notifier(&etm_cpu_notifier);
@@ -2183,6 +2135,8 @@ static int etm_probe(struct platform_device *pdev)
 	} else {
 		etm_copy_arch_data(drvdata);
 	}
+
+	put_online_cpus();
 
 	if (etm_arch_supported(drvdata->arch) == false) {
 		ret = -EINVAL;
@@ -2196,36 +2150,19 @@ static int etm_probe(struct platform_device *pdev)
 		drvdata->round_robin = of_property_read_bool(pdev->dev.of_node,
 							"qcom,round-robin");
 
-	if (MSM_DUMP_MAJOR(msm_dump_table_version()) == 1) {
-		baddr = devm_kzalloc(dev, PAGE_SIZE + reg_size, GFP_KERNEL);
-		if (baddr) {
-			dump.id = MSM_ETM0_REG + drvdata->cpu;
-			dump.start_addr = virt_to_phys(baddr);
-			dump.end_addr = dump.start_addr + PAGE_SIZE + reg_size;
-			ret = msm_dump_tbl_register(&dump);
-			if (ret) {
-				devm_kfree(dev, baddr);
-				dev_err(dev, "ETM REG dump setup failed\n");
-			}
-		} else {
-			dev_err(dev, "ETM REG dump space allocation failed\n");
+	baddr = devm_kzalloc(dev, PAGE_SIZE + reg_size, GFP_KERNEL);
+	if (baddr) {
+		*(uint32_t *)(baddr + ETM_REG_DUMP_VER_OFF) = ETM_REG_DUMP_VER;
+		dump.id = MSM_ETM0_REG + drvdata->cpu;
+		dump.start_addr = virt_to_phys(baddr);
+		dump.end_addr = dump.start_addr + PAGE_SIZE + reg_size;
+		ret = msm_dump_table_register(&dump);
+		if (ret) {
+			devm_kfree(dev, baddr);
+			dev_err(dev, "ETM REG dump setup failed/unsupported\n");
 		}
 	} else {
-		baddr = devm_kzalloc(dev, reg_size, GFP_KERNEL);
-		if (baddr) {
-			drvdata->reg_data.addr = virt_to_phys(baddr);
-			drvdata->reg_data.len = reg_size;
-			dump_entry.id = MSM_DUMP_DATA_ETM_REG + drvdata->cpu;
-			dump_entry.addr = virt_to_phys(&drvdata->reg_data);
-			ret = msm_dump_data_register(MSM_DUMP_TABLE_APPS,
-						     &dump_entry);
-			if (ret) {
-				devm_kfree(dev, baddr);
-				dev_err(dev, "ETM REG dump setup failed\n");
-			}
-		} else {
-			dev_err(dev, "ETM REG dump space allocation failed\n");
-		}
+		dev_err(dev, "ETM REG dump space allocation failed\n");
 	}
 
 	desc = devm_kzalloc(dev, sizeof(*desc), GFP_KERNEL);

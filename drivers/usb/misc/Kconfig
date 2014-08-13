@@ -263,6 +263,18 @@ config USB_QCOM_DIAG_BRIDGE
 	  To compile this driver as a module, choose M here: the
 	  module will be called diag_bridge.  If unsure, choose N.
 
+config USB_QCOM_DIAG_BRIDGE_TEST
+	tristate "USB Qualcomm diagnostic bridge driver test"
+	depends on USB && USB_QCOM_DIAG_BRIDGE
+	help
+	  Say Y here if you want to enable the test hook for the
+	  Qualcomm diag bridge driver. When enabled, this will create
+	  a debugfs file entry named "diag_bridge_test" which can be used
+	  to send a ping command to the diag port of the modem over USB.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called diag_bridge_test.  If unsure, choose N.
+
 config USB_QCOM_MDM_BRIDGE
 	tristate "USB Qualcomm modem bridge driver for DUN and RMNET"
 	depends on USB
@@ -283,12 +295,3 @@ config USB_QCOM_KS_BRIDGE
 	  boot images, ram-dumps and efs sync
 	  To compile this driver as a module, choose M here: the module
 	  will be called ks_bridge. If unsure, choose N.
-
-config USB_QCOM_IPC_BRIDGE
-	tristate "USB Qualcomm IPC bridge bridge"
-	depends on USB
-	help
-	  Say Y here if you have a Qualcomm modem device connected via USB that
-	  will be bridged in kernel space. This driver works as a transport
-	  layer for IPC router module that enables communication between
-	  APPS processor and MODEM processor.

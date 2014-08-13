@@ -3405,6 +3405,31 @@ int usb_remote_wakeup(struct usb_device *udev)
 	return status;
 }
 
+#else	/* CONFIG_USB_SUSPEND */
+
+/* When CONFIG_USB_SUSPEND isn't set, we never suspend or resume any ports. */
+
+int usb_port_suspend(struct usb_device *udev, pm_message_t msg)
+{
+	return 0;
+}
+
+/* However we may need to do a reset-resume */
+
+int usb_port_resume(struct usb_device *udev, pm_message_t msg)
+{
+	struct usb_hub	*hub = usb_hub_to_struct_hub(udev->parent);
+	int		port1 = udev->portnum;
+	int		status;
+	u16		portchange, portstatus;
+
+	status = hub_port_status(hub, port1, &portstatus, &portchange);
+	status = check_port_resume_type(udev,
+			hub, port1, status, portchange, portstatus);
+
+	return status;
+}
+
 #endif
 
 static int check_ports_changed(struct usb_hub *hub)
@@ -4171,8 +4196,7 @@ hub_port_init (struct usb_hub *hub, struct usb_device *udev, int port1,
 	for (i = 0; i < GET_DESCRIPTOR_TRIES; (++i, msleep(100))) {
 		if (USE_NEW_SCHEME(retry_counter) &&
 			!(hcd->driver->flags & HCD_USB3) &&
-			!((hcd->driver->flags & HCD_RT_OLD_ENUM) &&
-				!hdev->parent)) {
+			!(hcd->driver->flags & HCD_OLD_ENUM)) {
 			struct usb_device_descriptor *buf;
 			ushort idvendor;
 			int r = 0;
@@ -4221,7 +4245,7 @@ hub_port_init (struct usb_hub *hub, struct usb_device *udev, int port1,
 			 * second reset which results in failure due to
 			 * speed change.
 			 */
-			if (idvendor != 0x1a0a) {
+			if (le16_to_cpu(buf->idVendor) != 0x1a0a) {
 				retval = hub_port_reset(hub, port1, udev,
 							 delay, false);
 				if (retval < 0)	/* error or disconnect */
@@ -4276,8 +4300,7 @@ hub_port_init (struct usb_hub *hub, struct usb_device *udev, int port1,
 			msleep(10);
 			if (USE_NEW_SCHEME(retry_counter) &&
 				!(hcd->driver->flags & HCD_USB3) &&
-				!((hcd->driver->flags & HCD_RT_OLD_ENUM) &&
-					!hdev->parent))
+				!(hcd->driver->flags & HCD_OLD_ENUM))
 				break;
   		}
 

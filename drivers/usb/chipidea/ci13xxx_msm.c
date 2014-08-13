@@ -1,4 +1,4 @@
-/* Copyright (c) 2010-2014, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2010-2013, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -13,7 +13,6 @@
 #include <linux/usb/gadget.h>
 #include <linux/usb/chipidea.h>
 #include <linux/gpio.h>
-#include <linux/pinctrl/comsumer.h>
 
 #include "ci.h"
 
@@ -26,7 +25,6 @@ struct ci13xxx_msm_context {
 	int wake_gpio;
 	int wake_irq;
 	bool wake_irq_state;
-	struct pinctrl *ci13xxx_pinctrl;
 };
 
 static void ci13xxx_msm_suspend(struct ci13xxx *ci)
@@ -68,26 +66,6 @@ static void ci13xxx_msm_disconnect(struct ci13xxx *ci)
 				ULPI_CLR(ULPI_MISC_A));
 }
 
-/* Link power management will reduce power consumption by
- * short time HW suspend/resume.
- */
-static void ci13xxx_msm_set_l1(struct ci13xxx *ci)
-{
-	int temp;
-	struct device *dev = ci->gadget.dev.parent;
-
-	dev_dbg(dev, "Enable link power management\n");
-
-	/* Enable remote wakeup and L1 for IN EPs */
-	writel_relaxed(0xffff0000, USB_L1_EP_CTRL);
-
-	temp = readl_relaxed(USB_L1_CONFIG);
-	temp |= L1_CONFIG_LPM_EN | L1_CONFIG_REMOTE_WAKEUP |
-		L1_CONFIG_GATE_SYS_CLK | L1_CONFIG_PHY_LPM |
-		L1_CONFIG_PLL;
-	writel_relaxed(temp, USB_L1_CONFIG);
-}
-
 static void ci13xxx_msm_connect(struct ci13xxx *ci)
 {
 	struct usb_phy *phy = ci->transceiver;
@@ -118,34 +96,6 @@ static void ci13xxx_msm_connect(struct ci13xxx *ci)
 	}
 }
 
-static void ci13xxx_msm_reset(struct ci13xxx* ci)
-{
-	struct usb_phy *phy = ci->transceiver;
-	struct device *dev = ci->gadget.dev.parent;
-
-	writel_relaxed(0, USB_AHBBURST);
-	writel_relaxed(0x08, USB_AHBMODE);
-
-	if (ci->gadget.l1_supported)
-		ci13xxx_msm_set_l1(ci);
-
-	if (phy && (phy->flags & ENABLE_SECONDARY_PHY)) {
-		int	temp;
-
-		dev_dbg(dev, "using secondary hsphy\n");
-		temp = readl_relaxed(USB_PHY_CTRL2);
-		temp |= (1<<16);
-		writel_relaxed(temp, USB_PHY_CTRL2);
-
-		/*
-		 * Add memory barrier to make sure above LINK writes are
-		 * complete before moving ahead with USB peripheral mode
-		 * enumeration.
-		 */
-		mb();
-	}
-}
-
 static void ci13xxx_msm_notify_event(struct ci13xxx *ci, unsigned event)
 {
 	struct device *dev = ci->gadget.dev.parent;
@@ -153,7 +103,8 @@ static void ci13xxx_msm_notify_event(struct ci13xxx *ci, unsigned event)
 	switch (event) {
 	case CI13XXX_CONTROLLER_RESET_EVENT:
 		dev_info(dev, "CI13XXX_CONTROLLER_RESET_EVENT received\n");
-		ci13xxx_msm_reset(ci);
+		writel(0, USB_AHBBURST);
+		writel_relaxed(0x8, USB_AHBMODE);
 		break;
 	case CI13XXX_CONTROLLER_DISCONNECT_EVENT:
 		dev_info(dev, "CI13XXX_CONTROLLER_DISCONNECT_EVENT received\n");
@@ -198,7 +149,7 @@ static struct ci13xxx_platform_data ci13xxx_msm_platdata = {
 				  CI13XXX_ZERO_ITC |
 				  CI13XXX_DISABLE_STREAMING |
 				  CI13XXX_IS_OTG,
-	.nz_itc			= 0,
+
 	.notify_event		= ci13xxx_msm_notify_event,
 };
 
@@ -208,20 +159,10 @@ static int ci13xxx_msm_install_wake_gpio(struct platform_device *pdev,
 	int wake_irq;
 	int ret;
 	struct ci13xxx_msm_context *ctx = platform_get_drvdata(pdev);
-	struct pinctrl_state *set_state;
 
 	dev_dbg(&pdev->dev, "ci13xxx_msm_install_wake_gpio\n");
 
 	ctx->wake_gpio = res->start;
-	if (ctx->ci13xxx_pinctrl) {
-		set_state = pinctrl_lookup_state(ctx->ci13xxx_pinctrl,
-				"ci13xxx_active");
-		if (IS_ERR(set_state)) {
-			pr_err("cannot get ci13xxx pinctrl active state\n");
-			return PTR_ERR(set_state);
-		}
-		pinctrl_select_state(ctx->ci13xxx_pinctrl, set_state);
-	}
 	gpio_request(ctx->wake_gpio, "USB_RESUME");
 	gpio_direction_input(ctx->wake_gpio);
 	wake_irq = gpio_to_irq(ctx->wake_gpio);
@@ -245,14 +186,6 @@ static int ci13xxx_msm_install_wake_gpio(struct platform_device *pdev,
 
 gpio_free:
 	gpio_free(ctx->wake_gpio);
-	if (ctx->ci13xxx_pinctrl) {
-		set_state = pinctrl_lookup_state(ctx->ci13xxx_pinctrl,
-				"ci13xxx_sleep");
-		if (IS_ERR(set_state))
-			pr_err("cannot get ci13xxx pinctrl sleep state\n");
-		else
-			pinctrl_select_state(ctx->ci13xxx_pinctrl, set_state);
-	}
 	ctx->wake_gpio = 0;
 	return ret;
 }
@@ -265,15 +198,6 @@ static void ci13xxx_msm_uninstall_wake_gpio(struct platform_device *pdev)
 
 	if (ctx->wake_gpio) {
 		gpio_free(ctx->wake_gpio);
-		if (ctx->ci13xxx_pinctrl) {
-			set_state = pinctrl_lookup_state(ctx->ci13xxx_pinctrl,
-					"ci13xxx_sleep");
-			if (IS_ERR(set_state))
-				pr_err("cannot get ci13xxx pinctrl sleep state\n");
-			else
-				pinctrl_select_state(ctx->ci13xxx_pinctrl,
-						set_state);
-		}
 		ctx->wake_gpio = 0;
 	}
 }
@@ -284,8 +208,7 @@ static int ci13xxx_msm_probe(struct platform_device *pdev)
 	struct ci13xxx_msm_context *ctx;
 	struct platform_device *plat_ci;
 	struct resource *res;
-	int ret, rc;
-	struct ci13xxx_platform_data *pdata = pdev->dev.platform_data;
+	int ret;
 
 	dev_dbg(&pdev->dev, "ci13xxx_msm_probe\n");
 
@@ -293,27 +216,7 @@ static int ci13xxx_msm_probe(struct platform_device *pdev)
 	if (!ctx)
 		return -ENOMEM;
 
-	if (pdata) {
-		/* Acceptable values for nz_itc are: 0,1,2,4,8,16,32,64 */
-		if (pdata->log2_itc > CI13XXX_MSM_MAX_LOG2_ITC ||
-			pdata->log2_itc <= 0)
-			ci13xxx_msm_platdata.nz_itc = 0;
-		else
-			ci13xxx_msm_platdata.nz_itc = 1 << (pdata->log2_itc-1);
-		ci13xxx_msm_platdata.l1_supported = pdata->l1_supported;
-	}
 	res = platform_get_resource_byname(pdev, IORESOURCE_IO, "USB_RESUME");
-	/* Get pinctrl if target uses pinctrl */
-	ctx->ci13xxx_pinctrl = devm_pinctrl_get(&pdev->dev);
-	if (IS_ERR(ctx->ci13xxx_pinctrl)) {
-		if (of_property_read_bool(pdev->dev.of_node, "pinctrl-names")) {
-			dev_err(&pdev->dev, "Error encountered while getting pinctrl");
-			return PTR_ERR(ctx->ci13xxx_pinctrl);
-		}
-		dev_dbg(&pdev->dev, "Target does not use pinctrl\n");
-		ctx->ci13xxx_pinctrl = NULL;
-	}
-
 	if (res) {
 		ret = ci13xxx_msm_install_wake_gpio(pdev, res);
 		if (ret < 0) {
@@ -321,6 +224,7 @@ static int ci13xxx_msm_probe(struct platform_device *pdev)
 			return ret;
 		}
 	}
+
 	plat_ci = ci13xxx_add_device(&pdev->dev,
 				pdev->resource, pdev->num_resources,
 				&ci13xxx_msm_platdata);

@@ -87,12 +87,6 @@ enum video_out_format_t {
 	VIDEO_YUV_FORMAT_TILE_4x2
 };
 
-enum video_playback_mode_t {
-	VIDEO_PLAYBACK_NORMAL = 0,
-	VIDEO_PLAYBACK_TRICKMODE_COARSE = 1,
-	VIDEO_PLAYBACK_TRICKMODE_SMOOTH = 2
-};
-
 typedef struct {
 	int w;
 	int h;
@@ -137,9 +131,6 @@ typedef enum {
 #define VIDEO_CMD_CLEAR_INPUT_BUFFER  (18)
 #define VIDEO_CMD_CLEAR_OUTPUT_BUFFER (19)
 #define VIDEO_CMD_SET_BUFFER_COUNT    (20)
-#define VIDEO_CMD_SET_EXTRADATA_TYPES  (21)
-#define VIDEO_CMD_SET_EXTRADATA_BUFFER (22)
-#define VIDEO_CMD_SET_PLAYBACK_MODE		(23)
 
 /* Flags for VIDEO_CMD_FREEZE */
 #define VIDEO_CMD_FREEZE_TO_BLACK	(1 << 0)
@@ -175,7 +166,6 @@ struct video_buffer_req {
 	unsigned int num_output_buffers; /* Number of Output Buffers */
 	struct video_buffer_prop input_buf_prop; /* Input Buffer Properties */
 	struct video_buffer_prop output_buf_prop; /* Output Buffer Prop */
-	size_t	extradata_size;
 };
 
 enum scan_format {
@@ -195,13 +185,6 @@ struct video_data_buffer {
 	void *ip_buffer_tag;
 	__u64 pts;
 	enum scan_format interlaced_format;
-};
-
-struct extradata_buffer {
-	void __user	*bufferaddr;
-	size_t buffer_len;
-	int	ion_fd;
-	size_t offset;
 };
 
 struct video_h264_mv {
@@ -249,9 +232,6 @@ struct video_command {
 			struct video_data_buffer buffer; /* Buffer Details */
 			struct video_mv_buff_size mv_buffer_req;
 			struct video_h264_mv mv_buffer_prop;
-			unsigned int extradata_type;
-			struct extradata_buffer extradata_buffer;
-			enum video_playback_mode_t video_mode;
 		};
 
 		struct {

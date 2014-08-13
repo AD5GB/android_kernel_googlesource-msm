@@ -21,11 +21,10 @@
 
 #include <mach/subsystem_restart.h>
 #include <mach/msm_smsm.h>
-#include <mach/ramdump.h>
-#include <mach/msm_smem.h>
 
 #include "peripheral-loader.h"
 #include "scm-pas.h"
+#include "ramdump.h"
 
 #define PPSS_RESET			0x2594
 #define PPSS_RESET_PROC_RESET		0x2
@@ -244,7 +243,7 @@ static irqreturn_t dsps_wdog_bite_irq(int irq, void *dev_id)
 	return IRQ_HANDLED;
 }
 
-static int __devinit pil_dsps_driver_probe(struct platform_device *pdev)
+static int pil_dsps_driver_probe(struct platform_device *pdev)
 {
 	struct dsps_data *drv;
 	struct pil_desc *desc;
@@ -349,7 +348,7 @@ err_ramdump:
 	return ret;
 }
 
-static int __devexit pil_dsps_driver_exit(struct platform_device *pdev)
+static int pil_dsps_driver_exit(struct platform_device *pdev)
 {
 	struct dsps_data *drv = platform_get_drvdata(pdev);
 	smsm_state_cb_deregister(SMSM_DSPS_STATE, SMSM_RESET,
@@ -363,7 +362,7 @@ static int __devexit pil_dsps_driver_exit(struct platform_device *pdev)
 
 static struct platform_driver pil_dsps_driver = {
 	.probe = pil_dsps_driver_probe,
-	.remove = __devexit_p(pil_dsps_driver_exit),
+	.remove = pil_dsps_driver_exit,
 	.driver = {
 		.name = "pil_dsps",
 		.owner = THIS_MODULE,

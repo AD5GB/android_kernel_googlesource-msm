@@ -1,4 +1,4 @@
-/* Copyright (c) 2011-2013, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2011-2012, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -242,17 +242,6 @@ int tsens_get_temp(struct tsens_device *device, unsigned long *temp)
 	return 0;
 }
 EXPORT_SYMBOL(tsens_get_temp);
-
-int tsens_get_max_sensor_num(uint32_t *tsens_num_sensors)
-{
-	if (!tmdev)
-		return -ENODEV;
-
-	*tsens_num_sensors = tmdev->tsens_num_sensor;
-
-	return 0;
-}
-EXPORT_SYMBOL(tsens_get_max_sensor_num);
 
 static int tsens_tz_get_mode(struct thermal_zone_device *thermal,
 			      enum thermal_device_mode *mode)
@@ -974,7 +963,7 @@ int msm_tsens_early_init(struct tsens_platform_data *pdata)
 	return rc;
 }
 
-static int __devinit tsens_tm_probe(struct platform_device *pdev)
+static int tsens_tm_probe(struct platform_device *pdev)
 {
 	int rc, i;
 
@@ -1020,7 +1009,7 @@ fail:
 	return rc;
 }
 
-static int __devexit tsens_tm_remove(struct platform_device *pdev)
+static int tsens_tm_remove(struct platform_device *pdev)
 {
 	int i;
 

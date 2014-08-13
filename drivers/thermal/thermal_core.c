@@ -926,40 +926,23 @@ trip_point_type_activate(struct device *dev, struct device_attribute *attr,
 		const char *buf, size_t count)
 {
 	struct thermal_zone_device *tz = to_thermal_zone(dev);
-	int trip, result = 0;
-	bool activate;
-	struct sensor_threshold *threshold = NULL;
+	int trip, result;
 
-	if (!tz->ops->get_trip_type ||
-		!tz->ops->activate_trip_type) {
-		result = -EPERM;
-		goto trip_activate_exit;
-	}
+	if (!tz->ops->activate_trip_type)
+		return -EPERM;
 
-	if (!sscanf(attr->attr.name, "trip_point_%d_type", &trip)) {
-		result = -EINVAL;
-		goto trip_activate_exit;
-	}
+	if (!sscanf(attr->attr.name, "trip_point_%d_type", &trip))
+		return -EINVAL;
 
-	if (!strcmp(buf, "enabled")) {
-		activate = true;
-	} else if (!strcmp(buf, "disabled")) {
-		activate = false;
-	} else {
-		result = -EINVAL;
-		goto trip_activate_exit;
-	}
-
-	get_trip_threshold(tz, trip, &threshold);
-	if (threshold)
-		result = sensor_activate_trip(tz->sensor.sensor_id,
-			threshold, activate);
-	else
+	if (!strncmp(buf, "enabled", sizeof("enabled")))
 		result = tz->ops->activate_trip_type(tz, trip,
-			activate ? THERMAL_TRIP_ACTIVATION_ENABLED :
-			THERMAL_TRIP_ACTIVATION_DISABLED);
+					THERMAL_TRIP_ACTIVATION_ENABLED);
+	else if (!strncmp(buf, "disabled", sizeof("disabled")))
+		result = tz->ops->activate_trip_type(tz, trip,
+					THERMAL_TRIP_ACTIVATION_DISABLED);
+	else
+		result = -EINVAL;
 
-trip_activate_exit:
 	if (result)
 		return result;
 

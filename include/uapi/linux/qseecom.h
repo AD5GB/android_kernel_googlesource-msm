@@ -6,7 +6,7 @@
 
 #define MAX_ION_FD  4
 #define MAX_APP_NAME_SIZE  32
-#define QSEECOM_HASH_SIZE  32
+
 /*
  * struct qseecom_register_listener_req -
  *      for register listener ioctl request
@@ -36,6 +36,7 @@ struct qseecom_send_cmd_req {
 	unsigned int resp_len; /* in/out */
 };
 
+
 /*
  * struct qseecom_ion_fd_info - ion fd handle data information
  * @fd - ion handle to some memory allocated in user space
@@ -61,7 +62,6 @@ struct qseecom_send_modfd_cmd_req {
 	unsigned int resp_len; /* in/out */
 	struct qseecom_ion_fd_info ifd_data[MAX_ION_FD];
 };
-
 /*
  * struct qseecom_listener_send_resp_req - signal to continue the send_cmd req.
  * Used as a trigger from HLOS service to notify QSEECOM that it's done with its
@@ -117,92 +117,6 @@ struct qseecom_qseos_app_load_query {
 	int app_id; /* out */
 };
 
-struct qseecom_send_svc_cmd_req {
-	uint32_t cmd_id;
-	void *cmd_req_buf; /* in */
-	unsigned int cmd_req_len; /* in */
-	void *resp_buf; /* in/out */
-	unsigned int resp_len; /* in/out */
-};
-
-enum qseecom_key_management_usage_type {
-	QSEOS_KM_USAGE_DISK_ENCRYPTION = 0x01,
-	QSEOS_KM_USAGE_FILE_ENCRYPTION = 0x02,
-	QSEOS_KM_USAGE_MAX
-};
-
-struct qseecom_create_key_req {
-	unsigned char hash32[QSEECOM_HASH_SIZE];
-	enum qseecom_key_management_usage_type usage;
-};
-
-struct qseecom_wipe_key_req {
-	enum qseecom_key_management_usage_type usage;
-	int wipe_key_flag;/* 1->remove key from storage(alone with clear key) */
-			  /* 0->do not remove from storage (clear key) */
-};
-
-struct qseecom_update_key_userinfo_req {
-	unsigned char current_hash32[QSEECOM_HASH_SIZE];
-	unsigned char new_hash32[QSEECOM_HASH_SIZE];
-	enum qseecom_key_management_usage_type usage;
-};
-
-#define SHA256_DIGEST_LENGTH	(256/8)
-/*
- * struct qseecom_save_partition_hash_req
- * @partition_id - partition id.
- * @hash[SHA256_DIGEST_LENGTH] -  sha256 digest.
- */
-struct qseecom_save_partition_hash_req {
-	int partition_id; /* in */
-	char digest[SHA256_DIGEST_LENGTH]; /* in */
-};
-
-/*
- * struct qseecom_is_es_activated_req
- * @is_activated - 1=true , 0=false
- */
-struct qseecom_is_es_activated_req {
-	int is_activated; /* out */
-};
-
-enum qseecom_bandwidth_request_mode {
-	INACTIVE = 0,
-	LOW,
-	MEDIUM,
-	HIGH,
-};
-
-/*
- * struct qseecom_send_modfd_resp - for send command ioctl request
- * @req_len - command buffer length
- * @req_buf - command buffer
- * @ifd_data_fd - ion handle to memory allocated in user space
- * @cmd_buf_offset - command buffer offset
- */
-struct qseecom_send_modfd_listener_resp {
-	void *resp_buf_ptr; /* in */
-	unsigned int resp_len; /* in */
-	struct qseecom_ion_fd_info ifd_data[MAX_ION_FD]; /* in */
-};
-
-struct qseecom_qteec_req {
-	void    *req_ptr;
-	uint32_t    req_len;
-	void    *resp_ptr;
-	uint32_t    resp_len;
-};
-
-struct qseecom_qteec_modfd_req {
-	void    *req_ptr;
-	uint32_t    req_len;
-	void    *resp_ptr;
-	uint32_t    resp_len;
-	struct qseecom_ion_fd_info ifd_data[MAX_ION_FD];
-};
-
-
 #define QSEECOM_IOC_MAGIC    0x97
 
 
@@ -250,38 +164,5 @@ struct qseecom_qteec_modfd_req {
 
 #define QSEECOM_IOCTL_APP_LOADED_QUERY_REQ \
 	_IOWR(QSEECOM_IOC_MAGIC, 15, struct qseecom_qseos_app_load_query)
-
-#define QSEECOM_IOCTL_SEND_CMD_SERVICE_REQ \
-	_IOWR(QSEECOM_IOC_MAGIC, 16, struct qseecom_send_svc_cmd_req)
-
-#define QSEECOM_IOCTL_CREATE_KEY_REQ \
-	_IOWR(QSEECOM_IOC_MAGIC, 17, struct qseecom_create_key_req)
-
-#define QSEECOM_IOCTL_WIPE_KEY_REQ \
-	_IOWR(QSEECOM_IOC_MAGIC, 18, struct qseecom_wipe_key_req)
-
-#define QSEECOM_IOCTL_SAVE_PARTITION_HASH_REQ \
-	_IOWR(QSEECOM_IOC_MAGIC, 19, struct qseecom_save_partition_hash_req)
-
-#define QSEECOM_IOCTL_IS_ES_ACTIVATED_REQ \
-	_IOWR(QSEECOM_IOC_MAGIC, 20, struct qseecom_is_es_activated_req)
-
-#define QSEECOM_IOCTL_SEND_MODFD_RESP \
-	_IOWR(QSEECOM_IOC_MAGIC, 21, struct qseecom_send_modfd_listener_resp)
-
-#define QSEECOM_IOCTL_SET_BUS_SCALING_REQ \
-	_IOWR(QSEECOM_IOC_MAGIC, 23, int)
-
-#define QSEECOM_IOCTL_UPDATE_KEY_USER_INFO_REQ \
-	_IOWR(QSEECOM_IOC_MAGIC, 24, struct qseecom_update_key_userinfo_req)
-
-#define QSEECOM_QTEEC_IOCTL_OPEN_SESSION_REQ \
-	_IOWR(QSEECOM_IOC_MAGIC, 30, struct qseecom_qteec_req)
-
-#define QSEECOM_QTEEC_IOCTL_CLOSE_SESSION_REQ \
-	_IOWR(QSEECOM_IOC_MAGIC, 31, struct qseecom_qteec_req)
-
-#define QSEECOM_QTEEC_IOCTL_INVOKE_MODFD_CMD_REQ \
-	_IOWR(QSEECOM_IOC_MAGIC, 32, struct qseecom_qteec_req)
 
 #endif /* _UAPI_QSEECOM_H_ */

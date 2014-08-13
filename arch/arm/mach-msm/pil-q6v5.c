@@ -46,9 +46,7 @@
 #define Q6SS_CLK_ENA			BIT(1)
 
 /* QDSP6SS_PWR_CTL */
-#define Q6SS_L2DATA_SLP_NRET_N_0	BIT(0)
-#define Q6SS_L2DATA_SLP_NRET_N_1	BIT(1)
-#define Q6SS_L2DATA_SLP_NRET_N_2	BIT(2)
+#define Q6SS_L2DATA_SLP_NRET_N		(BIT(0)|BIT(1)|BIT(2))
 #define Q6SS_L2TAG_SLP_NRET_N		BIT(16)
 #define Q6SS_ETB_SLP_NRET_N		BIT(17)
 #define Q6SS_L2DATA_STBY_N		BIT(18)
@@ -162,8 +160,7 @@ void pil_q6v5_shutdown(struct pil_desc *pil)
 	writel_relaxed(val, drv->reg_base + QDSP6SS_PWR_CTL);
 
 	/* Turn off Q6 memories */
-	val &= ~(Q6SS_L2DATA_SLP_NRET_N_0 | Q6SS_L2DATA_SLP_NRET_N_1 |
-		 Q6SS_L2DATA_SLP_NRET_N_2 | Q6SS_SLP_RET_N |
+	val &= ~(Q6SS_L2DATA_SLP_NRET_N | Q6SS_SLP_RET_N |
 		 Q6SS_L2TAG_SLP_NRET_N | Q6SS_ETB_SLP_NRET_N |
 		 Q6SS_L2DATA_STBY_N);
 	writel_relaxed(val, drv->reg_base + QDSP6SS_PWR_CTL);
@@ -197,19 +194,11 @@ int pil_q6v5_reset(struct pil_desc *pil)
 	mb();
 	udelay(1);
 
-	/*
-	 * Turn on memories. L2 banks should be done individually
-	 * to minimize inrush current.
-	 */
+	/* Turn on memories */
 	val = readl_relaxed(drv->reg_base + QDSP6SS_PWR_CTL);
-	val |= Q6SS_SLP_RET_N | Q6SS_L2TAG_SLP_NRET_N |
-	       Q6SS_ETB_SLP_NRET_N | Q6SS_L2DATA_STBY_N;
-	writel_relaxed(val, drv->reg_base + QDSP6SS_PWR_CTL);
-	val |= Q6SS_L2DATA_SLP_NRET_N_2;
-	writel_relaxed(val, drv->reg_base + QDSP6SS_PWR_CTL);
-	val |= Q6SS_L2DATA_SLP_NRET_N_1;
-	writel_relaxed(val, drv->reg_base + QDSP6SS_PWR_CTL);
-	val |= Q6SS_L2DATA_SLP_NRET_N_0;
+	val |= Q6SS_L2DATA_SLP_NRET_N | Q6SS_SLP_RET_N |
+	       Q6SS_L2TAG_SLP_NRET_N | Q6SS_ETB_SLP_NRET_N |
+	       Q6SS_L2DATA_STBY_N;
 	writel_relaxed(val, drv->reg_base + QDSP6SS_PWR_CTL);
 
 	/* Remove IO clamp */
@@ -235,7 +224,7 @@ int pil_q6v5_reset(struct pil_desc *pil)
 }
 EXPORT_SYMBOL(pil_q6v5_reset);
 
-struct q6v5_data __devinit *pil_q6v5_init(struct platform_device *pdev)
+struct q6v5_data *pil_q6v5_init(struct platform_device *pdev)
 {
 	struct q6v5_data *drv;
 	struct resource *res;

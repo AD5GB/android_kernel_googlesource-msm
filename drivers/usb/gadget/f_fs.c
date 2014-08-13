@@ -764,9 +764,9 @@ static ssize_t ffs_epfile_io(struct file *file,
 	char *data = NULL;
 	ssize_t ret;
 	int halt;
-	int buffer_len = 0;
+	int buffer_len = !read ? len : round_up(len, 512);
 
-	pr_debug("%s: len %zu, read %d\n", __func__, len, read);
+	pr_debug("%s: len %d, buffer_len %d, read %d\n", __func__, len, buffer_len, read);
 
 	goto first_try;
 	do {
@@ -1591,15 +1591,7 @@ static int ffs_func_eps_enable(struct ffs_function *func)
 	spin_lock_irqsave(&func->ffs->eps_lock, flags);
 	do {
 		struct usb_endpoint_descriptor *ds;
-		int desc_idx;
-
-		if (ffs->gadget->speed == USB_SPEED_SUPER)
-			desc_idx = 2;
-		else if (ffs->gadget->speed == USB_SPEED_HIGH)
-			desc_idx = 1;
-		else
-			desc_idx = 0;
-
+		int desc_idx = ffs->gadget->speed == USB_SPEED_HIGH ? 1 : 0;
 		ds = ep->descs[desc_idx];
 		if (!ds) {
 			ret = -EINVAL;

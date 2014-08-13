@@ -1,4 +1,4 @@
-/* Copyright (c) 2009-2013, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2009-2012, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -32,6 +32,7 @@
 #include <mach/msm_bus.h>
 #include <mach/msm_bus_board.h>
 #endif
+#include <mach/msm_subsystem_map.h>
 #include <mach/iommu_domains.h>
 
 #define DRIVER_NAME "msm_rotator"
@@ -181,7 +182,8 @@ int msm_rotator_iommu_map_buf(int mem_id, int domain,
 		pr_err("ion_import_dma_buf() failed\n");
 		return PTR_ERR(*pihdl);
 	}
-	pr_debug("%s(): ion_hdl %p, ion_fd %d\n", __func__, *pihdl, mem_id);
+	pr_debug("%s(): ion_hdl %p, ion_fd %d\n", __func__, *pihdl,
+		ion_share_dma_buf(msm_rotator_dev->client, *pihdl));
 
 	if (rot_iommu_split_domain) {
 		if (secure) {
@@ -351,7 +353,6 @@ static int get_bpp(int format)
 	case MDP_RGBA_8888:
 	case MDP_BGRA_8888:
 	case MDP_RGBX_8888:
-	case MDP_BGRX_8888:
 		return 4;
 
 	case MDP_Y_CBCR_H2V2:
@@ -408,7 +409,6 @@ static int msm_rotator_get_plane_sizes(uint32_t format,	uint32_t w, uint32_t h,
 	case MDP_RGBA_8888:
 	case MDP_BGRA_8888:
 	case MDP_RGBX_8888:
-	case MDP_BGRX_8888:
 	case MDP_RGB_888:
 	case MDP_RGB_565:
 	case MDP_BGR_565:
@@ -813,7 +813,6 @@ static int msm_rotator_rgb_types(struct msm_rotator_img_info *info,
 			break;
 
 		case MDP_BGRA_8888:
-		case MDP_BGRX_8888:
 			iowrite32(GET_PACK_PATTERN(CLR_ALPHA, CLR_B, CLR_G,
 						   CLR_R, 8),
 				  MSM_ROTATOR_SRC_UNPACK_PATTERN1);
@@ -1121,7 +1120,6 @@ static int msm_rotator_do_rotate(unsigned long arg)
 	case MDP_XRGB_8888:
 	case MDP_BGRA_8888:
 	case MDP_RGBX_8888:
-	case MDP_BGRX_8888:
 	case MDP_YCBCR_H1V1:
 	case MDP_YCRCB_H1V1:
 		rc = msm_rotator_rgb_types(msm_rotator_dev->img_info[s],
@@ -1279,7 +1277,6 @@ static int msm_rotator_start(unsigned long arg,
 	case MDP_XRGB_8888:
 	case MDP_RGBX_8888:
 	case MDP_BGRA_8888:
-	case MDP_BGRX_8888:
 		is_rgb = 1;
 		info.dst.format = info.src.format;
 		break;
@@ -1519,7 +1516,7 @@ static const struct file_operations msm_rotator_fops = {
 	.unlocked_ioctl = msm_rotator_ioctl,
 };
 
-static int __devinit msm_rotator_probe(struct platform_device *pdev)
+static int msm_rotator_probe(struct platform_device *pdev)
 {
 	int rc = 0;
 	struct resource *res;
@@ -1745,7 +1742,7 @@ error_imem_clk:
 	return rc;
 }
 
-static int __devexit msm_rotator_remove(struct platform_device *plat_dev)
+static int msm_rotator_remove(struct platform_device *plat_dev)
 {
 	int i;
 
@@ -1821,7 +1818,7 @@ static int msm_rotator_resume(struct platform_device *dev)
 
 static struct platform_driver msm_rotator_platform_driver = {
 	.probe = msm_rotator_probe,
-	.remove = __devexit_p(msm_rotator_remove),
+	.remove = msm_rotator_remove,
 #ifdef CONFIG_PM
 	.suspend = msm_rotator_suspend,
 	.resume = msm_rotator_resume,

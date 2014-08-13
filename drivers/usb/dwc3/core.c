@@ -176,6 +176,8 @@ static void dwc3_core_soft_reset(struct dwc3 *dwc)
 	reg |= DWC3_GUSB2PHYCFG_PHYSOFTRST;
 	dwc3_writel(dwc->regs, DWC3_GUSB2PHYCFG(0), reg);
 
+	//usb_phy_init(dwc->usb2_phy);
+	//usb_phy_init(dwc->usb3_phy);
 	mdelay(100);
 
 	/* Clear USB3 PHY reset */
@@ -475,15 +477,11 @@ static int dwc3_core_init(struct dwc3 *dwc)
 		reg &= ~DWC3_GUSB3PIPECTL_DIS_RXDET_U3_RXDET;
 		dwc3_writel(dwc->regs, DWC3_GUSB3PIPECTL(0), reg);
 	}
-	/*
-	 * clear Elastic buffer mode in GUSBPIPE_CTRL(0) register, otherwise
-	 * it results in high link errors and could cause SS mode transfer
-	 * failure.
-	 */
-	if (!dwc->nominal_elastic_buffer) {
-		reg = dwc3_readl(dwc->regs, DWC3_GUSB3PIPECTL(0));
-		reg &= ~DWC3_GUSB3PIPECTL_ELASTIC_BUF_MODE;
-		dwc3_writel(dwc->regs, DWC3_GUSB3PIPECTL(0), reg);
+
+	ret = dwc3_event_buffers_setup(dwc);
+	if (ret) {
+		dev_err(dwc->dev, "failed to setup event buffers\n");
+		goto err0;
 	}
 
 	return 0;
@@ -494,8 +492,17 @@ err0:
 
 static void dwc3_core_exit(struct dwc3 *dwc)
 {
-	usb_phy_shutdown(dwc->usb2_phy);
-	usb_phy_shutdown(dwc->usb3_phy);
+	dwc3_event_buffers_cleanup(dwc);
+
+	//usb_phy_shutdown(dwc->usb2_phy);
+	//usb_phy_shutdown(dwc->usb3_phy);
+}
+
+/* XHCI reset, resets other CORE registers as well, re-init those */
+void dwc3_post_host_reset_core_init(struct dwc3 *dwc)
+{
+	dwc3_core_init(dwc);
+	dwc3_gadget_restart(dwc);
 }
 
 /* XHCI reset, resets other CORE registers as well, re-init those */
@@ -550,6 +557,7 @@ static int dwc3_probe(struct platform_device *pdev)
 	u8			mode;
 	bool			host_only_mode;
 
+	dev_info(&pdev->dev, "%s: enter\n", __func__);
 	mem = devm_kzalloc(dev, sizeof(*dwc) + DWC3_ALIGN_MASK, GFP_KERNEL);
 	if (!mem) {
 		dev_err(dev, "not enough memory\n");
@@ -599,15 +607,7 @@ static int dwc3_probe(struct platform_device *pdev)
 		return -ENOMEM;
 	}
 
-	dwc->core_reset_after_phy_init =
-		of_property_read_bool(node, "core_reset_after_phy_init");
-
-	dwc->needs_fifo_resize = of_property_read_bool(node, "tx-fifo-resize");
-	host_only_mode = of_property_read_bool(node, "host-only-mode");
-	dwc->hsphy_auto_suspend_disable = of_property_read_bool(node,
-						"snps,hsphy-auto-suspend-disable");
-	dwc->maximum_speed = of_usb_get_maximum_speed(node);
-
+#if 0
 	if (node) {
 		dwc->usb2_phy = devm_usb_get_phy_by_phandle(dev, "usb-phy", 0);
 		dwc->usb3_phy = devm_usb_get_phy_by_phandle(dev, "usb-phy", 1);
@@ -652,6 +652,7 @@ static int dwc3_probe(struct platform_device *pdev)
 
 	usb_phy_set_suspend(dwc->usb2_phy, 0);
 	usb_phy_set_suspend(dwc->usb3_phy, 0);
+#endif
 
 	spin_lock_init(&dwc->lock);
 	platform_set_drvdata(pdev, dwc);
@@ -688,30 +689,8 @@ static int dwc3_probe(struct platform_device *pdev)
 		goto err0;
 	}
 
-	ret = dwc3_event_buffers_setup(dwc);
-	if (ret) {
-		dev_err(dwc->dev, "failed to setup event buffers\n");
-		goto err1;
-	}
-
-	if (IS_ENABLED(CONFIG_USB_DWC3_HOST))
-		mode = DWC3_MODE_HOST;
-	else if (IS_ENABLED(CONFIG_USB_DWC3_GADGET))
-		mode = DWC3_MODE_DEVICE;
-	else
-		mode = DWC3_MODE_DRD;
-
-	/* Override mode if user selects host-only config with DRD core */
-	if (host_only_mode && (mode == DWC3_MODE_DRD)) {
-		dev_dbg(dev, "host only mode selected\n");
-		mode = DWC3_MODE_HOST;
-	}
-
-	/* Override mode if user selects host-only config with DRD core */
-	if (host_only_mode && (mode == DWC3_MODE_DRD)) {
-		dev_dbg(dev, "host only mode selected\n");
-		mode = DWC3_MODE_HOST;
-	}
+	mode = DWC3_MODE(dwc->hwparams.hwparams0);
+	dev_info(&pdev->dev, "%s: mode %d\n", __func__, mode);
 
 	switch (mode) {
 	case DWC3_MODE_DEVICE:
@@ -750,7 +729,7 @@ static int dwc3_probe(struct platform_device *pdev)
 			dev_err(dev, "failed to initialize gadget\n");
 			dwc3_host_exit(dwc);
 			dwc3_otg_exit(dwc);
-			goto err2;
+			goto err1;
 		}
 		break;
 	default:
@@ -765,8 +744,7 @@ static int dwc3_probe(struct platform_device *pdev)
 		goto err3;
 	}
 
-	dwc3_notify_event(dwc, DWC3_CONTROLLER_POST_INITIALIZATION_EVENT);
-
+	dev_info(&pdev->dev, "%s: done\n", __func__);
 	return 0;
 
 err3:
@@ -796,6 +774,7 @@ err1:
 err0:
 	dwc3_free_event_buffers(dwc);
 
+	dev_info(&pdev->dev, "%s: failed\n", __func__);
 	return ret;
 }
 
@@ -803,8 +782,8 @@ static int dwc3_remove(struct platform_device *pdev)
 {
 	struct dwc3	*dwc = platform_get_drvdata(pdev);
 
-	usb_phy_set_suspend(dwc->usb2_phy, 1);
-	usb_phy_set_suspend(dwc->usb3_phy, 1);
+	//usb_phy_set_suspend(dwc->usb2_phy, 1);
+	//usb_phy_set_suspend(dwc->usb3_phy, 1);
 
 	pm_runtime_disable(&pdev->dev);
 

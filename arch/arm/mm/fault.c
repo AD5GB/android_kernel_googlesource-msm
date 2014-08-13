@@ -32,6 +32,7 @@
 
 #include "fault.h"
 
+#define CREATE_TRACE_POINTS
 #include <trace/events/exception.h>
 
 #ifdef CONFIG_MMU

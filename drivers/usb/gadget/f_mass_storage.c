@@ -2442,8 +2442,7 @@ static int fsg_set_alt(struct usb_function *f, unsigned intf, unsigned alt)
 		goto reset_bulk_int;
 	fsg->bulk_out->driver_data = common;
 	fsg->bulk_out_enabled = 1;
-	common->bulk_out_maxpacket =
-			le16_to_cpu(fsg->bulk_out->desc->wMaxPacketSize);
+	common->bulk_out_maxpacket = le16_to_cpu(fsg->bulk_in->desc->wMaxPacketSize);
 	clear_bit(IGNORE_BULK_OUT, &fsg->atomic_bitflags);
 	csw_hack_sent = 0;
 	write_error_after_csw_sent = 0;
@@ -2915,9 +2914,59 @@ static struct fsg_common *fsg_common_init(struct fsg_common *common,
 	common->luns = curlun;
 
 	init_rwsem(&common->filesem);
-	rc = create_lun_device(common, cdev, cfg, 0);
-	if (rc != 0)
-		goto error;
+
+	for (i = 0, lcfg = cfg->luns; i < nluns; ++i, ++curlun, ++lcfg) {
+		curlun->cdrom = !!lcfg->cdrom;
+		curlun->ro = lcfg->cdrom || lcfg->ro;
+		curlun->initially_ro = curlun->ro;
+		curlun->removable = lcfg->removable;
+		curlun->nofua = lcfg->nofua;
+		curlun->dev.release = fsg_lun_release;
+		curlun->dev.parent = &gadget->dev;
+		/* curlun->dev.driver = &fsg_driver.driver; XXX */
+		dev_set_drvdata(&curlun->dev, &common->filesem);
+		dev_set_name(&curlun->dev, "lun%d", i);
+
+		rc = device_register(&curlun->dev);
+		if (rc) {
+			INFO(common, "failed to register LUN%d: %d\n", i, rc);
+			common->nluns = i;
+			put_device(&curlun->dev);
+			goto error_release;
+		}
+
+		rc = device_create_file(&curlun->dev,
+					curlun->cdrom
+				      ? &dev_attr_ro_cdrom
+				      : &dev_attr_ro);
+		if (rc)
+			goto error_luns;
+		rc = device_create_file(&curlun->dev,
+					curlun->removable
+				      ? &dev_attr_file
+				      : &dev_attr_file_nonremovable);
+		if (rc)
+			goto error_luns;
+		rc = device_create_file(&curlun->dev, &dev_attr_nofua);
+		if (rc)
+			goto error_luns;
+#ifdef CONFIG_USB_MSC_PROFILING
+		rc = device_create_file(&curlun->dev, &dev_attr_perf);
+		if (rc)
+			dev_err(&gadget->dev, "failed to create sysfs entry:"
+				"(dev_attr_perf) error: %d\n", rc);
+#endif
+		if (lcfg->filename) {
+			rc = fsg_lun_open(curlun, lcfg->filename);
+			if (rc)
+				goto error_luns;
+		} else if (!curlun->removable && !curlun->cdrom) {
+			ERROR(common, "no file given for LUN%d\n", i);
+			rc = -EINVAL;
+			goto error_luns;
+		}
+	}
+	common->nluns = nluns;
 
 	/* Data buffers cyclic list */
 	bh = common->buffhds;

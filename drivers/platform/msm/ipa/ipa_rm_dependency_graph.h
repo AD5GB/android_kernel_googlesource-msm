@@ -1,4 +1,4 @@
-/* Copyright (c) 2013-2014, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2013, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -14,11 +14,12 @@
 #define _IPA_RM_DEPENDENCY_GRAPH_H_
 
 #include <linux/list.h>
-#include <linux/ipa.h>
+#include <mach/ipa.h>
 #include "ipa_rm_resource.h"
 
 struct ipa_rm_dep_graph {
 	struct ipa_rm_resource *resource_table[IPA_RM_RESOURCE_MAX];
+	rwlock_t lock;
 };
 
 int ipa_rm_dep_graph_get_resource(
@@ -32,9 +33,6 @@ void ipa_rm_dep_graph_delete(struct ipa_rm_dep_graph *graph);
 
 int ipa_rm_dep_graph_add(struct ipa_rm_dep_graph *graph,
 			 struct ipa_rm_resource *resource);
-
-int ipa_rm_dep_graph_remove(struct ipa_rm_dep_graph *graph,
-				enum ipa_rm_resource_name resource_name);
 
 int ipa_rm_dep_graph_add_dependency(struct ipa_rm_dep_graph *graph,
 				enum ipa_rm_resource_name resource_name,

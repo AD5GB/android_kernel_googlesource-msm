@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2014, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2011-2013, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -17,22 +17,17 @@
 #include <linux/delay.h>
 #include <linux/slab.h>
 #include <linux/termios.h>
-#include <soc/qcom/smd.h>
+#include <mach/msm_smd.h>
 #include <linux/debugfs.h>
 #include <linux/bitops.h>
 #include <linux/termios.h>
 
 #include "u_rmnet.h"
 
-#define MAX_CTRL_PER_CLIENT	3
-#define MAX_CTRL_PORT		(MAX_CTRL_PER_CLIENT * NR_CTRL_CLIENTS)
-static char *ctrl_names[NR_CTRL_CLIENTS][MAX_CTRL_PER_CLIENT] = {
-	{"DATA40_CNTL", "DATA39_CNTL", "DATA38_CNTL"},
-	{"DATA39_CNTL"},
-};
+#define NR_CTRL_SMD_PORTS	3
+static int n_rmnet_ctrl_ports;
+static char *rmnet_ctrl_names[] = {"DATA40_CNTL", "DATA39_CNTL", "DATA38_CNTL"};
 static struct workqueue_struct *grmnet_ctrl_wq;
-
-u8 online_clients;
 
 #define SMD_CH_MAX_LEN	20
 #define CH_OPENED	0
@@ -44,7 +39,6 @@ struct smd_ch_info {
 	char			*name;
 	unsigned long		flags;
 	wait_queue_head_t	wait;
-	wait_queue_head_t smd_wait_q;
 	unsigned		dtr;
 
 	struct list_head	tx_q;
@@ -74,7 +68,7 @@ struct rmnet_ctrl_port {
 static struct rmnet_ctrl_ports {
 	struct rmnet_ctrl_port *port;
 	struct platform_driver pdrv;
-} ctrl_smd_ports[MAX_CTRL_PORT];
+} ctrl_smd_ports[NR_CTRL_SMD_PORTS];
 
 
 /*---------------misc functions---------------- */
@@ -112,8 +106,8 @@ static void grmnet_ctrl_smd_read_w(struct work_struct *w)
 {
 	struct smd_ch_info *c = container_of(w, struct smd_ch_info, read_w);
 	struct rmnet_ctrl_port *port = c->port;
-	int sz, total_received, read_avail;
-	int len;
+	int sz;
+	size_t len;
 	void *buf;
 	unsigned long flags;
 
@@ -123,47 +117,22 @@ static void grmnet_ctrl_smd_read_w(struct work_struct *w)
 		if (sz <= 0)
 			break;
 
+		if (smd_read_avail(c->ch) < sz)
+			break;
+
 		spin_unlock_irqrestore(&port->port_lock, flags);
 
 		buf = kmalloc(sz, GFP_KERNEL);
 		if (!buf)
 			return;
 
-		total_received = 0;
-		while (total_received < sz) {
-			wait_event(c->smd_wait_q,
-				((read_avail = smd_read_avail(c->ch)) ||
-				(c->ch == 0)));
-
-			if (read_avail < 0 || c->ch == 0) {
-				pr_err("%s:smd read_avail failure:%d or channel closed ch=%p",
-					   __func__, read_avail, c->ch);
-				kfree(buf);
-				return;
-			}
-
-			if (read_avail + total_received > sz) {
-				pr_err("%s: SMD sending incorrect pkt\n",
-					   __func__);
-				kfree(buf);
-				return;
-			}
-
-			len = smd_read(c->ch, buf + total_received, read_avail);
-			if (len <= 0) {
-				pr_err("%s: smd read failure %d\n",
-					   __func__, len);
-				kfree(buf);
-				return;
-			}
-			total_received += len;
-		}
+		len = smd_read(c->ch, buf, sz);
 
 		/* send it to USB here */
 		spin_lock_irqsave(&port->port_lock, flags);
 		if (port->port_usb && port->port_usb->send_cpkt_response) {
 			port->port_usb->send_cpkt_response(port->port_usb,
-							buf, sz);
+							buf, len);
 			c->to_host++;
 		}
 		kfree(buf);
@@ -203,15 +172,6 @@ static void grmnet_ctrl_smd_write_w(struct work_struct *w)
 	}
 	spin_unlock_irqrestore(&port->port_lock, flags);
 }
-static int is_legal_port_num(u8 portno)
-{
-	if (portno >= MAX_CTRL_PORT)
-		return false;
-	if (ctrl_smd_ports[portno].port == NULL)
-		return false;
-
-	return true;
-}
 
 static int
 grmnet_ctrl_smd_send_cpkt_tomodem(u8 portno,
@@ -222,7 +182,7 @@ grmnet_ctrl_smd_send_cpkt_tomodem(u8 portno,
 	struct smd_ch_info	*c;
 	struct rmnet_ctrl_pkt *cpkt;
 
-	if (!is_legal_port_num(portno)) {
+	if (portno >= n_rmnet_ctrl_ports) {
 		pr_err("%s: Invalid portno#%d\n", __func__, portno);
 		return -ENODEV;
 	}
@@ -265,7 +225,7 @@ gsmd_ctrl_send_cbits_tomodem(void *gptr, u8 portno, int cbits)
 	int			clear_bits = 0;
 	int			temp = 0;
 
-	if (!is_legal_port_num(portno)) {
+	if (portno >= n_rmnet_ctrl_ports) {
 		pr_err("%s: Invalid portno#%d\n", __func__, portno);
 		return;
 	}
@@ -330,7 +290,7 @@ static void grmnet_ctrl_smd_notify(void *p, unsigned event)
 
 	switch (event) {
 	case SMD_EVENT_DATA:
-		if (smd_read_avail(c->ch) && !waitqueue_active(&c->smd_wait_q))
+		if (smd_read_avail(c->ch))
 			queue_work(grmnet_ctrl_wq, &c->read_w);
 		if (smd_write_avail(c->ch))
 			queue_work(grmnet_ctrl_wq, &c->write_w);
@@ -360,7 +320,6 @@ static void grmnet_ctrl_smd_notify(void *p, unsigned event)
 
 		break;
 	}
-	wake_up(&c->smd_wait_q);
 }
 /*------------------------------------------------------------ */
 
@@ -385,8 +344,7 @@ static void grmnet_ctrl_smd_connect_w(struct work_struct *w)
 		return;
 	}
 
-	ret = smd_named_open_on_edge(c->name, SMD_APPS_MODEM, &c->ch, port,
-							grmnet_ctrl_smd_notify);
+	ret = smd_open(c->name, &c->ch, port, grmnet_ctrl_smd_notify);
 	if (ret) {
 		if (ret == -EAGAIN) {
 			/* port not ready  - retry */
@@ -417,8 +375,8 @@ int gsmd_ctrl_connect(struct grmnet *gr, int port_num)
 
 	pr_debug("%s: grmnet:%p port#%d\n", __func__, gr, port_num);
 
-	if (!is_legal_port_num(port_num)) {
-		pr_err("%s: Invalid port_num#%d\n", __func__, port_num);
+	if (port_num >= n_rmnet_ctrl_ports) {
+		pr_err("%s: invalid portno#%d\n", __func__, port_num);
 		return -ENODEV;
 	}
 
@@ -450,11 +408,6 @@ static void grmnet_ctrl_smd_disconnect_w(struct work_struct *w)
 	struct platform_driver *pdrv;
 
 	c = &port->ctrl_ch;
-	if (c->ch) {
-		smd_close(c->ch);
-		c->ch = NULL;
-	}
-
 	if (test_bit(CH_READY, &c->flags) ||
 	    test_bit(CH_PREPARE_READY, &c->flags)) {
 		clear_bit(CH_PREPARE_READY, &c->flags);
@@ -469,12 +422,11 @@ void gsmd_ctrl_disconnect(struct grmnet *gr, u8 port_num)
 	unsigned long		flags;
 	struct smd_ch_info	*c;
 	struct rmnet_ctrl_pkt	*cpkt;
-	int clear_bits;
 
 	pr_debug("%s: grmnet:%p port#%d\n", __func__, gr, port_num);
 
-	if (!is_legal_port_num(port_num)) {
-		pr_err("%s: Invalid port_num#%d\n", __func__, port_num);
+	if (port_num >= n_rmnet_ctrl_ports) {
+		pr_err("%s: invalid portno#%d\n", __func__, port_num);
 		return;
 	}
 
@@ -501,10 +453,13 @@ void gsmd_ctrl_disconnect(struct grmnet *gr, u8 port_num)
 
 	spin_unlock_irqrestore(&port->port_lock, flags);
 
-	if (test_and_clear_bit(CH_OPENED, &c->flags)) {
-		clear_bits = ~(c->cbits_tomodem | TIOCM_RTS);
+	if (test_and_clear_bit(CH_OPENED, &c->flags))
 		/* send dtr zero */
-		smd_tiocmset(c->ch, c->cbits_tomodem, clear_bits);
+		smd_tiocmset(c->ch, c->cbits_tomodem, ~c->cbits_tomodem);
+
+	if (c->ch) {
+		smd_close(c->ch);
+		c->ch = NULL;
 	}
 
 	queue_delayed_work(grmnet_ctrl_wq, &port->disconnect_w, 0);
@@ -520,10 +475,7 @@ static int grmnet_ctrl_smd_ch_probe(struct platform_device *pdev)
 
 	pr_debug("%s: name:%s\n", __func__, pdev->name);
 
-	for (i = 0; i < MAX_CTRL_PORT; i++) {
-		if (!ctrl_smd_ports[i].port)
-			continue;
-
+	for (i = 0; i < n_rmnet_ctrl_ports; i++) {
 		port = ctrl_smd_ports[i].port;
 		c = &port->ctrl_ch;
 
@@ -553,10 +505,7 @@ static int grmnet_ctrl_smd_ch_remove(struct platform_device *pdev)
 
 	pr_debug("%s: name:%s\n", __func__, pdev->name);
 
-	for (i = 0; i < MAX_CTRL_PORT; i++) {
-		if (!ctrl_smd_ports[i].port)
-			continue;
-
+	for (i = 0; i < n_rmnet_ctrl_ports; i++) {
 		port = ctrl_smd_ports[i].port;
 		c = &port->ctrl_ch;
 
@@ -592,11 +541,6 @@ static int grmnet_ctrl_smd_port_alloc(int portno)
 	struct smd_ch_info	*c;
 	struct platform_driver	*pdrv;
 
-	if (portno >= MAX_CTRL_PORT) {
-		pr_err("Illegal port number.\n");
-		return -EINVAL;
-	}
-
 	port = kzalloc(sizeof(struct rmnet_ctrl_port), GFP_KERNEL);
 	if (!port)
 		return -ENOMEM;
@@ -608,11 +552,9 @@ static int grmnet_ctrl_smd_port_alloc(int portno)
 	INIT_DELAYED_WORK(&port->disconnect_w, grmnet_ctrl_smd_disconnect_w);
 
 	c = &port->ctrl_ch;
-	c->name = ctrl_names[portno / MAX_CTRL_PER_CLIENT]
-						[portno % MAX_CTRL_PER_CLIENT];
+	c->name = rmnet_ctrl_names[portno];
 	c->port = port;
 	init_waitqueue_head(&c->wait);
-	init_waitqueue_head(&c->smd_wait_q);
 	INIT_LIST_HEAD(&c->tx_q);
 	INIT_WORK(&c->read_w, grmnet_ctrl_smd_read_w);
 	INIT_WORK(&c->write_w, grmnet_ctrl_smd_write_w);
@@ -630,59 +572,44 @@ static int grmnet_ctrl_smd_port_alloc(int portno)
 	return 0;
 }
 
-int gsmd_ctrl_setup(enum ctrl_client client_num, unsigned int count,
-					u8 *first_port_idx)
+int gsmd_ctrl_setup(unsigned int count)
 {
-	int	i, start_port, allocated_ports;
+	int	i;
 	int	ret;
 
 	pr_debug("%s: requested ports:%d\n", __func__, count);
 
-	if (client_num >= NR_CTRL_CLIENTS) {
-		pr_err("%s: Invalid client:%d\n", __func__, client_num);
-		return -EINVAL;
-	}
-
-	if (!count || count > MAX_CTRL_PER_CLIENT) {
+	if (!count || count > NR_CTRL_SMD_PORTS) {
 		pr_err("%s: Invalid num of ports count:%d\n",
 				__func__, count);
 		return -EINVAL;
 	}
 
-	if (!online_clients) {
-		grmnet_ctrl_wq = alloc_workqueue("gsmd_ctrl",
-			WQ_UNBOUND | WQ_MEM_RECLAIM, 1);
-		if (!grmnet_ctrl_wq) {
-			pr_err("%s: Unable to create workqueue grmnet_ctrl\n",
-					__func__);
-			return -ENOMEM;
-		}
+	grmnet_ctrl_wq = alloc_workqueue("gsmd_ctrl",
+				WQ_UNBOUND | WQ_MEM_RECLAIM, 1);
+	if (!grmnet_ctrl_wq) {
+		pr_err("%s: Unable to create workqueue grmnet_ctrl\n",
+				__func__);
+		return -ENOMEM;
 	}
-	online_clients++;
 
-	start_port = MAX_CTRL_PER_CLIENT * client_num;
-	allocated_ports = 0;
-	for (i = start_port; i < count + start_port; i++) {
-		allocated_ports++;
+	for (i = 0; i < count; i++) {
+		n_rmnet_ctrl_ports++;
 		ret = grmnet_ctrl_smd_port_alloc(i);
 		if (ret) {
 			pr_err("%s: Unable to alloc port:%d\n", __func__, i);
-			allocated_ports--;
+			n_rmnet_ctrl_ports--;
 			goto free_ctrl_smd_ports;
 		}
 	}
-	if (first_port_idx)
-		*first_port_idx = start_port;
+
 	return 0;
 
 free_ctrl_smd_ports:
-	for (i = 0; i < allocated_ports; i++)
-		grmnet_ctrl_smd_port_free(start_port + i);
+	for (i = 0; i < n_rmnet_ctrl_ports; i++)
+		grmnet_ctrl_smd_port_free(i);
 
-
-	online_clients--;
-	if (!online_clients)
-		destroy_workqueue(grmnet_ctrl_wq);
+	destroy_workqueue(grmnet_ctrl_wq);
 
 	return ret;
 }
@@ -704,11 +631,10 @@ static ssize_t gsmd_ctrl_read_stats(struct file *file, char __user *ubuf,
 	if (!buf)
 		return -ENOMEM;
 
-	for (i = 0; i < MAX_CTRL_PORT; i++) {
-		if (!ctrl_smd_ports[i].port)
-			continue;
+	for (i = 0; i < n_rmnet_ctrl_ports; i++) {
 		port = ctrl_smd_ports[i].port;
-
+		if (!port)
+			continue;
 		spin_lock_irqsave(&port->port_lock, flags);
 
 		c = &port->ctrl_ch;
@@ -748,10 +674,10 @@ static ssize_t gsmd_ctrl_reset_stats(struct file *file, const char __user *buf,
 	int			i;
 	unsigned long		flags;
 
-	for (i = 0; i < MAX_CTRL_PORT; i++) {
-		if (!ctrl_smd_ports[i].port)
-			continue;
+	for (i = 0; i < n_rmnet_ctrl_ports; i++) {
 		port = ctrl_smd_ports[i].port;
+		if (!port)
+			continue;
 
 		spin_lock_irqsave(&port->port_lock, flags);
 
@@ -798,7 +724,6 @@ static void gsmd_ctrl_debugfs_exit(void) { }
 static int __init gsmd_ctrl_init(void)
 {
 	gsmd_ctrl_debugfs_init();
-	online_clients = 0;
 
 	return 0;
 }

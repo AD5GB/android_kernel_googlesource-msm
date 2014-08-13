@@ -65,17 +65,24 @@ struct f_gser {
 };
 
 static unsigned int no_tty_ports;
+static unsigned int no_sdio_ports;
 static unsigned int no_smd_ports;
 static unsigned int no_hsic_sports;
 static unsigned int no_hsuart_sports;
 static unsigned int nr_ports;
-static unsigned int gser_next_free_port;
 
 static struct port_info {
 	enum transport_type	transport;
 	unsigned		port_num;
 	unsigned char		client_port_num;
 } gserial_ports[GSERIAL_NO_PORTS];
+
+static inline bool is_transport_sdio(enum transport_type t)
+{
+	if (t == USB_GADGET_XPORT_SDIO)
+		return 1;
+	return 0;
+}
 
 static inline struct f_gser *func_to_gser(struct usb_function *f)
 {
@@ -294,15 +301,15 @@ static struct usb_gadget_strings *gser_strings[] = {
 	NULL,
 };
 
-int gport_setup(struct usb_configuration *c)
+static int gport_setup(struct usb_configuration *c)
 {
 	int ret = 0;
 	int port_idx;
 	int i;
 
-	pr_debug("%s: no_tty_ports: %u "
+	pr_debug("%s: no_tty_ports: %u no_sdio_ports: %u"
 		" no_smd_ports: %u no_hsic_sports: %u no_hsuart_ports: %u nr_ports: %u\n",
-			__func__, no_tty_ports, no_smd_ports,
+			__func__, no_tty_ports, no_sdio_ports, no_smd_ports,
 			no_hsic_sports, no_hsuart_sports, nr_ports);
 
 	if (no_tty_ports) {
@@ -314,6 +321,8 @@ int gport_setup(struct usb_configuration *c)
 		}
 	}
 
+	if (no_sdio_ports)
+		ret = gsdio_setup(c->cdev->gadget, no_sdio_ports);
 	if (no_smd_ports)
 		ret = gsmd_setup(c->cdev->gadget, no_smd_ports);
 	if (no_hsic_sports) {
@@ -351,7 +360,7 @@ int gport_setup(struct usb_configuration *c)
 	return ret;
 }
 
-void gport_cleanup(void)
+static void gport_cleanup(void)
 {
 	int i;
 
@@ -373,6 +382,9 @@ static int gport_connect(struct f_gser *gser)
 	switch (gser->transport) {
 	case USB_GADGET_XPORT_TTY:
 		gserial_connect(&gser->port, port_num);
+		break;
+	case USB_GADGET_XPORT_SDIO:
+		gsdio_connect(&gser->port, port_num);
 		break;
 	case USB_GADGET_XPORT_SMD:
 		gsmd_connect(&gser->port, port_num);
@@ -422,6 +434,9 @@ static int gport_disconnect(struct f_gser *gser)
 	switch (gser->transport) {
 	case USB_GADGET_XPORT_TTY:
 		gserial_disconnect(&gser->port);
+		break;
+	case USB_GADGET_XPORT_SDIO:
+		gsdio_disconnect(&gser->port, port_num);
 		break;
 	case USB_GADGET_XPORT_SMD:
 		gsmd_disconnect(&gser->port, port_num);
@@ -773,7 +788,8 @@ static int gser_send_modem_ctrl_bits(struct gserial *port, int ctrl_bits)
 
 /* serial function driver setup/binding */
 
-static int gser_bind(struct usb_configuration *c, struct usb_function *f)
+static int
+gser_bind(struct usb_configuration *c, struct usb_function *f)
 {
 	struct usb_composite_dev *cdev = c->cdev;
 	struct f_gser		*gser = func_to_gser(f);
@@ -831,9 +847,6 @@ static int gser_bind(struct usb_configuration *c, struct usb_function *f)
 	gser->notify_req->context = gser;
 #endif
 
-	if (!f->descriptors)
-		goto fail;
-
 	/* support all relevant hardware speeds... we expect that when
 	 * hardware is dual speed, all bulk-capable endpoints work at
 	 * both speeds
@@ -890,14 +903,25 @@ fail:
 
 static inline struct f_serial_opts *to_f_serial_opts(struct config_item *item)
 {
-	return container_of(to_config_group(item), struct f_serial_opts,
-			    func_inst.group);
+#ifdef CONFIG_MODEM_SUPPORT
+	struct f_gser *gser = func_to_gser(f);
+#endif
+	usb_free_all_descriptors(f);
+#ifdef CONFIG_MODEM_SUPPORT
+	gs_free_req(gser->notify, gser->notify_req);
+#endif
+	kfree(func_to_gser(f));
 }
 
-CONFIGFS_ATTR_STRUCT(f_serial_opts);
-static ssize_t f_serial_attr_show(struct config_item *item,
-				  struct configfs_attribute *attr,
-				  char *page)
+/**
+ * gser_bind_config - add a generic serial function to a configuration
+ * @c: the configuration to support the serial instance
+ * @port_num: /dev/ttyGS* port this interface will use
+ * Context: single threaded during gadget setup
+ *
+ * Returns zero on success, else negative errno.
+ */
+int gser_bind_config(struct usb_configuration *c, u8 port_num)
 {
 	struct f_serial_opts *opts = to_f_serial_opts(item);
 	struct f_serial_opts_attribute *f_serial_opts_attr =
@@ -1015,7 +1039,10 @@ struct usb_function *gser_alloc(struct usb_function_instance *fi)
 	if (nr_ports)
 		opts->port_num = gser_next_free_port++;
 
-	gser->port_num = opts->port_num;
+#ifdef CONFIG_MODEM_SUPPORT
+	spin_lock_init(&gser->lock);
+#endif
+	gser->port_num = port_num;
 
 	gser->port.func.name = "gser";
 	gser->port.func.strings = gser_strings;
@@ -1023,13 +1050,12 @@ struct usb_function *gser_alloc(struct usb_function_instance *fi)
 	gser->port.func.unbind = gser_unbind;
 	gser->port.func.set_alt = gser_set_alt;
 	gser->port.func.disable = gser_disable;
-	gser->port.func.free_func = gser_free;
-	gser->transport		= gserial_ports[opts->port_num].transport;
+	gser->transport		= gserial_ports[port_num].transport;
 #ifdef CONFIG_MODEM_SUPPORT
 	/* We support only three ports for now */
-	if (opts->port_num == 0)
+	if (port_num == 0)
 		gser->port.func.name = "modem";
-	else if (opts->port_num == 1)
+	else if (port_num == 1)
 		gser->port.func.name = "nmea";
 	else
 		gser->port.func.name = "modem2";
@@ -1153,4 +1179,52 @@ static int gserial_init_port(int port_num, const char *name,
 	nr_ports++;
 
 	return ret;
+}
+
+/**
+ * gserial_init_port - bind a gserial_port to its transport
+ */
+static int gserial_init_port(int port_num, const char *name)
+{
+	enum transport_type transport;
+
+	if (port_num >= GSERIAL_NO_PORTS)
+		return -ENODEV;
+
+	transport = str_to_xport(name);
+	pr_debug("%s, port:%d, transport:%s\n", __func__,
+			port_num, xport_to_str(transport));
+
+	gserial_ports[port_num].transport = transport;
+	gserial_ports[port_num].port_num = port_num;
+
+	switch (transport) {
+	case USB_GADGET_XPORT_TTY:
+		no_tty_ports++;
+		break;
+	case USB_GADGET_XPORT_SDIO:
+		gserial_ports[port_num].client_port_num = no_sdio_ports;
+		no_sdio_ports++;
+		break;
+	case USB_GADGET_XPORT_SMD:
+		gserial_ports[port_num].client_port_num = no_smd_ports;
+		no_smd_ports++;
+		break;
+	case USB_GADGET_XPORT_HSIC:
+		/*client port number will be updated in gport_setup*/
+		no_hsic_sports++;
+		break;
+	case USB_GADGET_XPORT_HSUART:
+		/*client port number will be updated in gport_setup*/
+		no_hsuart_sports++;
+		break;
+	default:
+		pr_err("%s: Un-supported transport transport: %u\n",
+				__func__, gserial_ports[port_num].transport);
+		return -ENODEV;
+	}
+
+	nr_ports++;
+
+	return 0;
 }

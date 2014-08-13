@@ -21,15 +21,12 @@
 #include <linux/sched.h>
 #include <linux/module.h>
 #include <linux/irq_work.h>
-#include <linux/posix-timers.h>
-#include <linux/perf_event.h>
 #include <linux/rq_stats.h>
 
 #include <asm/irq_regs.h>
 
 #include "tick-internal.h"
 
-#include <trace/events/timer.h>
 
 struct rq_data rq_info;
 struct workqueue_struct *rq_wq;

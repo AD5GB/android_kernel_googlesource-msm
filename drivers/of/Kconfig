@@ -95,15 +95,4 @@ config OF_SLIMBUS
 	help
 	  OpenFirmware SLIMBUS accessors
 
-config OF_CORESIGHT
-	def_bool y
-	depends on CORESIGHT
-	help
-	  OpenFirmware CoreSight accessors
-
-config OF_BATTERYDATA
-	def_bool y
-	help
-	  OpenFirmware BatteryData accessors
-
 endmenu # OF

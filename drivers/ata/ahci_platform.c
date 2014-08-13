@@ -225,14 +225,6 @@ static int ahci_probe(struct platform_device *pdev)
 		pm_runtime_forbid(dev);
 	}
 
-	rc = pm_runtime_set_active(dev);
-	if (rc) {
-		dev_warn(dev, "Unable to set runtime pm active err=%d\n", rc);
-	} else {
-		pm_runtime_enable(dev);
-		pm_runtime_forbid(dev);
-	}
-
 	return 0;
 pdata_exit:
 	if (pdata && pdata->exit)

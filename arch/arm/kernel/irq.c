@@ -41,6 +41,7 @@
 #include <asm/mach/arch.h>
 #include <asm/mach/irq.h>
 #include <asm/mach/time.h>
+#include <asm/perftypes.h>
 
 #ifdef CONFIG_SEC_DEBUG
 #include <mach/sec_debug.h>
@@ -68,10 +69,8 @@ int arch_show_interrupts(struct seq_file *p, int prec)
 void handle_IRQ(unsigned int irq, struct pt_regs *regs)
 {
 	struct pt_regs *old_regs = set_irq_regs(regs);
-#ifdef CONFIG_SEC_DEBUG
-	int cpu = smp_processor_id();
-	unsigned long long start_time = cpu_clock(cpu);
-#endif
+
+	perf_mon_interrupt_in();
 	irq_enter();
 
 	/*

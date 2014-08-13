@@ -456,22 +456,6 @@ config USB_EG20T
 	  ML7213/ML7831 is companion chip for Intel Atom E6xx series.
 	  ML7213/ML7831 is completely compatible for Intel EG20T PCH.
 
-config USB_CI13XXX_MSM
-	tristate "MIPS USB CI13xxx for MSM"
-	depends on ARCH_MSM
-	select USB_MSM_OTG
-	help
-	  MSM SoC has chipidea USB controller.  This driver uses
-	  ci13xxx_udc core.
-	  This driver depends on OTG driver for PHY initialization,
-	  clock management, powering up VBUS, and power management.
-	  This driver is not supported on boards like trout which
-	  has an external PHY.
-
-	  Say "y" to link the driver statically, or "m" to build a
-	  dynamically linked module called "ci13xxx_msm" and force all
-	  gadget drivers to also be dynamically linked.
-
 config USB_CI13XXX_MSM_HSIC
 	tristate "MIPS HSIC CI13xxx for MSM"
 	depends on ARCH_MSM
@@ -517,6 +501,7 @@ config USB_DWC3_OMAP
 config USB_MSM_72K
 	tristate "MSM 72K Device Controller"
 	depends on ARCH_MSM
+	select USB_GADGET_DUALSPEED
 	help
 	   USB gadget driver for Qualcomm MSM 72K architecture.
 
@@ -883,10 +868,7 @@ config USB_G_PRINTER
 
 config USB_G_ANDROID
 	boolean "Android Composite Gadget"
-	select USB_F_ACM
-	select USB_F_SERIAL
 	select USB_LIBCOMPOSITE
-	select USB_U_SERIAL
 	help
 	  The Android Composite Gadget supports multiple USB
 	  functions: adb, acm, mass storage, mtp, accessory

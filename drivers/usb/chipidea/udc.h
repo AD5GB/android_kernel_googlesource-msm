@@ -75,6 +75,13 @@ struct ci13xxx_multi_req {
 	void                *buf;
 };
 
+/* cache of larger request's original attributes */
+struct ci13xxx_multi_req {
+	unsigned             len;
+	unsigned             actual;
+	void                *buf;
+};
+
 /**
  * struct ci13xxx_req - usb request representation
  * @req: request structure for gadget drivers

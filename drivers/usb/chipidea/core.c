@@ -247,9 +247,6 @@ int hw_device_reset(struct ci13xxx *ci, u32 mode)
 	 * 8 micro frames. If CPU can handle interrupts at faster rate, ITC
 	 * can be set to lesser value to gain performance.
 	 */
-	if (ci->platdata->nz_itc)
-		hw_write(ci, OP_USBCMD, USBCMD_ITC_MASK,
-			USBCMD_ITC(ci->platdata->nz_itc));
 	if (ci->platdata->flags & CI13XXX_ZERO_ITC)
 		hw_write(ci, OP_USBCMD, USBCMD_ITC_MASK, USBCMD_ITC(0));
 

@@ -13,14 +13,7 @@
 #ifndef _Q6_AUDIO_H_
 #define _Q6_AUDIO_H_
 
-#include <linux/qdsp6v2/apr.h>
-
-enum {
-	LEGACY_PCM_MODE = 0,
-	LOW_LATENCY_PCM_MODE,
-	ULTRA_LOW_LATENCY_PCM_MODE,
-};
-
+#include <mach/qdsp6v2/apr.h>
 
 int q6audio_get_port_index(u16 port_id);
 

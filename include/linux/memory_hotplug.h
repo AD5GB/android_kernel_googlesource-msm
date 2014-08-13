@@ -15,9 +15,6 @@ struct memory_block;
 extern unsigned long movable_reserved_start, movable_reserved_size;
 extern unsigned long low_power_memory_start, low_power_memory_size;
 
-extern unsigned long movable_reserved_start, movable_reserved_size;
-extern unsigned long low_power_memory_start, low_power_memory_size;
-
 #ifdef CONFIG_MEMORY_HOTPLUG
 
 /*

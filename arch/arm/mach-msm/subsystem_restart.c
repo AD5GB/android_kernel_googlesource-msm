@@ -31,20 +31,14 @@
 #include <linux/idr.h>
 #include <linux/debugfs.h>
 #include <linux/miscdevice.h>
-#include <linux/interrupt.h>
 
 #include <asm/current.h>
 
 #include <mach/socinfo.h>
 #include <mach/subsystem_notif.h>
 #include <mach/subsystem_restart.h>
-#ifdef CONFIG_LGE_HANDLE_PANIC
-#include <mach/lge_handle_panic.h>
-#endif
-#include "smd_private.h"
 
-static int enable_debug;
-module_param(enable_debug, int, S_IRUGO | S_IWUSR);
+#include "smd_private.h"
 
 /**
  * enum p_subsys_state - state of a subsystem (private)
@@ -138,8 +132,6 @@ struct restart_log {
  * @restart_order: order of other devices this devices restarts with
  * @dentry: debugfs directory for this device
  * @do_ramdump_on_put: ramdump on subsystem_put() if true
- * @err_ready: completion variable to record error ready from subsystem
- * @crashed: indicates if subsystem has crashed
  */
 struct subsys_device {
 	struct subsys_desc *desc;
@@ -162,8 +154,6 @@ struct subsys_device {
 	bool do_ramdump_on_put;
 	struct miscdevice misc_dev;
 	char miscdevice_name[32];
-	struct completion err_ready;
-	bool crashed;
 };
 
 static struct subsys_device *to_subsys(struct device *d)
@@ -389,10 +379,6 @@ static void do_epoch_check(struct subsys_device *dev)
 	if (time_first && n >= max_restarts_check) {
 		if ((curr_time->tv_sec - time_first->tv_sec) <
 				max_history_time_check)
-#ifdef CONFIG_LGE_HANDLE_PANIC
-			lge_set_magic_subsystem(dev->desc->name,
-					LGE_ERR_SUB_SD);
-#endif
 			panic("Subsystems have crashed %d times in less than "
 				"%ld seconds!", max_restarts_check,
 				max_history_time_check);
@@ -426,35 +412,14 @@ static void notify_each_subsys_device(struct subsys_device **list,
 	}
 }
 
-static int wait_for_err_ready(struct subsys_device *subsys)
-{
-	int ret;
-
-	if (!subsys->desc->err_ready_irq || enable_debug == 1)
-		return 0;
-
-	ret = wait_for_completion_timeout(&subsys->err_ready,
-					  msecs_to_jiffies(10000));
-	if (!ret) {
-		pr_err("[%s]: Error ready timed out\n", subsys->desc->name);
-		return -ETIMEDOUT;
-	}
-
-	return 0;
-}
-
 static void subsystem_shutdown(struct subsys_device *dev, void *data)
 {
 	const char *name = dev->desc->name;
 
 	pr_info("[%p]: Shutting down %s\n", current, name);
-	if (dev->desc->shutdown(dev->desc) < 0) {
-#ifdef CONFIG_LGE_HANDLE_PANIC
-		lge_set_magic_subsystem(name, LGE_ERR_SUB_SD);
-#endif
+	if (dev->desc->shutdown(dev->desc) < 0)
 		panic("subsys-restart: [%p]: Failed to shutdown %s!",
 			current, name);
-	}
 	subsys_set_state(dev, SUBSYS_OFFLINE);
 }
 
@@ -471,26 +436,10 @@ static void subsystem_ramdump(struct subsys_device *dev, void *data)
 static void subsystem_powerup(struct subsys_device *dev, void *data)
 {
 	const char *name = dev->desc->name;
-	int ret;
 
 	pr_info("[%p]: Powering up %s\n", current, name);
-	init_completion(&dev->err_ready);
-	if (dev->desc->powerup(dev->desc) < 0) {
-#ifdef CONFIG_LGE_HANDLE_PANIC
-		lge_set_magic_subsystem(name, LGE_ERR_SUB_PWR);
-#endif
-		panic("[%p]: Powerup error: %s!", current, name);
-	}
-
-	ret = wait_for_err_ready(dev);
-	if (ret) {
-#ifdef CONFIG_LGE_HANDLE_PANIC
-		lge_set_magic_subsystem(name, LGE_ERR_SUB_PWR);
-#endif
-		panic("[%p]: Timed out waiting for error ready: %s!",
-			current, name);
-	}
-
+	if (dev->desc->powerup(dev->desc) < 0)
+		panic("[%p]: Failed to powerup %s!", current, name);
 	subsys_set_state(dev, SUBSYS_ONLINE);
 }
 
@@ -516,21 +465,8 @@ static int subsys_start(struct subsys_device *subsys)
 {
 	int ret;
 
-	init_completion(&subsys->err_ready);
 	ret = subsys->desc->start(subsys->desc);
-	if (ret)
-		return ret;
-
-	if (subsys->desc->is_not_loadable)
-		return 0;
-
-	ret = wait_for_err_ready(subsys);
-	if (ret)
-		/* pil-boot succeeded but we need to shutdown
-		 * the device because error ready timed out.
-		 */
-		subsys->desc->stop(subsys->desc);
-	else
+	if (!ret)
 		subsys_set_state(subsys, SUBSYS_ONLINE);
 
 	return ret;
@@ -740,9 +676,6 @@ static void __subsystem_restart_dev(struct subsys_device *dev)
 			wake_lock(&dev->wake_lock);
 			queue_work(ssr_wq, &dev->work);
 		} else {
-#ifdef CONFIG_LGE_HANDLE_PANIC
-			lge_set_magic_subsystem(name, LGE_ERR_SUB_SD);
-#endif
 			panic("Subsystem %s crashed during SSR!", name);
 		}
 	}
@@ -752,9 +685,6 @@ static void __subsystem_restart_dev(struct subsys_device *dev)
 int subsystem_restart_dev(struct subsys_device *dev)
 {
 	const char *name;
-#ifdef CONFIG_LGE_HANDLE_PANIC
-	int saved_restart_level = dev->restart_level;
-#endif
 
 	if (!get_device(&dev->dev))
 		return -ENODEV;
@@ -777,12 +707,6 @@ int subsystem_restart_dev(struct subsys_device *dev)
 		return -EBUSY;
 	}
 
-#ifdef CONFIG_LGE_HANDLE_PANIC
-	if (lge_is_crash_skipped()) {
-		pr_info("Restart requested intentionally\n");
-		dev->restart_level = RESET_SUBSYS_COUPLED;
-	}
-#endif
 	pr_info("Restart sequence requested for %s, restart_level = %s.\n",
 		name, restart_levels[dev->restart_level]);
 
@@ -790,23 +714,11 @@ int subsystem_restart_dev(struct subsys_device *dev)
 
 	case RESET_SUBSYS_COUPLED:
 		__subsystem_restart_dev(dev);
-#ifdef CONFIG_LGE_HANDLE_PANIC
-		if (lge_is_crash_skipped()) {
-			dev->restart_level = saved_restart_level;
-			lge_clear_crash_skipped();
-		}
-#endif
 		break;
 	case RESET_SOC:
-#ifdef CONFIG_LGE_HANDLE_PANIC
-		lge_set_magic_subsystem(name, LGE_ERR_SUB_RST);
-#endif
 		panic("subsys-restart: Resetting the SoC - %s crashed.", name);
 		break;
 	default:
-#ifdef CONFIG_LGE_HANDLE_PANIC
-		lge_set_magic_subsystem(name, LGE_ERR_SUB_UNK);
-#endif
 		panic("subsys-restart: Unknown restart level!\n");
 		break;
 	}
@@ -858,15 +770,6 @@ int subsystem_crashed(const char *name)
 }
 EXPORT_SYMBOL(subsystem_crashed);
 
-void subsys_set_crash_status(struct subsys_device *dev, bool crashed)
-{
-	dev->crashed = true;
-}
-
-bool subsys_get_crash_status(struct subsys_device *dev)
-{
-	return dev->crashed;
-}
 #ifdef CONFIG_DEBUG_FS
 static ssize_t subsys_debugfs_read(struct file *filp, char __user *ubuf,
 		size_t cnt, loff_t *ppos)
@@ -992,18 +895,6 @@ static void subsys_device_release(struct device *dev)
 	ida_simple_remove(&subsys_ida, subsys->id);
 	kfree(subsys);
 }
-static irqreturn_t subsys_err_ready_intr_handler(int irq, void *subsys)
-{
-	struct subsys_device *subsys_dev = subsys;
-	pr_info("Error ready interrupt occured for %s\n",
-		 subsys_dev->desc->name);
-
-	if (subsys_dev->desc->is_not_loadable)
-		return IRQ_HANDLED;
-
-	complete(&subsys_dev->err_ready);
-	return IRQ_HANDLED;
-}
 
 static int subsys_misc_device_add(struct subsys_device *subsys_dev)
 {
@@ -1080,24 +971,8 @@ struct subsys_device *subsys_register(struct subsys_desc *desc)
 		goto err_register;
 	}
 
-	if (subsys->desc->err_ready_irq) {
-		ret = devm_request_irq(&subsys->dev,
-					subsys->desc->err_ready_irq,
-					subsys_err_ready_intr_handler,
-					IRQF_TRIGGER_RISING,
-					"error_ready_interrupt", subsys);
-		if (ret < 0) {
-			dev_err(&subsys->dev,
-				"[%s]: Unable to register err ready handler\n",
-				subsys->desc->name);
-			goto err_misc_device;
-		}
-	}
-
 	return subsys;
 
-err_misc_device:
-	subsys_misc_device_remove(subsys);
 err_register:
 	subsys_debugfs_remove(subsys);
 err_debugfs:

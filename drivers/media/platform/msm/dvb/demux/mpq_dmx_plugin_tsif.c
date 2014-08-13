@@ -687,8 +687,6 @@ static int mpq_tsif_dmx_init(
 	mpq_demux->demux.decoder_buffer_status = mpq_dmx_decoder_buffer_status;
 	mpq_demux->demux.reuse_decoder_buffer = mpq_dmx_reuse_decoder_buffer;
 	mpq_demux->demux.set_secure_mode = NULL;
-	mpq_demux->demux.oob_command = mpq_dmx_oob_command;
-	mpq_demux->demux.convert_ts = mpq_dmx_convert_tts;
 
 	/* Initialize dvb_demux object */
 	result = dvb_dmx_init(&mpq_demux->demux);
@@ -703,8 +701,7 @@ static int mpq_tsif_dmx_init(
 	mpq_demux->dmxdev.capabilities =
 		DMXDEV_CAP_DUPLEX |
 		DMXDEV_CAP_PULL_MODE |
-		DMXDEV_CAP_INDEXING |
-		DMXDEV_CAP_TS_INSERTION;
+		DMXDEV_CAP_INDEXING;
 
 	mpq_demux->dmxdev.demux->set_source = mpq_dmx_set_source;
 	mpq_demux->dmxdev.demux->get_stc = mpq_tsif_dmx_get_stc;
@@ -721,7 +718,7 @@ static int mpq_tsif_dmx_init(
 	}
 
 	/* Extend dvb-demux debugfs with TSIF statistics. */
-	mpq_dmx_init_debugfs_entries(mpq_demux);
+	mpq_dmx_init_hw_statistics(mpq_demux);
 
 	return 0;
 

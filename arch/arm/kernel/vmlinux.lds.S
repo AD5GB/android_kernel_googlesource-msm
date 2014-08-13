@@ -97,9 +97,6 @@ SECTIONS
 		_text = .;
 		HEAD_TEXT
 	}
-#ifdef CONFIG_STRICT_MEMORY_RWX
-	. = ALIGN(1<<SECTION_SHIFT);
-#endif
 
 	.text : {			/* Real text segment		*/
 		_stext = .;		/* Text and read-only data	*/
@@ -122,6 +119,9 @@ SECTIONS
 		*(.got)			/* Global offset table		*/
 			ARM_CPU_KEEP(PROC_INFO)
 	}
+#ifdef CONFIG_STRICT_MEMORY_RWX
+	. = ALIGN(1<<SECTION_SHIFT);
+#endif
 
 #ifdef CONFIG_STRICT_MEMORY_RWX
 	. = ALIGN(1<<SECTION_SHIFT);
@@ -228,6 +228,10 @@ SECTIONS
 		INIT_RAM_FS
 	}
 #ifndef CONFIG_XIP_KERNEL
+#ifdef CONFIG_STRICT_MEMORY_RWX
+	. = ALIGN(1<<SECTION_SHIFT);
+#endif
+	__init_data = .;
 	.exit.data : {
 		ARM_EXIT_KEEP(EXIT_DATA)
 	}

@@ -83,7 +83,6 @@ static int pid[SNDRV_CARDS] = { [0 ... (SNDRV_CARDS-1)] = -1 };
 static int nrpacks = 8;		/* max. number of packets per urb */
 static int device_setup[SNDRV_CARDS]; /* device parameter for this card */
 static bool ignore_ctl_error;
-static bool autoclock = true;
 struct switch_dev *usbaudiosdev;
 
 module_param_array(index, int, NULL, 0444);
@@ -778,11 +777,6 @@ static int __init snd_usb_audio_init(void)
 	}
 
 	usbaudiosdev = kzalloc(sizeof(*usbaudiosdev), GFP_KERNEL);
-	if (!usbaudiosdev) {
-		pr_err("Usb audio device memory allocation failed.\n");
-		return -ENOMEM;
-	}
-
 	usbaudiosdev->name = "usb_audio";
 
 	err = switch_dev_register(usbaudiosdev);

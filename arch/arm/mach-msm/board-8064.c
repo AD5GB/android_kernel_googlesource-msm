@@ -71,6 +71,7 @@
 #include <mach/msm_serial_hs.h>
 #include <sound/cs8427.h>
 #include <media/gpio-ir-recv.h>
+#include <linux/fmem.h>
 #include <mach/msm_pcie.h>
 #include <mach/restart.h>
 #include <mach/msm_iomap.h>
@@ -84,11 +85,11 @@
 #include "pm.h"
 #include "pm-boot.h"
 #include "devices-msm8x60.h"
+#include "smd_private.h"
 #include "platsmp.h"
 
 #define MHL_GPIO_INT           30
 #define MHL_GPIO_RESET         35
-#include "sysmon.h"
 
 #define MSM_PMEM_ADSP_SIZE         0x7800000
 #define MSM_PMEM_AUDIO_SIZE        0x4CF000
@@ -164,6 +165,9 @@ static struct platform_device battery_bcl_device = {
 };
 #endif
 
+struct fmem_platform_data apq8064_fmem_pdata = {
+};
+
 static struct memtype_reserve apq8064_reserve_table[] __initdata = {
 	[MEMTYPE_SMI] = {
 	},
@@ -182,33 +186,41 @@ static void __init reserve_rtb_memory(void)
 #endif
 }
 
-static int apq8064_paddr_to_memtype(phys_addr_t paddr)
+static int apq8064_paddr_to_memtype(unsigned int paddr)
 {
 	return MEMTYPE_EBI1;
 }
+
+#define FMEM_ENABLED 0
 
 #ifdef CONFIG_ION_MSM
 #ifdef CONFIG_MSM_MULTIMEDIA_USE_ION
 static struct ion_cp_heap_pdata cp_mm_apq8064_ion_pdata = {
 	.permission_type = IPT_TYPE_MM_CARVEOUT,
 	.align = PAGE_SIZE,
+	.reusable = FMEM_ENABLED,
+	.mem_is_fmem = FMEM_ENABLED,
 	.fixed_position = FIXED_MIDDLE,
 };
 
 static struct ion_cp_heap_pdata cp_mfc_apq8064_ion_pdata = {
 	.permission_type = IPT_TYPE_MFC_SHAREDMEM,
 	.align = PAGE_SIZE,
+	.reusable = 0,
+	.mem_is_fmem = FMEM_ENABLED,
 	.fixed_position = FIXED_HIGH,
 };
 
 static struct ion_co_heap_pdata co_apq8064_ion_pdata = {
 	.adjacent_mem_id = INVALID_HEAP_ID,
 	.align = PAGE_SIZE,
+	.mem_is_fmem = 0,
 };
 
 static struct ion_co_heap_pdata fw_co_apq8064_ion_pdata = {
 	.adjacent_mem_id = ION_CP_MM_HEAP_ID,
 	.align = SZ_128K,
+	.mem_is_fmem = FMEM_ENABLED,
 	.fixed_position = FIXED_LOW,
 };
 #endif
@@ -330,6 +342,12 @@ static struct platform_device apq8064_ion_dev = {
 };
 #endif
 
+static struct platform_device apq8064_fmem_device = {
+	.name = "fmem",
+	.id = 1,
+	.dev = { .platform_data = &apq8064_fmem_pdata },
+};
+
 static void __init reserve_mem_for_ion(enum ion_memory_types mem_type,
 				      unsigned long size)
 {
@@ -355,10 +373,15 @@ static void __init apq8064_reserve_fixed_area(unsigned long fixed_area_size)
 }
 
 /**
- * Reserve memory for ION. Also handle special case
+ * Reserve memory for ION and calculate amount of reusable memory for fmem.
+ * We only reserve memory for heaps that are not reusable. However, we only
+ * support one reusable heap at the moment so we ignore the reusable flag for
+ * other than the first heap with reusable flag set. Also handle special case
  * for video heaps (MM,FW, and MFC). Video requires heaps MM and MFC to be
  * at a higher address than FW in addition to not more than 256MB away from the
- * base address of the firmware. In addition the MM heap must be
+ * base address of the firmware. This means that if MM is reusable the other
+ * two heaps must be allocated in the same region as FW. This is handled by the
+ * mem_is_fmem flag in the platform data. In addition the MM heap must be
  * adjacent to the FW heap for content protection purposes.
  */
 static void __init reserve_ion_memory(void)
@@ -414,7 +437,7 @@ static void __init reserve_ion_memory(void)
 
 			if (fixed_position != NOT_FIXED)
 				fixed_size += heap->size;
-			else if (!use_cma)
+			else
 				reserve_mem_for_ion(MEMTYPE_EBI1, heap->size);
 
 			if (fixed_position == FIXED_LOW) {
@@ -652,7 +675,6 @@ static struct msm_bus_scale_pdata hsic_bus_scale_pdata = {
 static struct msm_hsic_host_platform_data msm_hsic_pdata = {
 	.strobe			= 88,
 	.data			= 89,
-	.phy_sof_workaround	= true,
 	.bus_scale_table	= &hsic_bus_scale_pdata,
 };
 #else
@@ -1617,7 +1639,7 @@ static struct platform_device msm_device_wcnss_wlan = {
 	.dev		= {.platform_data = &qcom_wcnss_pdata},
 };
 
-static struct platform_device msm_device_iris_fm __devinitdata = {
+static struct platform_device msm_device_iris_fm = {
 	.name = "iris_fm",
 	.id   = -1,
 };
@@ -1879,8 +1901,6 @@ static struct mdm_platform_data mdm_platform_data = {
 	.peripheral_platform_device = &apq8064_device_hsic_host,
 	.ramdump_timeout_ms = 120000,
 	.mdm2ap_status_gpio_run_cfg = &mdm2ap_status_gpio_run_cfg,
-	.sysmon_subsys_id_valid = 1,
-	.sysmon_subsys_id = SYSMON_SS_EXT_MODEM,
 };
 
 static struct tsens_platform_data apq_tsens_pdata  = {
@@ -2323,8 +2343,6 @@ static struct msm_pcie_gpio_info_t msm_pcie_gpio_info[MSM_PCIE_MAX_GPIO] = {
 static struct msm_pcie_platform msm_pcie_platform_data = {
 	.axi_addr = PCIE_AXI_BAR_PHYS,
 	.axi_size = PCIE_AXI_BAR_SIZE,
-	.parf_deemph = 0x282828,
-	.parf_swing = 0x7F7F,
 };
 
 /* FSM8064_EP PCIe gpios */
@@ -2338,9 +2356,7 @@ static struct msm_pcie_platform ep_pcie_platform_data = {
 	.axi_addr = PCIE_AXI_BAR_PHYS,
 	.axi_size = PCIE_AXI_BAR_SIZE,
 	.wake_n = PM8921_GPIO_IRQ(PM8921_IRQ_BASE, PCIE_EP_WAKE_N_PMIC_GPIO),
-	.vreg_n = 4,
-	.parf_deemph = 0x101010,
-	.parf_swing = 0x6B6B,
+	.vreg_n = 4
 };
 
 static int __init mpq8064_pcie_enabled(void)
@@ -2385,7 +2401,7 @@ static void __init fsm8064_ep_pcie_init(void)
 	platform_device_register(&msm_device_pcie);
 }
 
-static struct platform_device apq8064_device_ext_5v_vreg __devinitdata = {
+static struct platform_device apq8064_device_ext_5v_vreg = {
 	.name	= GPIO_REGULATOR_DEV_NAME,
 	.id	= PM8921_MPP_PM_TO_SYS(7),
 	.dev	= {
@@ -2394,7 +2410,7 @@ static struct platform_device apq8064_device_ext_5v_vreg __devinitdata = {
 	},
 };
 
-static struct platform_device apq8064_device_ext_mpp8_vreg __devinitdata = {
+static struct platform_device apq8064_device_ext_mpp8_vreg = {
 	.name	= GPIO_REGULATOR_DEV_NAME,
 	.id	= PM8921_MPP_PM_TO_SYS(8),
 	.dev	= {
@@ -2403,7 +2419,7 @@ static struct platform_device apq8064_device_ext_mpp8_vreg __devinitdata = {
 	},
 };
 
-static struct platform_device apq8064_device_ext_3p3v_vreg __devinitdata = {
+static struct platform_device apq8064_device_ext_3p3v_vreg = {
 	.name	= GPIO_REGULATOR_DEV_NAME,
 	.id	= APQ8064_EXT_3P3V_REG_EN_GPIO,
 	.dev	= {
@@ -2412,7 +2428,7 @@ static struct platform_device apq8064_device_ext_3p3v_vreg __devinitdata = {
 	},
 };
 
-static struct platform_device apq8064_device_ext_ts_sw_vreg __devinitdata = {
+static struct platform_device apq8064_device_ext_ts_sw_vreg = {
 	.name	= GPIO_REGULATOR_DEV_NAME,
 	.id	= PM8921_GPIO_PM_TO_SYS(23),
 	.dev	= {
@@ -2422,7 +2438,7 @@ static struct platform_device apq8064_device_ext_ts_sw_vreg __devinitdata = {
 };
 
 static struct platform_device
-apq8064_device_ext_3p3v_mpp4_vreg __devinitdata = {
+apq8064_device_ext_3p3v_mpp4_vreg = {
 	.name	= GPIO_REGULATOR_DEV_NAME,
 	.id	= PM8921_MPP_PM_TO_SYS(4),
 	.dev	= {
@@ -2431,7 +2447,7 @@ apq8064_device_ext_3p3v_mpp4_vreg __devinitdata = {
 	},
 };
 
-static struct platform_device apq8064_device_rpm_regulator __devinitdata = {
+static struct platform_device apq8064_device_rpm_regulator = {
 	.name	= "rpm-regulator",
 	.id	= 0,
 	.dev	= {
@@ -2440,7 +2456,7 @@ static struct platform_device apq8064_device_rpm_regulator __devinitdata = {
 };
 
 static struct platform_device
-apq8064_pm8921_device_rpm_regulator __devinitdata = {
+apq8064_pm8921_device_rpm_regulator = {
 	.name	= "rpm-regulator",
 	.id	= 1,
 	.dev	= {
@@ -2479,6 +2495,7 @@ static struct platform_device *ep_devices[] __initdata = {
 	&apq8064_device_hsusb_host,
 	&android_usb_device,
 	&msm_device_wcnss_wlan,
+	&apq8064_fmem_device,
 #ifdef CONFIG_ION_MSM
 	&apq8064_ion_dev,
 #endif
@@ -2595,6 +2612,7 @@ static struct platform_device *common_devices[] __initdata = {
 	&android_usb_device,
 	&msm_device_wcnss_wlan,
 	&msm_device_iris_fm,
+	&apq8064_fmem_device,
 #ifdef CONFIG_ION_MSM
 	&apq8064_ion_dev,
 #endif
@@ -2710,7 +2728,7 @@ static struct platform_device *cdp_devices[] __initdata = {
 };
 
 static struct platform_device
-mpq8064_device_ext_1p2_buck_vreg __devinitdata = {
+mpq8064_device_ext_1p2_buck_vreg = {
 	.name	= GPIO_REGULATOR_DEV_NAME,
 	.id	= SX150X_GPIO(4, 2),
 	.dev	= {
@@ -2720,7 +2738,7 @@ mpq8064_device_ext_1p2_buck_vreg __devinitdata = {
 };
 
 static struct platform_device
-mpq8064_device_ext_1p8_buck_vreg __devinitdata = {
+mpq8064_device_ext_1p8_buck_vreg = {
 	.name	= GPIO_REGULATOR_DEV_NAME,
 	.id	= SX150X_GPIO(4, 4),
 	.dev	= {
@@ -2730,7 +2748,7 @@ mpq8064_device_ext_1p8_buck_vreg __devinitdata = {
 };
 
 static struct platform_device
-mpq8064_device_ext_2p2_buck_vreg __devinitdata = {
+mpq8064_device_ext_2p2_buck_vreg = {
 	.name	= GPIO_REGULATOR_DEV_NAME,
 	.id	= SX150X_GPIO(4, 14),
 	.dev	= {
@@ -2740,7 +2758,7 @@ mpq8064_device_ext_2p2_buck_vreg __devinitdata = {
 };
 
 static struct platform_device
-mpq8064_device_ext_5v_buck_vreg __devinitdata = {
+mpq8064_device_ext_5v_buck_vreg = {
 	.name	= GPIO_REGULATOR_DEV_NAME,
 	.id	= SX150X_GPIO(4, 3),
 	.dev	= {
@@ -2750,7 +2768,7 @@ mpq8064_device_ext_5v_buck_vreg __devinitdata = {
 };
 
 static struct platform_device
-mpq8064_device_ext_3p3v_ldo_vreg __devinitdata = {
+mpq8064_device_ext_3p3v_ldo_vreg = {
 	.name	= GPIO_REGULATOR_DEV_NAME,
 	.id	= SX150X_GPIO(4, 15),
 	.dev	= {
@@ -3562,18 +3580,6 @@ static void __init apq8064_common_init(void)
 	if (socinfo_get_pmic_model() == PMIC_MODEL_PM8917)
 		apq8064_pm8917_pdata_fixup();
 	platform_device_register(&msm_gpio_device);
-	if (cpu_is_apq8064ab())
-		apq8064ab_update_krait_spm();
-	if (cpu_is_krait_v3()) {
-		struct msm_pm_init_data_type *pdata =
-		msm8064_pm_8x60.dev.platform_data;
-		pdata->retention_calls_tz = false;
-		apq8064ab_update_retention_spm();
-	}
-	platform_device_register(&msm8064_pm_8x60);
-
-	msm_spm_init(msm_spm_data, ARRAY_SIZE(msm_spm_data));
-	msm_spm_l2_init(msm_spm_l2_data);
 	msm_tsens_early_init(&apq_tsens_pdata);
 	msm_thermal_init(&msm_thermal_pdata);
 	if (socinfo_init() < 0)
@@ -3688,6 +3694,18 @@ static void __init apq8064_common_init(void)
 		apq8064_init_dsps();
 		platform_device_register(&msm_8960_riva);
 	}
+	if (cpu_is_apq8064ab())
+		apq8064ab_update_krait_spm();
+	if (cpu_is_krait_v3()) {
+		struct msm_pm_init_data_type *pdata =
+			msm8064_pm_8x60.dev.platform_data;
+		pdata->retention_calls_tz = false;
+		apq8064ab_update_retention_spm();
+	}
+	platform_device_register(&msm8064_pm_8x60);
+
+	msm_spm_init(msm_spm_data, ARRAY_SIZE(msm_spm_data));
+	msm_spm_l2_init(msm_spm_l2_data);
 	BUG_ON(msm_pm_boot_init(&msm_pm_boot_pdata));
 	apq8064_epm_adc_init();
 }
@@ -3786,8 +3804,6 @@ static void __init fsm8064_ep_init(void)
 	if (meminfo_init(SYS_MEMORY, SZ_256M) < 0)
 		pr_err("meminfo_init() failed!\n");
 
-	msm_thermal_pdata.limit_temp_degC = 80;
-
 	apq8064_common_init();
 	ethernet_init();
 	fsm8064_ep_pcie_init();
@@ -3804,7 +3820,6 @@ MACHINE_START(APQ8064_CDP, "QCT APQ8064 CDP")
 	.map_io = apq8064_map_io,
 	.reserve = apq8064_reserve,
 	.init_irq = apq8064_init_irq,
-	.handle_irq = gic_handle_irq,
 	.timer = &msm_timer,
 	.init_machine = apq8064_cdp_init,
 	.init_early = apq8064_allocate_memory_regions,
@@ -3830,7 +3845,6 @@ MACHINE_START(APQ8064_MTP, "QCT APQ8064 MTP")
 	.map_io = apq8064_map_io,
 	.reserve = apq8064_reserve,
 	.init_irq = apq8064_init_irq,
-	.handle_irq = gic_handle_irq,
 	.timer = &msm_timer,
 	.init_machine = apq8064_cdp_init,
 	.init_early = apq8064_allocate_memory_regions,
@@ -3843,7 +3857,6 @@ MACHINE_START(APQ8064_LIQUID, "QCT APQ8064 LIQUID")
 	.map_io = apq8064_map_io,
 	.reserve = apq8064_reserve,
 	.init_irq = apq8064_init_irq,
-	.handle_irq = gic_handle_irq,
 	.timer = &msm_timer,
 	.init_machine = apq8064_cdp_init,
 	.init_early = apq8064_allocate_memory_regions,
@@ -3856,7 +3869,6 @@ MACHINE_START(MPQ8064_CDP, "QCT MPQ8064 CDP")
 	.map_io = apq8064_map_io,
 	.reserve = apq8064_reserve,
 	.init_irq = apq8064_init_irq,
-	.handle_irq = gic_handle_irq,
 	.timer = &msm_timer,
 	.init_machine = apq8064_cdp_init,
 	.init_early = apq8064_allocate_memory_regions,
@@ -3869,7 +3881,6 @@ MACHINE_START(MPQ8064_HRD, "QCT MPQ8064 HRD")
 	.map_io = apq8064_map_io,
 	.reserve = apq8064_reserve,
 	.init_irq = apq8064_init_irq,
-	.handle_irq = gic_handle_irq,
 	.timer = &msm_timer,
 	.init_machine = apq8064_cdp_init,
 	.init_early = apq8064_allocate_memory_regions,
@@ -3882,7 +3893,6 @@ MACHINE_START(MPQ8064_DTV, "QCT MPQ8064 DTV")
 	.map_io = apq8064_map_io,
 	.reserve = apq8064_reserve,
 	.init_irq = apq8064_init_irq,
-	.handle_irq = gic_handle_irq,
 	.timer = &msm_timer,
 	.init_machine = apq8064_cdp_init,
 	.init_early = apq8064_allocate_memory_regions,

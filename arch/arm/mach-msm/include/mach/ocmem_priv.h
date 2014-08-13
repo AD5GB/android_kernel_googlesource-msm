@@ -42,7 +42,7 @@
 struct ocmem_zone;
 
 struct ocmem_zone_ops {
-	int (*allocate) (struct ocmem_zone *, unsigned long, unsigned long *);
+	unsigned long (*allocate) (struct ocmem_zone *, unsigned long);
 	int (*free) (struct ocmem_zone *, unsigned long, unsigned long);
 };
 
@@ -85,12 +85,6 @@ struct ocmem_zone {
 	atomic_long_t z_stat[NR_OCMEM_ZSTAT_ITEMS];
 	struct gen_pool *z_pool;
 	struct ocmem_zone_ops *z_ops;
-	unsigned int max_alloc_time;
-	unsigned int min_alloc_time;
-	u64 total_alloc_time;
-	unsigned int max_free_time;
-	unsigned int min_free_time;
-	u64 total_free_time;
 };
 
 enum op_code {
@@ -174,8 +168,8 @@ struct ocmem_req {
 	/* Request Power State */
 	unsigned power_state;
 	struct ocmem_eviction_data *edata;
-	/* Eviction data of the request being evicted */
-	struct ocmem_eviction_data *eviction_info;
+	/* Request that triggered eviction */
+	struct ocmem_req *e_handle;
 };
 
 struct ocmem_handle {
@@ -197,9 +191,9 @@ struct ocmem_zone *get_zone(unsigned);
 int zone_active(int);
 unsigned long offset_to_phys(unsigned long);
 unsigned long phys_to_offset(unsigned long);
-int allocate_head(struct ocmem_zone *, unsigned long, unsigned long *);
+unsigned long allocate_head(struct ocmem_zone *, unsigned long);
 int free_head(struct ocmem_zone *, unsigned long, unsigned long);
-int allocate_tail(struct ocmem_zone *, unsigned long, unsigned long *);
+unsigned long allocate_tail(struct ocmem_zone *, unsigned long);
 int free_tail(struct ocmem_zone *, unsigned long, unsigned long);
 
 int ocmem_notifier_init(void);

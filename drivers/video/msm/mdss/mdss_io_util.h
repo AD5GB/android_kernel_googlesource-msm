@@ -50,14 +50,10 @@ enum dss_vreg_type {
 struct dss_vreg {
 	struct regulator *vreg; /* vreg handle */
 	char vreg_name[32];
+	enum dss_vreg_type type;
 	int min_voltage;
 	int max_voltage;
-	int enable_load;
-	int disable_load;
-	int pre_on_sleep;
-	int post_on_sleep;
-	int pre_off_sleep;
-	int post_off_sleep;
+	int optimum_voltage;
 };
 
 struct dss_gpio {

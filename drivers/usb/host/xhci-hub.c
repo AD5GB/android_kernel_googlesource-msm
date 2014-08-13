@@ -1059,11 +1059,6 @@ int xhci_hub_control(struct usb_hcd *hcd, u16 typeReq, u16 wValue,
 				temp = xhci_readl(xhci, port_array[wIndex] + 1);
 				temp |= test_mode << 28;
 				xhci_writel(xhci, temp, port_array[wIndex] + 1);
-			} else if (test_mode == 6) {
-				spin_unlock_irqrestore(&xhci->lock, flags);
-				retval = xhci_ehset_single_step_set_feature(hcd,
-									wIndex);
-				spin_lock_irqsave(&xhci->lock, flags);
 			} else {
 				goto error;
 			}

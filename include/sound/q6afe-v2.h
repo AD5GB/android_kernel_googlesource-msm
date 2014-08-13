@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2014, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2013, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -41,8 +41,8 @@
 enum {
 	IDX_PRIMARY_I2S_RX = 0,
 	IDX_PRIMARY_I2S_TX = 1,
-	IDX_AFE_PORT_ID_PRIMARY_PCM_RX = 2,
-	IDX_AFE_PORT_ID_PRIMARY_PCM_TX = 3,
+	IDX_PCM_RX = 2,
+	IDX_PCM_TX = 3,
 	IDX_SECONDARY_I2S_RX = 4,
 	IDX_SECONDARY_I2S_TX = 5,
 	IDX_MI2S_RX = 6,
@@ -81,15 +81,7 @@ enum {
 	IDX_AFE_PORT_ID_TERTIARY_MI2S_TX = 39,
 	IDX_AFE_PORT_ID_PRIMARY_MI2S_RX = 40,
 	IDX_AFE_PORT_ID_PRIMARY_MI2S_TX = 41,
-	IDX_AFE_PORT_ID_SECONDARY_PCM_RX = 42,
-	IDX_AFE_PORT_ID_SECONDARY_PCM_TX = 43,
-	IDX_VOICE2_PLAYBACK_TX = 44,
-	IDX_SLIMBUS_6_RX = 45,
-	IDX_SLIMBUS_6_TX = 46,
-	IDX_SPDIF_RX = 47,
 	IDX_GLOBAL_CFG,
-	IDX_AUDIO_PORT_ID_I2S_RX,
-	IDX_AFE_PORT_ID_SECONDARY_MI2S_RX_VIBRA,
 	AFE_MAX_PORTS
 };
 
@@ -97,8 +89,7 @@ enum afe_mad_type {
 	MAD_HW_NONE = 0x00,
 	MAD_HW_AUDIO = 0x01,
 	MAD_HW_BEACON = 0x02,
-	MAD_HW_ULTRASOUND = 0x04,
-	MAD_SW_AUDIO = 0x05,
+	MAD_HW_ULTRASOUND = 0x04
 };
 
 struct afe_audio_buffer {
@@ -154,12 +145,9 @@ int afe_get_port_index(u16 port_id);
 int afe_start_pseudo_port(u16 port_id);
 int afe_stop_pseudo_port(u16 port_id);
 uint32_t afe_req_mmap_handle(struct afe_audio_client *ac);
-int afe_unmap_cal_blocks(void);
-int afe_memory_map(phys_addr_t dma_addr_p, u32 dma_buf_sz,
-		struct afe_audio_client *ac);
-int afe_cmd_memory_map(phys_addr_t dma_addr_p, u32 dma_buf_sz);
-int afe_cmd_memory_map_nowait(int port_id, phys_addr_t dma_addr_p,
-			u32 dma_buf_sz);
+int afe_memory_map(u32 dma_addr_p, u32 dma_buf_sz, struct afe_audio_client *ac);
+int afe_cmd_memory_map(u32 dma_addr_p, u32 dma_buf_sz);
+int afe_cmd_memory_map_nowait(int port_id, u32 dma_addr_p, u32 dma_buf_sz);
 int afe_cmd_memory_unmap(u32 dma_addr_p);
 int afe_cmd_memory_unmap_nowait(u32 dma_addr_p);
 void afe_set_dtmf_gen_rx_portid(u16 rx_port_id, int set);
@@ -176,7 +164,7 @@ int afe_rt_proxy_port_read(u32 buf_addr_p, u32 mem_map_handle, int bytes);
 int afe_port_start(u16 port_id, union afe_port_config *afe_config,
 	u32 rate);
 int afe_spk_prot_feed_back_cfg(int src_port, int dst_port,
-	int l_ch, int r_ch, u32 enable);
+	int l_ch, int r_ch);
 int afe_spk_prot_get_calib_data(struct afe_spkr_prot_get_vi_calib *calib);
 int afe_port_stop_nowait(int port_id);
 int afe_apply_gain(u16 port_id, u16 gain);
@@ -198,29 +186,15 @@ int afe_convert_virtual_to_portid(u16 port_id);
 int afe_pseudo_port_start_nowait(u16 port_id);
 int afe_pseudo_port_stop_nowait(u16 port_id);
 int afe_set_lpass_clock(u16 port_id, struct afe_clk_cfg *cfg);
-int afe_set_digital_codec_core_clock(u16 port_id,
-			struct afe_digital_clk_cfg *cfg);
 int afe_set_lpass_internal_digital_codec_clock(u16 port_id,
 				struct afe_digital_clk_cfg *cfg);
 int q6afe_check_osr_clk_freq(u32 freq);
-
-int afe_send_spdif_clk_cfg(struct afe_param_id_spdif_clk_cfg *cfg,
-		u16 port_id);
-int afe_send_spdif_ch_status_cfg(struct afe_param_id_spdif_ch_status_cfg
-		*ch_status_cfg,	u16 port_id);
-
-int afe_spdif_port_start(u16 port_id, struct afe_spdif_port_config *spdif_port,
-		u32 rate);
 
 int afe_turn_onoff_hw_mad(u16 mad_type, u16 mad_enable);
 int afe_port_set_mad_type(u16 port_id, enum afe_mad_type mad_type);
 enum afe_mad_type afe_port_get_mad_type(u16 port_id);
 int afe_set_config(enum afe_config_type config_type, void *config_data,
 		   int arg);
-void afe_clear_config(enum afe_config_type config);
-bool afe_has_config(enum afe_config_type config);
 
 void afe_set_aanc_info(struct aanc_data *aanc_info);
-int afe_port_group_set_param(u16 *port_id, int channel_count);
-int afe_port_group_enable(u16 enable);
 #endif /* __Q6AFE_V2_H__ */

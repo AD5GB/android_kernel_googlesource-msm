@@ -68,7 +68,15 @@ struct usb_otg {
 
 };
 
-extern const char *usb_otg_state_string(enum usb_otg_state state);
+/* for usb host and peripheral controller drivers */
+#ifdef CONFIG_USB_OTG_UTILS
+extern const char *otg_state_string(enum usb_otg_state state);
+#else
+static inline const char *otg_state_string(enum usb_otg_state state)
+{
+	return NULL;
+}
+#endif
 
 /* Context: can sleep */
 static inline int

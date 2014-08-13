@@ -42,7 +42,7 @@ static int clk_rpmrs_get_rate(struct rpm_clk *r)
 	int rc;
 	struct msm_rpm_iv_pair iv = { .id = r->rpm_status_id, };
 	rc = msm_rpm_get_status(&iv, 1);
-	return (rc < 0) ? rc : iv.value * 1000;
+	return (rc < 0) ? rc : iv.value * r->factor;
 }
 
 static int clk_rpmrs_handoff(struct rpm_clk *r)
@@ -53,8 +53,12 @@ static int clk_rpmrs_handoff(struct rpm_clk *r)
 	if (rc < 0)
 		return rc;
 
-	if (!r->branch)
-		r->c.rate = iv.value * 1000;
+	if (!r->branch) {
+		r->last_set_khz = iv.value;
+		if (!r->active_only)
+			r->last_set_sleep_khz = iv.value;
+		r->c.rate = iv.value * r->factor;
+	}
 
 	return 0;
 }
@@ -74,8 +78,12 @@ static int clk_rpmrs_set_rate_smd(struct rpm_clk *r, uint32_t value,
 
 static int clk_rpmrs_handoff_smd(struct rpm_clk *r)
 {
-	if (!r->branch)
-		r->c.rate = INT_MAX;
+	if (!r->branch) {
+		r->last_set_khz = INT_MAX;
+		if (!r->active_only)
+			r->last_set_sleep_khz = INT_MAX;
+		r->c.rate = 1 * r->factor;
+	}
 
 	return 0;
 }
@@ -105,22 +113,6 @@ struct clk_rpmrs_data clk_rpmrs_data_smd = {
 
 static DEFINE_MUTEX(rpm_clock_lock);
 
-static void to_active_sleep_khz(struct rpm_clk *r, unsigned long rate,
-			unsigned long *active_khz, unsigned long *sleep_khz)
-{
-	/* Convert the rate (hz) to khz */
-	*active_khz = DIV_ROUND_UP(rate, 1000);
-
-	/*
-	 * Active-only clocks don't care what the rate is during sleep. So,
-	 * they vote for zero.
-	 */
-	if (r->active_only)
-		*sleep_khz = 0;
-	else
-		*sleep_khz = *active_khz;
-}
-
 static int rpm_clk_prepare(struct clk *clk)
 {
 	struct rpm_clk *r = to_rpm_clk(clk);
@@ -132,16 +124,18 @@ static int rpm_clk_prepare(struct clk *clk)
 
 	mutex_lock(&rpm_clock_lock);
 
-	to_active_sleep_khz(r, r->c.rate, &this_khz, &this_sleep_khz);
-
+	this_khz = r->last_set_khz;
 	/* Don't send requests to the RPM if the rate has not been set. */
 	if (this_khz == 0)
 		goto out;
 
+	this_sleep_khz = r->last_set_sleep_khz;
+
 	/* Take peer clock's rate into account only if it's enabled. */
-	if (peer->enabled)
-		to_active_sleep_khz(peer, peer->c.rate,
-				&peer_khz, &peer_sleep_khz);
+	if (peer->enabled) {
+		peer_khz = peer->last_set_khz;
+		peer_sleep_khz = peer->last_set_sleep_khz;
+	}
 
 	value = max(this_khz, peer_khz);
 	if (r->branch)
@@ -177,16 +171,17 @@ static void rpm_clk_unprepare(struct clk *clk)
 
 	mutex_lock(&rpm_clock_lock);
 
-	if (r->c.rate) {
+	if (r->last_set_khz) {
 		uint32_t value;
 		struct rpm_clk *peer = r->peer;
 		unsigned long peer_khz = 0, peer_sleep_khz = 0;
 		int rc;
 
 		/* Take peer clock's rate into account only if it's enabled. */
-		if (peer->enabled)
-			to_active_sleep_khz(peer, peer->c.rate,
-				&peer_khz, &peer_sleep_khz);
+		if (peer->enabled) {
+			peer_khz = peer->last_set_khz;
+			peer_sleep_khz = peer->last_set_sleep_khz;
+		}
 
 		value = r->branch ? !!peer_khz : peer_khz;
 		rc = clk_rpmrs_set_rate_active(r, value);
@@ -209,19 +204,27 @@ static int rpm_clk_set_rate(struct clk *clk, unsigned long rate)
 	unsigned long this_khz, this_sleep_khz;
 	int rc = 0;
 
+	this_khz = DIV_ROUND_UP(rate, r->factor);
+
 	mutex_lock(&rpm_clock_lock);
+
+	/* Active-only clocks don't care what the rate is during sleep. So,
+	 * they vote for zero. */
+	if (r->active_only)
+		this_sleep_khz = 0;
+	else
+		this_sleep_khz = this_khz;
 
 	if (r->enabled) {
 		uint32_t value;
 		struct rpm_clk *peer = r->peer;
 		unsigned long peer_khz = 0, peer_sleep_khz = 0;
 
-		to_active_sleep_khz(r, rate, &this_khz, &this_sleep_khz);
-
 		/* Take peer clock's rate into account only if it's enabled. */
-		if (peer->enabled)
-			to_active_sleep_khz(peer, peer->c.rate,
-					&peer_khz, &peer_sleep_khz);
+		if (peer->enabled) {
+			peer_khz = peer->last_set_khz;
+			peer_sleep_khz = peer->last_set_sleep_khz;
+		}
 
 		value = max(this_khz, peer_khz);
 		rc = clk_rpmrs_set_rate_active(r, value);
@@ -230,6 +233,10 @@ static int rpm_clk_set_rate(struct clk *clk, unsigned long rate)
 
 		value = max(this_sleep_khz, peer_sleep_khz);
 		rc = clk_rpmrs_set_rate_sleep(r, value);
+	}
+	if (!rc) {
+		r->last_set_khz = this_khz;
+		r->last_set_sleep_khz = this_sleep_khz;
 	}
 
 out:

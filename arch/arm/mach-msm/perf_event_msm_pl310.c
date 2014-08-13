@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2007 ARM Limited
- * Copyright (c) 2012-2013, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -22,9 +22,6 @@
 
 #include <asm/pmu.h>
 #include <asm/hardware/cache-l2x0.h>
-#include <mach/socinfo.h>
-
-static u32 rev1;
 
 /*
  * Store dynamic PMU type after registration,
@@ -113,30 +110,6 @@ static struct pmu_hw_events l2x0pmu_hw_events = {
 
 #define COUNTER_ADDR(idx)	(l2x0_base + L2X0_EVENT_CNT0_VAL - 4*idx)
 
-static u32 l2x0_read_intr_mask(void)
-{
-	return readl_relaxed(l2x0_base + L2X0_INTR_MASK);
-}
-
-static void l2x0_write_intr_mask(u32 val)
-{
-	writel_relaxed(val, l2x0_base + L2X0_INTR_MASK);
-}
-
-static void l2x0_enable_counter_interrupt(void)
-{
-	u32 intr_mask = l2x0_read_intr_mask();
-	intr_mask |= L2X0_INTR_MASK_ECNTR;
-	l2x0_write_intr_mask(intr_mask);
-}
-
-static void l2x0_disable_counter_interrupt(void)
-{
-	u32 intr_mask = l2x0_read_intr_mask();
-	intr_mask &= ~L2X0_INTR_MASK_ECNTR;
-	l2x0_write_intr_mask(intr_mask);
-}
-
 static void l2x0_clear_interrupts(u32 flags)
 {
 	writel_relaxed(flags, l2x0_base + L2X0_INTR_CLEAR);
@@ -217,8 +190,10 @@ static void l2x0pmu_start(void)
 
 	raw_spin_lock_irqsave(&l2x0pmu_hw_events.pmu_lock, flags);
 
-	if (!rev1)
-		l2x0_enable_counter_interrupt();
+	/*
+	 * TODO: Enable counter interrupt,
+	 * once we know it works on this chip.
+	 */
 
 	val = l2x0pmu_read_ctrl();
 
@@ -239,8 +214,10 @@ static void l2x0pmu_stop(void)
 	val &= ~L2X0_EVENT_CNT_ENABLE_MASK;
 	l2x0pmu_write_ctrl(val);
 
-	if (!rev1)
-		l2x0_disable_counter_interrupt();
+	/*
+	 * TODO: Disable counter interrupt,
+	 * once we know it works on this chip.
+	 */
 
 	raw_spin_unlock_irqrestore(&l2x0pmu_hw_events.pmu_lock, flags);
 }
@@ -391,7 +368,7 @@ static struct arm_pmu l2x0_pmu = {
 	.free_pmu_irq	= arm_l2_pmu_generic_free_irq,
 };
 
-static int __devinit l2x0pmu_device_probe(struct platform_device *pdev)
+static int l2x0pmu_device_probe(struct platform_device *pdev)
 {
 	u32 aux = readl_relaxed(l2x0_base + L2X0_AUX_CTRL);
 	u32 debug = readl_relaxed(l2x0_base + L2X0_DEBUG_CTRL);
@@ -415,27 +392,15 @@ static int __devinit l2x0pmu_device_probe(struct platform_device *pdev)
 	return 0;
 }
 
-/*
- * PMU platform driver and devicetree bindings.
- */
-static struct of_device_id l2pmu_of_device_ids[] = {
-	{.compatible = "qcom,l2-pmu"},
-	{},
-};
-
 static struct platform_driver l2x0pmu_driver = {
 	.driver		= {
-		.name	= "l2-pmu",
-		.of_match_table = l2pmu_of_device_ids,
+		.name	= "l2-arm-pmu",
 	},
 	.probe		= l2x0pmu_device_probe,
 };
 
 static int __init register_pmu_driver(void)
 {
-	if (machine_is_msm9625())
-		rev1 = 1;
-
 	return platform_driver_register(&l2x0pmu_driver);
 }
 device_initcall(register_pmu_driver);

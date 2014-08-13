@@ -30,14 +30,10 @@
 #include <mach/subsystem_restart.h>
 #include <mach/clk.h>
 #include <mach/msm_smsm.h>
-#include <mach/ramdump.h>
-#include <mach/msm_smem.h>
-#ifdef CONFIG_LGE_HANDLE_PANIC
-#include <mach/lge_handle_panic.h>
-#endif
 
 #include "peripheral-loader.h"
 #include "pil-q6v5.h"
+#include "ramdump.h"
 #include "sysmon.h"
 
 /* Q6 Register Offsets */
@@ -82,8 +78,6 @@
 #define EXTERNAL_BHS_STATUS		BIT(4)
 #define BHS_TIMEOUT_US			50
 
-#define STOP_ACK_TIMEOUT_MS		1000
-
 struct mba_data {
 	void __iomem *rmb_base;
 	void __iomem *io_clamp_reg;
@@ -98,13 +92,12 @@ struct mba_data {
 	void *smem_ramdump_dev;
 	bool crash_shutdown;
 	bool ignore_errors;
+	int is_loadable;
 	int err_fatal_irq;
-	unsigned int stop_ack_irq;
 	int force_stop_gpio;
-	struct completion stop_ack;
 };
 
-static int pbl_mba_boot_timeout_ms = 1000;
+static int pbl_mba_boot_timeout_ms = 100;
 module_param(pbl_mba_boot_timeout_ms, int, S_IRUGO | S_IWUSR);
 
 static int modem_auth_timeout_ms = 10000;
@@ -112,15 +105,13 @@ module_param(modem_auth_timeout_ms, int, S_IRUGO | S_IWUSR);
 
 static int pil_mss_power_up(struct q6v5_data *drv)
 {
-	int ret = 0;
+	int ret;
 	struct device *dev = drv->desc.dev;
 	u32 regval;
 
-	if (drv->vreg) {
-		ret = regulator_enable(drv->vreg);
-		if (ret)
-			dev_err(dev, "Failed to enable modem regulator.\n");
-	}
+	ret = regulator_enable(drv->vreg);
+	if (ret)
+		dev_err(dev, "Failed to enable modem regulator.\n");
 
 	if (drv->cxrail_bhs) {
 		regval = readl_relaxed(drv->cxrail_bhs);
@@ -144,10 +135,7 @@ static int pil_mss_power_down(struct q6v5_data *drv)
 		writel_relaxed(regval, drv->cxrail_bhs);
 	}
 
-	if (drv->vreg)
-		return regulator_disable(drv->vreg);
-
-	return 0;
+	return regulator_disable(drv->vreg);
 }
 
 static int pil_mss_enable_clks(struct q6v5_data *drv)
@@ -224,13 +212,28 @@ static int pil_mss_shutdown(struct pil_desc *pil)
 	pil_q6v5_halt_axi_port(pil, drv->axi_halt_base + MSS_MODEM_HALT_BASE);
 	pil_q6v5_halt_axi_port(pil, drv->axi_halt_base + MSS_NC_HALT_BASE);
 
+	/*
+	 * If the shutdown function is called before the reset function, clocks
+	 * and power will not be enabled yet. Enable them here so that register
+	 * writes performed during the shutdown succeed.
+	 */
+	if (drv->is_booted == false) {
+		pil_mss_power_up(drv);
+		pil_mss_enable_clks(drv);
+	}
+	pil_q6v5_shutdown(pil);
+
+	pil_mss_disable_clks(drv);
+
 	writel_relaxed(1, drv->restart_reg);
 
-	if (drv->is_booted) {
-		pil_mss_disable_clks(drv);
-		pil_mss_power_down(drv);
-		drv->is_booted = false;
-	}
+	/*
+	 * access to the cx_rail_bhs is restricted until after the gcc_mss
+	 * reset is asserted once the PBL starts executing.
+	 */
+	pil_mss_power_down(drv);
+
+	drv->is_booted = false;
 
 	return 0;
 }
@@ -240,7 +243,7 @@ static int pil_mss_reset(struct pil_desc *pil)
 	struct q6v5_data *drv = container_of(pil, struct q6v5_data, desc);
 	struct platform_device *pdev = to_platform_device(pil->dev);
 	struct mba_data *mba = platform_get_drvdata(pdev);
-	phys_addr_t start_addr = pil_get_entry_addr(pil);
+	unsigned long start_addr = pil_get_entry_addr(pil);
 	int ret;
 
 	/*
@@ -399,7 +402,7 @@ static int pil_mba_init_image(struct pil_desc *pil,
 	return ret;
 }
 
-static int pil_mba_verify_blob(struct pil_desc *pil, phys_addr_t phy_addr,
+static int pil_mba_verify_blob(struct pil_desc *pil, u32 phy_addr,
 			       size_t size)
 {
 	struct mba_data *drv = dev_get_drvdata(pil->dev);
@@ -458,9 +461,9 @@ static void log_modem_sfr(void)
 	u32 size;
 	char *smem_reason, reason[MAX_SSR_REASON_LEN];
 
-	smem_reason = smem_get_entry_no_rlock(SMEM_SSR_REASON_MSS0, &size);
+	smem_reason = smem_get_entry(SMEM_SSR_REASON_MSS0, &size);
 	if (!smem_reason || !size) {
-		pr_err("modem subsystem failure reason: (unknown, smem_get_entry_no_rlock failed).\n");
+		pr_err("modem subsystem failure reason: (unknown, smem_get_entry failed).\n");
 		return;
 	}
 	if (!smem_reason[0]) {
@@ -470,10 +473,6 @@ static void log_modem_sfr(void)
 
 	strlcpy(reason, smem_reason, min(size, sizeof(reason)));
 	pr_err("modem subsystem failure reason: %s.\n", reason);
-
-#ifdef CONFIG_LGE_HANDLE_PANIC
-	lge_check_crash_skiped(reason);
-#endif
 
 	smem_reason[0] = '\0';
 	wmb();
@@ -495,36 +494,16 @@ static irqreturn_t modem_err_fatal_intr_handler(int irq, void *dev_id)
 		return IRQ_HANDLED;
 
 	pr_err("Fatal error on the modem.\n");
-	subsys_set_crash_status(drv->subsys, true);
 	restart_modem(drv);
-	return IRQ_HANDLED;
-}
-
-static irqreturn_t modem_stop_ack_intr_handler(int irq, void *dev_id)
-{
-	struct mba_data *drv = dev_id;
-	pr_info("Received stop ack interrupt from modem\n");
-	complete(&drv->stop_ack);
 	return IRQ_HANDLED;
 }
 
 static int modem_shutdown(const struct subsys_desc *subsys)
 {
 	struct mba_data *drv = subsys_to_drv(subsys);
-	unsigned long ret;
 
-	if (subsys->is_not_loadable)
+	if (!drv->is_loadable)
 		return 0;
-
-	if (!subsys_get_crash_status(drv->subsys)) {
-		gpio_set_value(drv->force_stop_gpio, 1);
-		ret = wait_for_completion_timeout(&drv->stop_ack,
-				msecs_to_jiffies(STOP_ACK_TIMEOUT_MS));
-		if (!ret)
-			pr_warn("Timed out on stop ack from modem.\n");
-		gpio_set_value(drv->force_stop_gpio, 0);
-	}
-
 	pil_shutdown(&drv->desc);
 	pil_shutdown(&drv->q6->desc);
 	return 0;
@@ -535,14 +514,13 @@ static int modem_powerup(const struct subsys_desc *subsys)
 	struct mba_data *drv = subsys_to_drv(subsys);
 	int ret;
 
-	if (subsys->is_not_loadable)
+	if (!drv->is_loadable)
 		return 0;
 	/*
 	 * At this time, the modem is shutdown. Therefore this function cannot
 	 * run concurrently with either the watchdog bite error handler or the
 	 * SMSM callback, making it safe to unset the flag below.
 	 */
-	init_completion(&drv->stop_ack);
 	drv->ignore_errors = false;
 	ret = pil_boot(&drv->q6->desc);
 	if (ret)
@@ -557,10 +535,7 @@ static void modem_crash_shutdown(const struct subsys_desc *subsys)
 {
 	struct mba_data *drv = subsys_to_drv(subsys);
 	drv->crash_shutdown = true;
-	if (!subsys_get_crash_status(drv->subsys)) {
-		gpio_set_value(drv->force_stop_gpio, 1);
-		mdelay(STOP_ACK_TIMEOUT_MS);
-	}
+	gpio_set_value(drv->force_stop_gpio, 1);
 }
 
 static struct ramdump_segment smem_segments[] = {
@@ -617,7 +592,6 @@ static irqreturn_t modem_wdog_bite_irq(int irq, void *dev_id)
 	if (drv->ignore_errors)
 		return IRQ_HANDLED;
 	pr_err("Watchdog bite received from modem software!\n");
-	subsys_set_crash_status(drv->subsys, true);
 	restart_modem(drv);
 	return IRQ_HANDLED;
 }
@@ -627,23 +601,15 @@ static int mss_start(const struct subsys_desc *desc)
 	int ret;
 	struct mba_data *drv = subsys_to_drv(desc);
 
-	if (desc->is_not_loadable)
+	if (!drv->is_loadable)
 		return 0;
 
-	init_completion(&drv->stop_ack);
 	ret = pil_boot(&drv->q6->desc);
 	if (ret)
 		return ret;
 	ret = pil_boot(&drv->desc);
-	if (ret) {
+	if (ret)
 		pil_shutdown(&drv->q6->desc);
-		/*
-		 * We know now that the unvote interrupt is not coming.
-		 * Remove the proxy votes immediately.
-		 */
-		if (drv->q6->desc.proxy_unvote_irq)
-			pil_q6v5_mss_remove_proxy_votes(&drv->q6->desc);
-	}
 	return ret;
 }
 
@@ -651,14 +617,14 @@ static void mss_stop(const struct subsys_desc *desc)
 {
 	struct mba_data *drv = subsys_to_drv(desc);
 
-	if (desc->is_not_loadable)
+	if (!drv->is_loadable)
 		return;
 
 	pil_shutdown(&drv->desc);
 	pil_shutdown(&drv->q6->desc);
 }
 
-static int __devinit pil_subsys_init(struct mba_data *drv,
+static int pil_subsys_init(struct mba_data *drv,
 					struct platform_device *pdev)
 {
 	int irq, ret;
@@ -676,17 +642,6 @@ static int __devinit pil_subsys_init(struct mba_data *drv,
 	drv->subsys_desc.crash_shutdown = modem_crash_shutdown;
 	drv->subsys_desc.start = mss_start;
 	drv->subsys_desc.stop = mss_stop;
-
-	ret = of_get_named_gpio(pdev->dev.of_node,
-			"qcom,gpio-err-ready", 0);
-	if (ret < 0)
-		return ret;
-
-	ret = gpio_to_irq(ret);
-	if (ret < 0)
-		return ret;
-
-	drv->subsys_desc.err_ready_irq = ret;
 
 	drv->subsys = subsys_register(&drv->subsys_desc);
 	if (IS_ERR(drv->subsys)) {
@@ -725,14 +680,6 @@ static int __devinit pil_subsys_init(struct mba_data *drv,
 		goto err_irq;
 	}
 
-	ret = devm_request_irq(&pdev->dev, drv->stop_ack_irq,
-			modem_stop_ack_intr_handler,
-			IRQF_TRIGGER_RISING, "pil-mss", drv);
-	if (ret < 0) {
-		dev_err(&pdev->dev, "Unable to register SMP2P stop ack handler!\n");
-		goto err_irq;
-	}
-
 	drv->adsp_state_notifier = subsys_notif_register_notifier("adsp",
 						&adsp_state_notifier_block);
 	if (IS_ERR(drv->adsp_state_notifier)) {
@@ -754,23 +701,13 @@ err_subsys:
 	return ret;
 }
 
-static int __devinit pil_mss_loadable_init(struct mba_data *drv,
+static int pil_mss_loadable_init(struct mba_data *drv,
 					struct platform_device *pdev)
 {
 	struct q6v5_data *q6;
 	struct pil_desc *q6_desc, *mba_desc;
 	struct resource *res;
-	struct property *prop;
 	int ret;
-
-	int clk_ready = of_get_named_gpio(pdev->dev.of_node,
-			"qcom,gpio-proxy-unvote", 0);
-	if (clk_ready < 0)
-		return clk_ready;
-
-	clk_ready = gpio_to_irq(clk_ready);
-	if (clk_ready < 0)
-		return clk_ready;
 
 	q6 = pil_q6v5_init(pdev);
 	if (IS_ERR(q6))
@@ -781,7 +718,6 @@ static int __devinit pil_mss_loadable_init(struct mba_data *drv,
 	q6_desc->ops = &pil_mss_ops;
 	q6_desc->owner = THIS_MODULE;
 	q6_desc->proxy_timeout = PROXY_TIMEOUT_MS;
-	q6_desc->proxy_unvote_irq = clk_ready;
 
 	drv->self_auth = of_property_read_bool(pdev->dev.of_node,
 							"qcom,pil-self-auth");
@@ -798,35 +734,30 @@ static int __devinit pil_mss_loadable_init(struct mba_data *drv,
 	if (!q6->restart_reg)
 		return -ENOMEM;
 
-	q6->vreg = NULL;
-
-	prop = of_find_property(pdev->dev.of_node, "vdd_mss-supply", NULL);
-	if (prop) {
-		q6->vreg = devm_regulator_get(&pdev->dev, "vdd_mss");
-		if (IS_ERR(q6->vreg))
-			return PTR_ERR(q6->vreg);
-
-		ret = regulator_set_voltage(q6->vreg, VDD_MSS_UV,
-						MAX_VDD_MSS_UV);
-		if (ret)
-			dev_err(&pdev->dev, "Failed to set vreg voltage.\n");
-
-		ret = regulator_set_optimum_mode(q6->vreg, 100000);
-		if (ret < 0) {
-			dev_err(&pdev->dev, "Failed to set vreg mode.\n");
-			return ret;
-		}
-	}
+	q6->vreg = devm_regulator_get(&pdev->dev, "vdd_mss");
+	if (IS_ERR(q6->vreg))
+		return PTR_ERR(q6->vreg);
 
 	q6->vreg_mx = devm_regulator_get(&pdev->dev, "vdd_mx");
 	if (IS_ERR(q6->vreg_mx))
 		return PTR_ERR(q6->vreg_mx);
+
+	ret = regulator_set_voltage(q6->vreg, VDD_MSS_UV, MAX_VDD_MSS_UV);
+	if (ret)
+		dev_err(&pdev->dev, "Failed to set regulator's voltage.\n");
+
+	ret = regulator_set_optimum_mode(q6->vreg, 100000);
+	if (ret < 0) {
+		dev_err(&pdev->dev, "Failed to set regulator's mode.\n");
+		return ret;
+	}
 
 	res = platform_get_resource_byname(pdev, IORESOURCE_MEM,
 		"cxrail_bhs_reg");
 	if (res)
 		q6->cxrail_bhs = devm_ioremap(&pdev->dev, res->start,
 					  resource_size(res));
+
 
 	q6->ahb_clk = devm_clk_get(&pdev->dev, "iface_clk");
 	if (IS_ERR(q6->ahb_clk))
@@ -850,7 +781,6 @@ static int __devinit pil_mss_loadable_init(struct mba_data *drv,
 	mba_desc->ops = &pil_mba_ops;
 	mba_desc->owner = THIS_MODULE;
 	mba_desc->proxy_timeout = PROXY_TIMEOUT_MS;
-	mba_desc->proxy_unvote_irq = clk_ready;
 
 	ret = pil_desc_init(mba_desc);
 	if (ret)
@@ -864,21 +794,19 @@ err_mba_desc:
 
 }
 
-static int __devinit pil_mss_driver_probe(struct platform_device *pdev)
+static int pil_mss_driver_probe(struct platform_device *pdev)
 {
 	struct mba_data *drv;
-	int ret, err_fatal_gpio, is_not_loadable, stop_ack_gpio;
+	int ret, err_fatal_gpio;
 
 	drv = devm_kzalloc(&pdev->dev, sizeof(*drv), GFP_KERNEL);
 	if (!drv)
 		return -ENOMEM;
 	platform_set_drvdata(pdev, drv);
 
-	is_not_loadable = of_property_read_bool(pdev->dev.of_node,
-							"qcom,is-not-loadable");
-	if (is_not_loadable) {
-		drv->subsys_desc.is_not_loadable = 1;
-	} else {
+	drv->is_loadable = of_property_read_bool(pdev->dev.of_node,
+							"qcom,is-loadable");
+	if (drv->is_loadable) {
 		ret = pil_mss_loadable_init(drv, pdev);
 		if (ret)
 			return ret;
@@ -894,16 +822,6 @@ static int __devinit pil_mss_driver_probe(struct platform_device *pdev)
 	if (drv->err_fatal_irq < 0)
 		return drv->err_fatal_irq;
 
-	stop_ack_gpio = of_get_named_gpio(pdev->dev.of_node,
-			"qcom,gpio-stop-ack", 0);
-	if (stop_ack_gpio < 0)
-		return stop_ack_gpio;
-
-	ret = gpio_to_irq(stop_ack_gpio);
-	if (ret < 0)
-		return ret;
-	drv->stop_ack_irq = ret;
-
 	/* Get the GPIO pin for writing the outbound bits: add more as needed */
 	drv->force_stop_gpio = of_get_named_gpio(pdev->dev.of_node,
 			"qcom,gpio-force-stop", 0);
@@ -913,7 +831,7 @@ static int __devinit pil_mss_driver_probe(struct platform_device *pdev)
 	return pil_subsys_init(drv, pdev);
 }
 
-static int __devexit pil_mss_driver_exit(struct platform_device *pdev)
+static int pil_mss_driver_exit(struct platform_device *pdev)
 {
 	struct mba_data *drv = platform_get_drvdata(pdev);
 
@@ -934,7 +852,7 @@ static struct of_device_id mss_match_table[] = {
 
 static struct platform_driver pil_mss_driver = {
 	.probe = pil_mss_driver_probe,
-	.remove = __devexit_p(pil_mss_driver_exit),
+	.remove = pil_mss_driver_exit,
 	.driver = {
 		.name = "pil-q6v5-mss",
 		.of_match_table = mss_match_table,

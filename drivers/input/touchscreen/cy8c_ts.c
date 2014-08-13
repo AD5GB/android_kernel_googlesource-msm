@@ -572,7 +572,7 @@ static struct dev_pm_ops cy8c_ts_pm_ops = {
 };
 #endif
 
-static int __devinit cy8c_ts_probe(struct i2c_client *client,
+static int cy8c_ts_probe(struct i2c_client *client,
 			const struct i2c_device_id *id)
 {
 	struct cy8c_ts *ts;
@@ -743,7 +743,7 @@ error_touch_data_alloc:
 	return rc;
 }
 
-static int __devexit cy8c_ts_remove(struct i2c_client *client)
+static int cy8c_ts_remove(struct i2c_client *client)
 {
 	struct cy8c_ts *ts = i2c_get_clientdata(client);
 
@@ -800,7 +800,7 @@ static struct i2c_driver cy8c_ts_driver = {
 #endif
 	},
 	.probe		= cy8c_ts_probe,
-	.remove		= __devexit_p(cy8c_ts_remove),
+	.remove		= cy8c_ts_remove,
 	.id_table	= cy8c_ts_id,
 };
 

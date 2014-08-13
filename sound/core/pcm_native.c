@@ -1568,7 +1568,9 @@ static int snd_compressed_ioctl(struct snd_pcm_substream *substream,
 	if (PCM_RUNTIME_CHECK(substream))
 		return -ENXIO;
 	runtime = substream->runtime;
-	pr_debug("%s called with cmd = %d\n", __func__, cmd);
+	if (runtime->status->state != SNDRV_PCM_STATE_OPEN)
+		return -EBADFD;
+	pr_err("%s called with cmd = %d\n", __func__, cmd);
 	err = substream->ops->ioctl(substream, cmd, arg);
 	return err;
 }
@@ -2668,7 +2670,6 @@ static int snd_pcm_common_ioctl1(struct file *file,
 	case SNDRV_COMPRESS_GET_PARAMS:
 	case SNDRV_COMPRESS_TSTAMP:
 	case SNDRV_COMPRESS_DRAIN:
-	case SNDRV_COMPRESS_METADATA_MODE:
 		return snd_compressed_ioctl(substream, cmd, arg);
 	default:
 		if (((cmd >> 8) & 0xff) == 'U')

@@ -105,11 +105,6 @@ struct ocmem_buf *ocmem_allocate(int client_id, unsigned long size)
 {
 	bool can_block = false;
 	bool can_wait = true;
-	struct ocmem_buf *buffer;
-	struct timeval start_time;
-	struct timeval end_time;
-	unsigned int delay;
-	struct ocmem_zone *zone;
 
 	if (!check_id(client_id)) {
 		pr_err("ocmem: Invalid client id: %d\n", client_id);
@@ -134,33 +129,8 @@ struct ocmem_buf *ocmem_allocate(int client_id, unsigned long size)
 		return NULL;
 	}
 
-	zone = get_zone(client_id);
-	if (!zone) {
-		pr_err("ocmem: Zone not found for client %d\n", client_id);
-		return NULL;
-	}
-
-	do_gettimeofday(&start_time);
-
-	buffer = __ocmem_allocate_range(client_id, size, size,
+	return __ocmem_allocate_range(client_id, size, size,
 					size, can_block, can_wait);
-
-	do_gettimeofday(&end_time);
-
-	if (!buffer)
-		return NULL;
-
-	delay = (end_time.tv_sec * USEC_PER_SEC + end_time.tv_usec)
-		 - (start_time.tv_sec * USEC_PER_SEC + start_time.tv_usec);
-
-	if (delay > zone->max_alloc_time)
-		zone->max_alloc_time = delay;
-	if (delay < zone->min_alloc_time)
-		zone->min_alloc_time = delay;
-	zone->total_alloc_time += delay;
-	inc_ocmem_stat(zone, NR_SYNC_ALLOCATIONS);
-
-	return buffer;
 }
 EXPORT_SYMBOL(ocmem_allocate);
 
@@ -280,12 +250,6 @@ EXPORT_SYMBOL(ocmem_allocate_nb);
 
 int ocmem_free(int client_id, struct ocmem_buf *buffer)
 {
-	int rc;
-	struct timeval start_time;
-	struct timeval end_time;
-	unsigned int delay;
-	struct ocmem_zone *zone;
-
 	if (!check_id(client_id)) {
 		pr_err("ocmem: Invalid client id: %d\n", client_id);
 		return -EINVAL;
@@ -297,38 +261,12 @@ int ocmem_free(int client_id, struct ocmem_buf *buffer)
 		return -EINVAL;
 	}
 
-	zone = get_zone(client_id);
-	if (!zone) {
-		pr_err("ocmem: Zone not found for client %d\n", client_id);
-		return -EINVAL;
-	}
-
 	if (!buffer) {
 		pr_err("ocmem: Invalid buffer\n");
 		return -EINVAL;
 	}
 
-	do_gettimeofday(&start_time);
-
-	rc = __ocmem_free(client_id, buffer);
-
-	do_gettimeofday(&end_time);
-
-	if (rc < 0)
-		return rc;
-
-	delay = (end_time.tv_sec * USEC_PER_SEC + end_time.tv_usec)
-		 - (start_time.tv_sec * USEC_PER_SEC + start_time.tv_usec);
-
-	if (delay > zone->max_free_time)
-		zone->max_free_time = delay;
-	if (delay < zone->min_free_time)
-		zone->min_free_time = delay;
-	zone->total_free_time += delay;
-	inc_ocmem_stat(zone, NR_FREES);
-
-	return rc;
-
+	return __ocmem_free(client_id, buffer);
 }
 EXPORT_SYMBOL(ocmem_free);
 
@@ -535,7 +473,6 @@ unsigned long get_max_quota(int client_id)
 	}
 	return process_quota(client_id);
 }
-EXPORT_SYMBOL(get_max_quota);
 
 /* Synchronous eviction/restore calls */
 /* Only a single eviction or restoration is allowed */

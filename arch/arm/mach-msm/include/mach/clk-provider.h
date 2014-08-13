@@ -49,8 +49,6 @@
  * @set_vdd: function to call when applying a new voltage setting.
  * @vdd_uv: sorted 2D array of legal voltage settings. Indexed by level, then
 		regulator.
- * @vdd_ua: sorted 2D array of legal cureent settings. Indexed by level, then
-		regulator. Optional parameter.
  * @level_votes: array of votes for each level.
  * @num_levels: specifies the size of level_votes array.
  * @cur_level: the currently set voltage level
@@ -61,8 +59,7 @@ struct clk_vdd_class {
 	struct regulator **regulator;
 	int num_regulators;
 	int (*set_vdd)(struct clk_vdd_class *v_class, int level);
-	int *vdd_uv;
-	int *vdd_ua;
+	const int **vdd_uv;
 	int *level_votes;
 	int num_levels;
 	unsigned long cur_level;
@@ -79,12 +76,10 @@ struct clk_vdd_class {
 		.lock = __MUTEX_INITIALIZER(_name.lock) \
 	}
 
-#define DEFINE_VDD_REGULATORS(_name, _num_levels, _num_regulators, _vdd_uv, \
-	 _vdd_ua) \
+#define DEFINE_VDD_REGULATORS(_name, _num_levels, _num_regulators, _vdd_uv) \
 	struct clk_vdd_class _name = { \
 		.class_name = #_name, \
 		.vdd_uv = _vdd_uv, \
-		.vdd_ua = _vdd_ua, \
 		.regulator = (struct regulator * [_num_regulators]) {}, \
 		.num_regulators = _num_regulators, \
 		.level_votes = (int [_num_levels]) {}, \
@@ -92,6 +87,8 @@ struct clk_vdd_class {
 		.cur_level = _num_levels, \
 		.lock = __MUTEX_INITIALIZER(_name.lock) \
 	}
+
+#define VDD_UV(...) ((int []){__VA_ARGS__})
 
 enum handoff {
 	HANDOFF_ENABLED_CLK,
@@ -112,7 +109,7 @@ struct clk_ops {
 	int (*set_max_rate)(struct clk *clk, unsigned long rate);
 	int (*set_flags)(struct clk *clk, unsigned flags);
 	unsigned long (*get_rate)(struct clk *clk);
-	long (*list_rate)(struct clk *clk, unsigned n);
+	int (*list_rate)(struct clk *clk, unsigned n);
 	int (*is_enabled)(struct clk *clk);
 	long (*round_rate)(struct clk *clk, unsigned long rate);
 	int (*set_parent)(struct clk *clk, struct clk *parent);
@@ -159,8 +156,6 @@ struct clk {
 
 int vote_vdd_level(struct clk_vdd_class *vdd_class, int level);
 int unvote_vdd_level(struct clk_vdd_class *vdd_class, int level);
-int __clk_pre_reparent(struct clk *c, struct clk *new, unsigned long *flags);
-void __clk_post_reparent(struct clk *c, struct clk *old, unsigned long *flags);
 
 /* Register clocks with the MSM clock driver */
 int msm_clock_register(struct clk_lookup *table, size_t size);

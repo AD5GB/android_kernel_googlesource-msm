@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2013, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -18,9 +18,6 @@
 #include <linux/errno.h>
 #include <linux/proc_fs.h>
 #include <linux/cpu.h>
-#include <mach/usb_trace.h>
-
-DEFINE_TRACE(usb_daytona_invalid_access);
 
 #define MODULE_NAME "msm_ebi_erp"
 
@@ -116,15 +113,10 @@ static irqreturn_t msm_ebi_irq(int irq, void *dev_id)
 	err_cntl |= CNTL_CLEAR_ERR;
 	writel_relaxed(err_cntl, base + SLV_ERR_CNTL);
 	mb();	/* Ensure interrupt is cleared before returning */
-
-	if ((err_apacket0 & AMID_MASK) == 0x00000102)
-		trace_usb_daytona_invalid_access(err_addr, err_apacket0,
-							 err_apacket1);
-
 	return IRQ_HANDLED;
 }
 
-static int __devinit msm_ebi_erp_probe(struct platform_device *pdev)
+static int msm_ebi_erp_probe(struct platform_device *pdev)
 {
 	struct resource *r;
 	struct msm_ebi_erp_data *drvdata;
@@ -178,7 +170,7 @@ static int msm_ebi_erp_remove(struct platform_device *pdev)
 
 static struct platform_driver msm_ebi_erp_driver = {
 	.probe = msm_ebi_erp_probe,
-	.remove = __devexit_p(msm_ebi_erp_remove),
+	.remove = msm_ebi_erp_remove,
 	.driver = {
 		.name = MODULE_NAME,
 		.owner = THIS_MODULE,

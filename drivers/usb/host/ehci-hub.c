@@ -626,6 +626,10 @@ ehci_hub_status_data (struct usb_hcd *hcd, char *buf)
 	if (ehci->rh_state != EHCI_RH_RUNNING)
 		return 0;
 
+	/* if !USB_SUSPEND, root hub timers won't get shut down ... */
+	if (ehci->rh_state != EHCI_RH_RUNNING)
+		return 0;
+
 	/* init status to no-changes */
 	buf [0] = 0;
 	ports = HCS_N_PORTS (ehci->hcs_params);
@@ -1266,12 +1270,6 @@ static int ehci_hub_control (
 				spin_lock_irqsave(&ehci->lock, flags);
 			} else {
 				ehci_writel(ehci, temp, status_reg);
-			}
-
-			if (ehci->reset_delay) {
-				spin_unlock_irqrestore(&ehci->lock, flags);
-				msleep(ehci->reset_delay);
-				spin_lock_irqsave(&ehci->lock, flags);
 			}
 			break;
 

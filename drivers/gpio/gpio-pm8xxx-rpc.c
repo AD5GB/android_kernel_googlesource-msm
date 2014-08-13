@@ -140,7 +140,7 @@ static void pm8xxx_gpio_rpc_dbg_show(struct seq_file *s, struct gpio_chip
 	}
 }
 
-static int __devinit pm8xxx_gpio_rpc_probe(struct platform_device *pdev)
+static int pm8xxx_gpio_rpc_probe(struct platform_device *pdev)
 {
 	int ret;
 	struct pm8xxx_gpio_rpc_chip *pm8xxx_gpio_chip;
@@ -198,7 +198,7 @@ reset_drvdata:
 	return ret;
 }
 
-static int __devexit pm8xxx_gpio_rpc_remove(struct platform_device *pdev)
+static int pm8xxx_gpio_rpc_remove(struct platform_device *pdev)
 {
 	struct pm8xxx_gpio_rpc_chip *pm8xxx_gpio_chip =
 						platform_get_drvdata(pdev);
@@ -216,7 +216,7 @@ static int __devexit pm8xxx_gpio_rpc_remove(struct platform_device *pdev)
 
 static struct platform_driver pm8xxx_gpio_rpc_driver = {
 	.probe		= pm8xxx_gpio_rpc_probe,
-	.remove		= __devexit_p(pm8xxx_gpio_rpc_remove),
+	.remove		= pm8xxx_gpio_rpc_remove,
 	.driver		= {
 		.name	= PM8XXX_GPIO_DEV_NAME,
 		.owner	= THIS_MODULE,

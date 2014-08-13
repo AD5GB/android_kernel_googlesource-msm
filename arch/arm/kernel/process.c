@@ -59,6 +59,8 @@ static const char *isa_modes[] = {
   "ARM" , "Thumb" , "Jazelle", "ThumbEE"
 };
 
+static volatile int hlt_counter;
+
 #ifdef CONFIG_SMP
 void arch_trigger_all_cpu_backtrace(void)
 {
@@ -71,8 +73,39 @@ void arch_trigger_all_cpu_backtrace(void)
 }
 #endif
 
+void disable_hlt(void)
+{
+	dump_stack();
+}
+#endif
+
 extern void call_with_stack(void (*fn)(void *), void *arg, void *sp);
 typedef void (*phys_reset_t)(unsigned long);
+
+#ifdef CONFIG_ARM_FLUSH_CONSOLE_ON_RESTART
+void arm_machine_flush_console(void)
+{
+	printk("\n");
+	pr_emerg("Restarting %s\n", linux_banner);
+	if (console_trylock()) {
+		console_unlock();
+		return;
+	}
+
+	mdelay(50);
+
+	local_irq_disable();
+	if (!console_trylock())
+		pr_emerg("arm_restart: Console was locked! Busting\n");
+	else
+		pr_emerg("arm_restart: Console was locked!\n");
+	console_unlock();
+}
+#else
+void arm_machine_flush_console(void)
+{
+}
+#endif
 
 #ifdef CONFIG_ARM_FLUSH_CONSOLE_ON_RESTART
 void arm_machine_flush_console(void)
@@ -213,35 +246,47 @@ void arch_cpu_idle_prepare(void)
 	local_fiq_enable();
 }
 
-void arch_cpu_idle_enter(void)
-{
-	idle_notifier_call_chain(IDLE_START);
-	ledtrig_cpu(CPU_LED_IDLE_START);
+	/* endless idle loop with no priority at all */
+	while (1) {
+		idle_notifier_call_chain(IDLE_START);
+		tick_nohz_idle_enter();
+		rcu_idle_enter();
+		ledtrig_cpu(CPU_LED_IDLE_START);
+		while (!need_resched()) {
+			/*
+			 * We need to disable interrupts here
+			 * to ensure we don't miss a wakeup call.
+			 */
+			local_irq_disable();
 #ifdef CONFIG_PL310_ERRATA_769419
-	wmb();
+			wmb();
 #endif
-}
-
-void arch_cpu_idle_exit(void)
-{
-	ledtrig_cpu(CPU_LED_IDLE_END);
-	idle_notifier_call_chain(IDLE_END);
-}
-
+			if (hlt_counter) {
+				local_irq_enable();
+				cpu_relax();
+			} else if (!need_resched()) {
+				stop_critical_timings();
+				if (cpuidle_idle_call())
+					default_idle();
+				start_critical_timings();
+				/*
+				 * default_idle functions must always
+				 * return with IRQs enabled.
+				 */
+				WARN_ON(irqs_disabled());
+			} else
+				local_irq_enable();
+		}
+		ledtrig_cpu(CPU_LED_IDLE_END);
+		rcu_idle_exit();
+		tick_nohz_idle_exit();
+		idle_notifier_call_chain(IDLE_END);
+		schedule_preempt_disabled();
 #ifdef CONFIG_HOTPLUG_CPU
-void arch_cpu_idle_dead(void)
-{
-	cpu_die();
-}
+		if (cpu_is_offline(smp_processor_id()))
+			cpu_die();
 #endif
-
-/*
- * Called from the core idle loop.
- */
-void arch_cpu_idle(void)
-{
-	if (cpuidle_idle_call())
-		default_idle();
+	}
 }
 
 enum reboot_mode reboot_mode = REBOOT_HARD;
@@ -275,6 +320,8 @@ void machine_shutdown(void)
 	 * one of the stopped CPUs.
 	 */
 	preempt_disable();
+
+	smp_send_stop();
 #endif
 	disable_nonboot_cpus();
 }
@@ -323,6 +370,10 @@ void machine_restart(char *cmd)
 {
 	preempt_disable();
 	smp_send_stop();
+
+	/* Flush the console to make sure all the relevant messages make it
+	 * out to the console drivers */
+	arm_machine_flush_console();
 
 	/* Flush the console to make sure all the relevant messages make it
 	 * out to the console drivers */
@@ -639,46 +690,11 @@ int in_gate_area_no_mm(unsigned long addr)
 
 const char *arch_vma_name(struct vm_area_struct *vma)
 {
-	if (is_gate_vma(vma))
+	if (vma == &gate_vma)
 		return "[vectors]";
-	else if (vma->vm_mm && vma->vm_start == vma->vm_mm->context.sigpage)
-		return "[sigpage]";
 	else if (vma == get_user_timers_vma(NULL))
 		return "[timers]";
 	else
 		return NULL;
-}
-
-static struct page *signal_page;
-extern struct page *get_signal_page(void);
-
-int arch_setup_additional_pages(struct linux_binprm *bprm, int uses_interp)
-{
-	struct mm_struct *mm = current->mm;
-	unsigned long addr;
-	int ret;
-
-	if (!signal_page)
-		signal_page = get_signal_page();
-	if (!signal_page)
-		return -ENOMEM;
-
-	down_write(&mm->mmap_sem);
-	addr = get_unmapped_area(NULL, 0, PAGE_SIZE, 0, 0);
-	if (IS_ERR_VALUE(addr)) {
-		ret = addr;
-		goto up_fail;
-	}
-
-	ret = install_special_mapping(mm, addr, PAGE_SIZE,
-		VM_READ | VM_EXEC | VM_MAYREAD | VM_MAYWRITE | VM_MAYEXEC,
-		&signal_page);
-
-	if (ret == 0)
-		mm->context.sigpage = addr;
-
- up_fail:
-	up_write(&mm->mmap_sem);
-	return ret;
 }
 #endif

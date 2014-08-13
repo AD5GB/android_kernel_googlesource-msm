@@ -118,7 +118,7 @@ static const struct apr_svc_table svc_tbl_qdsp6[] = {
 	},
 	{
 		.name = "LSM",
-		.idx = 10,
+		.idx = 9,
 		.id = APR_SVC_LSM,
 		.client_id = APR_CLIENT_AUDIO,
 	},

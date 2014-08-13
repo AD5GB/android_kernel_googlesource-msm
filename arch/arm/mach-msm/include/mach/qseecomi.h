@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013-2014, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2013, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -15,19 +15,6 @@
 #define __QSEECOMI_H_
 
 #include <linux/qseecom.h>
-
-#define QSEECOM_KEY_ID_SIZE   32
-
-#define QSEOS_RESULT_FAIL_UNSUPPORTED_CE_PIPE -63
-#define QSEOS_RESULT_FAIL_KS_OP               -64
-#define QSEOS_RESULT_FAIL_KEY_ID_EXISTS       -65
-#define QSEOS_RESULT_FAIL_MAX_KEYS            -66
-#define QSEOS_RESULT_FAIL_SAVE_KS             -67
-#define QSEOS_RESULT_FAIL_LOAD_KS             -68
-#define QSEOS_RESULT_FAIL_KS_ALREADY_DONE     -69
-#define QSEOS_RESULT_FAIL_KEY_ID_DNE          -70
-#define QSEOS_RESULT_FAIL_INCORRECT_PSWD      -71
-#define QSEOS_RESULT_FAIL_MAX_ATTEMPT         -72
 
 enum qseecom_command_scm_resp_type {
 	QSEOS_APP_ID = 0xEE01,
@@ -49,27 +36,6 @@ enum qseecom_qceos_cmd_id {
 	QSEOS_UNLOAD_SERV_IMAGE_COMMAND,
 	QSEOS_APP_REGION_NOTIFICATION,
 	QSEOS_REGISTER_LOG_BUF_COMMAND,
-	QSEOS_RPMB_PROVISION_KEY_COMMAND,
-	QSEOS_RPMB_ERASE_COMMAND,
-	QSEOS_GENERATE_KEY  = 0x11,
-	QSEOS_DELETE_KEY,
-	QSEOS_MAX_KEY_COUNT,
-	QSEOS_SET_KEY,
-	QSEOS_UPDATE_KEY_USERINFO,
-	QSEOS_TEE_OPEN_SESSION,
-	QSEOS_TEE_INVOKE_COMMAND,
-	QSEOS_TEE_CLOSE_SESSION,
-	QSEOS_FSM_LTE_INIT_DB = 0x100,
-	QSEOS_FSM_LTE_STORE_KENB = 0x101,
-	QSEOS_FSM_LTE_GEN_KEYS = 0x102,
-	QSEOS_FSM_LTE_GET_KEY_OFFSETS = 0x103,
-	QSEOS_FSM_LTE_GEN_KENB_STAR = 0x104,
-	QSEOS_FSM_LTE_GET_KENB_STAR = 0x105,
-	QSEOS_FSM_LTE_STORE_NH = 0x106,
-	QSEOS_FSM_LTE_DELETE_NH = 0x107,
-	QSEOS_FSM_LTE_DELETE_KEYS = 0x108,
-	QSEOS_FSM_IKE_CMD_SIGN = 0x200,
-	QSEOS_FSM_IKE_CMD_PROV_KEY = 0x201,
 	QSEOS_CMD_MAX     = 0xEFFFFFFF
 };
 
@@ -77,13 +43,6 @@ enum qseecom_qceos_cmd_status {
 	QSEOS_RESULT_SUCCESS = 0,
 	QSEOS_RESULT_INCOMPLETE,
 	QSEOS_RESULT_FAILURE  = 0xFFFFFFFF
-};
-
-enum qseecom_pipe_type {
-	QSEOS_PIPE_ENC = 0x1,
-	QSEOS_PIPE_ENC_XTS = 0x2,
-	QSEOS_PIPE_AUTH = 0x4,
-	QSEOS_PIPE_ENUM_FILL = 0x7FFFFFFF
 };
 
 __packed  struct qsee_apps_region_info_ireq {
@@ -166,76 +125,6 @@ __packed struct qseecom_command_scm_resp {
 	uint32_t result;
 	enum qseecom_command_scm_resp_type resp_type;
 	unsigned int data;
-};
-
-struct qseecom_rpmb_provision_key {
-	uint32_t key_type;
-};
-
-__packed struct qseecom_client_send_service_ireq {
-	uint32_t qsee_cmd_id;
-	uint32_t key_type; /* in */
-	unsigned int req_len; /* in */
-	void *rsp_ptr; /* in/out */
-	unsigned int rsp_len; /* in/out */
-};
-
-__packed struct qseecom_key_generate_ireq {
-	uint32_t qsee_command_id;
-	uint32_t flags;
-	uint8_t key_id[QSEECOM_KEY_ID_SIZE];
-	uint8_t hash32[QSEECOM_HASH_SIZE];
-};
-
-__packed struct qseecom_key_select_ireq {
-	uint32_t qsee_command_id;
-	uint32_t ce;
-	uint32_t pipe;
-	uint32_t pipe_type;
-	uint32_t flags;
-	uint8_t key_id[QSEECOM_KEY_ID_SIZE];
-	uint8_t hash32[QSEECOM_HASH_SIZE];
-};
-
-__packed struct qseecom_key_delete_ireq {
-	uint32_t qsee_command_id;
-	uint32_t flags;
-	uint8_t key_id[QSEECOM_KEY_ID_SIZE];
-	uint8_t hash32[QSEECOM_HASH_SIZE];
-
-};
-
-__packed struct qseecom_key_userinfo_update_ireq {
-	uint32_t qsee_command_id;
-	uint32_t flags;
-	uint8_t key_id[QSEECOM_KEY_ID_SIZE];
-	uint8_t current_hash32[QSEECOM_HASH_SIZE];
-	uint8_t new_hash32[QSEECOM_HASH_SIZE];
-};
-
-__packed struct qseecom_key_max_count_query_ireq {
-	uint32_t flags;
-};
-
-__packed struct qseecom_key_max_count_query_irsp {
-	uint32_t max_key_count;
-};
-
-__packed struct qseecom_qteec_ireq {
-	uint32_t    qsee_cmd_id;
-	uint32_t    app_id;
-	void	*req_ptr;
-	uint32_t    req_len;
-	void    *resp_ptr;
-	uint32_t    resp_len;
-};
-
-__packed struct qseecom_client_send_fsm_key_req {
-	uint32_t qsee_cmd_id;
-	void     *req_ptr;
-	uint32_t req_len;
-	void     *rsp_ptr;
-	uint32_t rsp_len;
 };
 
 #endif /* __QSEECOMI_H_ */

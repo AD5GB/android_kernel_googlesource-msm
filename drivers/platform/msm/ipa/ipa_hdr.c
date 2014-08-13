@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2014, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -12,7 +12,7 @@
 
 #include "ipa_i.h"
 
-static const u32 ipa_hdr_bin_sz[IPA_HDR_BIN_MAX] = { 8, 16, 24, 36, 60};
+static const u32 ipa_hdr_bin_sz[IPA_HDR_BIN_MAX] = { 8, 16, 24, 36 };
 
 /**
  * ipa_generate_hdr_hw_tbl() - generates the headers table
@@ -20,7 +20,7 @@ static const u32 ipa_hdr_bin_sz[IPA_HDR_BIN_MAX] = { 8, 16, 24, 36, 60};
  *
  * Returns:	0 on success, negative on failure
  */
-static int ipa_generate_hdr_hw_tbl(struct ipa_mem_buffer *mem)
+int ipa_generate_hdr_hw_tbl(struct ipa_mem_buffer *mem)
 {
 	struct ipa_hdr_entry *entry;
 
@@ -32,8 +32,8 @@ static int ipa_generate_hdr_hw_tbl(struct ipa_mem_buffer *mem)
 	}
 	IPADBG("tbl_sz=%d\n", ipa_ctx->hdr_tbl.end);
 
-	mem->base = dma_alloc_coherent(ipa_ctx->pdev, mem->size,
-			&mem->phys_base, GFP_KERNEL);
+	mem->base = dma_alloc_coherent(NULL, mem->size, &mem->phys_base,
+			GFP_KERNEL);
 	if (!mem->base) {
 		IPAERR("fail to alloc DMA buff of size %d\n", mem->size);
 		return -ENOMEM;
@@ -55,7 +55,7 @@ static int ipa_generate_hdr_hw_tbl(struct ipa_mem_buffer *mem)
  * __ipa_commit_hdr() commits hdr to hardware
  * This function needs to be called with a locked mutex.
  */
-int __ipa_commit_hdr_v1(void)
+static int __ipa_commit_hdr(void)
 {
 	struct ipa_desc desc = { 0 };
 	struct ipa_mem_buffer *mem;
@@ -86,24 +86,16 @@ int __ipa_commit_hdr_v1(void)
 		goto fail_hw_tbl_gen;
 	}
 
-	if (ipa_ctx->hdr_tbl_lcl) {
-		if (mem->size > IPA_v1_RAM_HDR_SIZE) {
-			IPAERR("tbl too big, needed %d avail %d\n", mem->size,
-				IPA_v1_RAM_HDR_SIZE);
-			goto fail_send_cmd;
-		}
-	} else {
-		if (mem->size > IPA_RAM_HDR_SIZE_DDR) {
-			IPAERR("tbl too big, needed %d avail %d\n", mem->size,
-				IPA_RAM_HDR_SIZE_DDR);
-			goto fail_send_cmd;
-		}
+	if (ipa_ctx->hdr_tbl_lcl && mem->size > IPA_RAM_HDR_SIZE) {
+		IPAERR("tbl too big, needed %d avail %d\n", mem->size,
+				IPA_RAM_HDR_SIZE);
+		goto fail_hw_tbl_gen;
 	}
 
-	cmd->hdr_table_src_addr = mem->phys_base;
+	cmd->hdr_table_addr = mem->phys_base;
 	if (ipa_ctx->hdr_tbl_lcl) {
 		cmd->size_hdr_table = mem->size;
-		cmd->hdr_table_dst_addr = IPA_v1_RAM_HDR_OFST;
+		cmd->hdr_addr = IPA_RAM_HDR_OFST;
 		desc.opcode = IPA_HDR_INIT_LOCAL;
 	} else {
 		desc.opcode = IPA_HDR_INIT_SYSTEM;
@@ -119,11 +111,10 @@ int __ipa_commit_hdr_v1(void)
 	}
 
 	if (ipa_ctx->hdr_tbl_lcl) {
-		dma_free_coherent(ipa_ctx->pdev, mem->size, mem->base,
-				mem->phys_base);
+		dma_free_coherent(NULL, mem->size, mem->base, mem->phys_base);
 	} else {
 		if (ipa_ctx->hdr_mem.phys_base) {
-			dma_free_coherent(ipa_ctx->pdev, ipa_ctx->hdr_mem.size,
+			dma_free_coherent(NULL, ipa_ctx->hdr_mem.size,
 					  ipa_ctx->hdr_mem.base,
 					  ipa_ctx->hdr_mem.phys_base);
 		}
@@ -135,9 +126,8 @@ int __ipa_commit_hdr_v1(void)
 	return 0;
 
 fail_send_cmd:
-	if (mem->base)
-		dma_free_coherent(ipa_ctx->pdev, mem->size, mem->base,
-				mem->phys_base);
+	if (mem->phys_base)
+		dma_free_coherent(NULL, mem->size, mem->base, mem->phys_base);
 fail_hw_tbl_gen:
 	kfree(cmd);
 fail_alloc_cmd:
@@ -147,90 +137,29 @@ fail_alloc_mem:
 	return -EPERM;
 }
 
-int __ipa_commit_hdr_v2(void)
-{
-	struct ipa_desc desc = { 0 };
-	struct ipa_mem_buffer mem;
-	struct ipa_hdr_init_system cmd;
-	struct ipa_hw_imm_cmd_dma_shared_mem dma_cmd;
-	int rc = -EFAULT;
-
-	if (ipa_generate_hdr_hw_tbl(&mem)) {
-		IPAERR("fail to generate HDR HW TBL\n");
-		goto end;
-	}
-
-	if (ipa_ctx->hdr_tbl_lcl) {
-		if (mem.size > IPA_v2_RAM_APPS_HDR_SIZE) {
-			IPAERR("tbl too big, needed %d avail %d\n", mem.size,
-				IPA_v2_RAM_APPS_HDR_SIZE);
-			goto end;
-		} else {
-			dma_cmd.system_addr = mem.phys_base;
-			dma_cmd.size = mem.size;
-			dma_cmd.local_addr = ipa_ctx->smem_restricted_bytes +
-				IPA_v2_RAM_APPS_HDR_OFST;
-			desc.opcode = IPA_DMA_SHARED_MEM;
-			desc.pyld = &dma_cmd;
-			desc.len =
-				sizeof(struct ipa_hw_imm_cmd_dma_shared_mem);
-		}
-	} else {
-		if (mem.size > IPA_RAM_HDR_SIZE_DDR) {
-			IPAERR("tbl too big, needed %d avail %d\n", mem.size,
-				IPA_RAM_HDR_SIZE_DDR);
-			goto end;
-		} else {
-			cmd.hdr_table_addr = mem.phys_base;
-			desc.opcode = IPA_HDR_INIT_SYSTEM;
-			desc.pyld = &cmd;
-			desc.len = sizeof(struct ipa_hdr_init_system);
-		}
-	}
-
-	desc.type = IPA_IMM_CMD_DESC;
-	IPA_DUMP_BUFF(mem.base, mem.phys_base, mem.size);
-
-	if (ipa_send_cmd(1, &desc))
-		IPAERR("fail to send immediate command\n");
-	else
-		rc = 0;
-
-	if (ipa_ctx->hdr_tbl_lcl) {
-		dma_free_coherent(ipa_ctx->pdev, mem.size, mem.base,
-				mem.phys_base);
-	} else {
-		if (!rc) {
-			if (ipa_ctx->hdr_mem.phys_base)
-				dma_free_coherent(ipa_ctx->pdev,
-						ipa_ctx->hdr_mem.size,
-						ipa_ctx->hdr_mem.base,
-						ipa_ctx->hdr_mem.phys_base);
-			ipa_ctx->hdr_mem = mem;
-		}
-	}
-
-end:
-	return rc;
-}
-
 static int __ipa_add_hdr(struct ipa_hdr_add *hdr)
 {
 	struct ipa_hdr_entry *entry;
 	struct ipa_hdr_offset_entry *offset;
+	struct ipa_tree_node *node;
 	u32 bin;
 	struct ipa_hdr_tbl *htbl = &ipa_ctx->hdr_tbl;
-	int id;
 
 	if (hdr->hdr_len == 0) {
 		IPAERR("bad parm\n");
 		goto error;
 	}
 
+	node = kmem_cache_zalloc(ipa_ctx->tree_node_cache, GFP_KERNEL);
+	if (!node) {
+		IPAERR("failed to alloc tree node object\n");
+		goto error;
+	}
+
 	entry = kmem_cache_zalloc(ipa_ctx->hdr_cache, GFP_KERNEL);
 	if (!entry) {
 		IPAERR("failed to alloc hdr object\n");
-		goto error;
+		goto hdr_alloc_fail;
 	}
 
 	INIT_LIST_HEAD(&entry->link);
@@ -249,8 +178,6 @@ static int __ipa_add_hdr(struct ipa_hdr_add *hdr)
 		bin = IPA_HDR_BIN2;
 	else if (hdr->hdr_len <= ipa_hdr_bin_sz[IPA_HDR_BIN3])
 		bin = IPA_HDR_BIN3;
-	else if (hdr->hdr_len <= ipa_hdr_bin_sz[IPA_HDR_BIN4])
-		bin = IPA_HDR_BIN4;
 	else {
 		IPAERR("unexpected hdr len %d\n", hdr->hdr_len);
 		goto bad_hdr_len;
@@ -287,13 +214,13 @@ static int __ipa_add_hdr(struct ipa_hdr_add *hdr)
 	IPADBG("add hdr of sz=%d hdr_cnt=%d ofst=%d\n", hdr->hdr_len,
 			htbl->hdr_cnt, offset->offset);
 
-	id = ipa_id_alloc(entry);
-	if (id < 0) {
-		IPAERR("failed to alloc id\n");
+	hdr->hdr_hdl = (u32) entry;
+	node->hdl = hdr->hdr_hdl;
+	if (ipa_insert(&ipa_ctx->hdr_hdl_tree, node)) {
+		IPAERR("failed to add to tree\n");
 		WARN_ON(1);
 	}
-	entry->id = id;
-	hdr->hdr_hdl = id;
+
 	entry->ref_cnt++;
 
 	return 0;
@@ -303,17 +230,20 @@ ofst_alloc_fail:
 bad_hdr_len:
 	entry->cookie = 0;
 	kmem_cache_free(ipa_ctx->hdr_cache, entry);
+hdr_alloc_fail:
+	kmem_cache_free(ipa_ctx->tree_node_cache, node);
 error:
 	return -EPERM;
 }
 
 int __ipa_del_hdr(u32 hdr_hdl)
 {
-	struct ipa_hdr_entry *entry;
+	struct ipa_hdr_entry *entry = (struct ipa_hdr_entry *)hdr_hdl;
+	struct ipa_tree_node *node;
 	struct ipa_hdr_tbl *htbl = &ipa_ctx->hdr_tbl;
 
-	entry = ipa_id_find(hdr_hdl);
-	if (entry == NULL) {
+	node = ipa_search(&ipa_ctx->hdr_hdl_tree, hdr_hdl);
+	if (node == NULL) {
 		IPAERR("lookup failed\n");
 		return -EINVAL;
 	}
@@ -340,7 +270,8 @@ int __ipa_del_hdr(u32 hdr_hdl)
 	kmem_cache_free(ipa_ctx->hdr_cache, entry);
 
 	/* remove the handle from the database */
-	ipa_id_remove(hdr_hdl);
+	rb_erase(&node->node, &ipa_ctx->hdr_hdl_tree);
+	kmem_cache_free(ipa_ctx->tree_node_cache, node);
 
 	return 0;
 }
@@ -365,8 +296,6 @@ int ipa_add_hdr(struct ipa_ioc_add_hdr *hdrs)
 	}
 
 	mutex_lock(&ipa_ctx->lock);
-	IPADBG("adding %d headers to IPA driver internal data struct\n",
-			hdrs->num_hdrs);
 	for (i = 0; i < hdrs->num_hdrs; i++) {
 		if (__ipa_add_hdr(&hdrs->hdr[i])) {
 			IPAERR("failed to add hdr %d\n", i);
@@ -377,8 +306,7 @@ int ipa_add_hdr(struct ipa_ioc_add_hdr *hdrs)
 	}
 
 	if (hdrs->commit) {
-		IPADBG("committing all headers to IPA core");
-		if (ipa_ctx->ctrl->ipa_commit_hdr()) {
+		if (__ipa_commit_hdr()) {
 			result = -EPERM;
 			goto bail;
 		}
@@ -420,7 +348,7 @@ int ipa_del_hdr(struct ipa_ioc_del_hdr *hdls)
 	}
 
 	if (hdls->commit) {
-		if (ipa_ctx->ctrl->ipa_commit_hdr()) {
+		if (__ipa_commit_hdr()) {
 			result = -EPERM;
 			goto bail;
 		}
@@ -431,6 +359,27 @@ bail:
 	return result;
 }
 EXPORT_SYMBOL(ipa_del_hdr);
+
+/**
+ * ipa_dump_hdr() - prints all the headers in the header table in SW
+ *
+ * Note:	Should not be called from atomic context
+ */
+void ipa_dump_hdr(void)
+{
+	struct ipa_hdr_entry *entry;
+
+	IPADBG("START\n");
+	mutex_lock(&ipa_ctx->lock);
+	list_for_each_entry(entry, &ipa_ctx->hdr_tbl.head_hdr_entry_list,
+			link) {
+		IPADBG("hdr_len=%4d off=%4d bin=%4d\n", entry->hdr_len,
+				entry->offset_entry->offset,
+				entry->offset_entry->bin);
+	}
+	mutex_unlock(&ipa_ctx->lock);
+	IPADBG("END\n");
+}
 
 /**
  * ipa_commit_hdr() - commit to IPA HW the current header table in SW
@@ -453,7 +402,7 @@ int ipa_commit_hdr(void)
 		return -EPERM;
 
 	mutex_lock(&ipa_ctx->lock);
-	if (ipa_ctx->ctrl->ipa_commit_hdr()) {
+	if (__ipa_commit_hdr()) {
 		result = -EPERM;
 		goto bail;
 	}
@@ -478,6 +427,7 @@ int ipa_reset_hdr(void)
 	struct ipa_hdr_entry *next;
 	struct ipa_hdr_offset_entry *off_entry;
 	struct ipa_hdr_offset_entry *off_next;
+	struct ipa_tree_node *node;
 	int i;
 
 	/*
@@ -494,21 +444,21 @@ int ipa_reset_hdr(void)
 	list_for_each_entry_safe(entry, next,
 			&ipa_ctx->hdr_tbl.head_hdr_entry_list, link) {
 
-		/* do not remove the default header */
-		if (!strcmp(entry->name, IPA_LAN_RX_HDR_NAME))
+		/* do not remove the default exception header */
+		if (!strncmp(entry->name, IPA_DFLT_HDR_NAME,
+					IPA_RESOURCE_NAME_MAX))
 			continue;
 
-		if (ipa_id_find(entry->id) == NULL) {
+		node = ipa_search(&ipa_ctx->hdr_hdl_tree, (u32) entry);
+		if (node == NULL)
 			WARN_ON(1);
-			mutex_unlock(&ipa_ctx->lock);
-			return -EFAULT;
-		}
 		list_del(&entry->link);
 		entry->cookie = 0;
 		kmem_cache_free(ipa_ctx->hdr_cache, entry);
 
 		/* remove the handle from the database */
-		ipa_id_remove(entry->id);
+		rb_erase(&node->node, &ipa_ctx->hdr_hdl_tree);
+		kmem_cache_free(ipa_ctx->tree_node_cache, node);
 
 	}
 	for (i = 0; i < IPA_HDR_BIN_MAX; i++) {
@@ -578,7 +528,7 @@ int ipa_get_hdr(struct ipa_ioc_get_hdr *lookup)
 	mutex_lock(&ipa_ctx->lock);
 	entry = __ipa_find_hdr(lookup->name);
 	if (entry) {
-		lookup->hdl = entry->id;
+		lookup->hdl = (uint32_t) entry;
 		result = 0;
 	}
 	mutex_unlock(&ipa_ctx->lock);
@@ -605,7 +555,7 @@ int __ipa_release_hdr(u32 hdr_hdl)
 	}
 
 	/* commit for put */
-	if (ipa_ctx->ctrl->ipa_commit_hdr()) {
+	if (__ipa_commit_hdr()) {
 		IPAERR("fail to commit hdr\n");
 		result = -EFAULT;
 		goto bail;
@@ -625,13 +575,13 @@ bail:
  */
 int ipa_put_hdr(u32 hdr_hdl)
 {
-	struct ipa_hdr_entry *entry;
+	struct ipa_hdr_entry *entry = (struct ipa_hdr_entry *)hdr_hdl;
+	struct ipa_tree_node *node;
 	int result = -EFAULT;
 
 	mutex_lock(&ipa_ctx->lock);
-
-	entry = ipa_id_find(hdr_hdl);
-	if (entry == NULL) {
+	node = ipa_search(&ipa_ctx->hdr_hdl_tree, hdr_hdl);
+	if (node == NULL) {
 		IPAERR("lookup failed\n");
 		result = -EINVAL;
 		goto bail;

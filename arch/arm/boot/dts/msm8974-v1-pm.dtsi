@@ -10,7 +10,9 @@
  * GNU General Public License for more details.
  */
 
-&soc {
+/include/ "skeleton.dtsi"
+
+/ {
 	qcom,spm@f9089000 {
 		compatible = "qcom,spm-v2";
 		#address-cells = <1>;
@@ -140,7 +142,7 @@
 			qcom,type = <0x62706d73>;	/* "smpb" */
 			qcom,id = <0x02>;
 			qcom,key = <0x6e726f63>;	/* "corn" */
-			qcom,init-value = <6>;		/* Super Turbo */
+			qcom,init-value = <5>;		/* Super Turbo */
 		};
 
 		qcom,lpm-resources@1 {
@@ -186,7 +188,7 @@
 			qcom,vdd-dig-upper-bound = <6>; /* SUPER TURBO */
 			qcom,vdd-dig-lower-bound = <4>;  /* NORMAL */
 			qcom,irqs-detectable;
-			qcom,gpio-detectable;
+			qcom.gpios-detectable;
 			qcom,latency-us = <1>;
 			qcom,ss-power = <784>;
 			qcom,energy-overhead = <190000>;
@@ -203,7 +205,7 @@
 			qcom,vdd-dig-upper-bound = <6>; /* SUPER TURBO */
 			qcom,vdd-dig-lower-bound = <4>;  /* NORMAL */
 			qcom,irqs-detectable;
-			qcom,gpio-detectable;
+			qcom.gpios-detectable;
 			qcom,latency-us = <75>;
 			qcom,ss-power = <735>;
 			qcom,energy-overhead = <77341>;
@@ -221,7 +223,7 @@
 			qcom,vdd-dig-upper-bound = <6>; /* SUPER TURBO */
 			qcom,vdd-dig-lower-bound = <4>;  /* NORMAL */
 			qcom,irqs-detectable;
-			qcom,gpio-detectable;
+			qcom.gpios-detectable;
 			qcom,latency-us = <95>;
 			qcom,ss-power = <725>;
 			qcom,energy-overhead = <99500>;
@@ -238,7 +240,7 @@
 			qcom,vdd-dig-upper-bound = <6>; /* SUPER TURBO */
 			qcom,vdd-dig-lower-bound = <4>;  /* NORMAL */
 			qcom,irqs-detectable;
-			qcom,gpio-detectable;
+			qcom.gpios-detectable;
 			qcom,latency-us = <2000>;
 			qcom,ss-power = <138>;
 			qcom,energy-overhead = <1208400>;
@@ -255,7 +257,7 @@
 			qcom,vdd-dig-upper-bound = <6>; /* SUPER TURBO  */
 			qcom,vdd-dig-lower-bound = <3>;  /* SVS SOC */
 			qcom,irqs-detectable;
-			qcom,gpio-detectable;
+			qcom.gpios-detectable;
 			qcom,latency-us = <3000>;
 			qcom,ss-power = <110>;
 			qcom,energy-overhead = <1250300>;
@@ -338,8 +340,7 @@
 		qcom,ipc-bit-offset = <1>;
 
 		qcom,gic-parent = <&intc>;
-		qcom,gic-map = <2 216>, /* tsens_upper_lower_int */
-			<47 165>, /* usb30_hs_phy_irq */
+		qcom,gic-map = <47 165>, /* usb30_hs_phy_irq */
 			<50 172>, /* usb1_hs_async_wakeup_irq */
 			<53 104>, /* mdss_irq */
 			<62 222>, /* ee0_krait_hlos_spmi_periph_irq */
@@ -445,9 +446,9 @@
 		qcom,offset-page-indices = <56>;
 	};
 
-	qcom,rpm-stats@fc19dba0 {
+	qcom,rpm-stats@0xfc19dbd0{
 		compatible = "qcom,rpm-stats";
-		reg = <0xfc19dba0 0x1000>;
+		reg = <0xfc19dbd0 0x1000>;
 		reg-names = "phys_addr_base";
 		qcom,sleep-stats-version = <2>;
 	};

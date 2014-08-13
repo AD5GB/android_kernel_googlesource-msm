@@ -58,8 +58,6 @@ static void z180_dump_regs(struct kgsl_device *device)
 	unsigned int i;
 	unsigned int reg_val;
 
-	z180_idle(device);
-
 	KGSL_LOG_DUMP(device, "Z180 Register Dump\n");
 	for (i = 0; i < ARRAY_SIZE(regs_to_dump); i++) {
 		kgsl_regread(device,
@@ -120,7 +118,7 @@ static void z180_dump_ib(struct kgsl_device *device)
 	int rb_slot_num = -1;
 	struct z180_device *z180_dev = Z180_DEVICE(device);
 	struct kgsl_mem_entry *entry = NULL;
-	phys_addr_t pt_base;
+	unsigned int pt_base;
 	unsigned int i;
 	unsigned int j;
 	char linebuf[CHARS_PER_LINE];
@@ -170,7 +168,6 @@ static void z180_dump_ib(struct kgsl_device *device)
 				KGSL_LOG_DUMP(device,
 				"Could not map IB to kernel memory, Ringbuffer Slot: %d\n",
 				rb_slot_num);
-				kgsl_mem_entry_put(entry);
 				continue;
 			}
 
@@ -193,7 +190,6 @@ static void z180_dump_ib(struct kgsl_device *device)
 						linebuf);
 			}
 			KGSL_LOG_DUMP(device, "IB Dump Finished\n");
-			kgsl_mem_entry_put(entry);
 		}
 	}
 }

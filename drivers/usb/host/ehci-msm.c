@@ -1,6 +1,6 @@
 /* ehci-msm.c - HSUSB Host Controller Driver Implementation
  *
- * Copyright (c) 2008-2013, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2008-2012, The Linux Foundation. All rights reserved.
  *
  * Partly derived from ehci-fsl.c and ehci-hcd.c
  * Copyright (c) 2000-2004 by David Brownell
@@ -22,6 +22,9 @@
  * along with this program; if not, you can find it at http://www.fsf.org
  */
 
+#include <linux/kernel.h>
+#include <linux/module.h>
+#include <linux/platform_device.h>
 #include <linux/clk.h>
 #include <linux/err.h>
 #include <linux/io.h>
@@ -31,6 +34,8 @@
 #include <linux/pm_runtime.h>
 #include <linux/dma-mapping.h>
 
+#include <linux/usb.h>
+#include <linux/usb/hcd.h>
 #include <linux/usb/otg.h>
 #include <linux/usb/msm_hsusb.h>
 #include <linux/usb/msm_hsusb_hw.h>
@@ -38,6 +43,11 @@
 #include <linux/usb/hcd.h>
 
 #include "ehci.h"
+
+#include "ehci.h"
+
+#define DRIVER_DESC "Qualcomm On-Chip EHCI Host Controller"
+static const char hcd_name[] = "ehci-msm";
 
 #define MSM_USB_BASE (hcd->regs)
 
@@ -82,7 +92,8 @@ static const struct ehci_driver_overrides ehci_msm_overrides __initdata = {
 	.reset = ehci_msm_reset,
 };
 
-static u64 msm_ehci_dma_mask = DMA_BIT_MASK(64);
+static struct hc_driver __read_mostly ehci_msm_hc_driver;
+
 static int ehci_msm_probe(struct platform_device *pdev)
 {
 	struct usb_hcd *hcd;
@@ -90,11 +101,6 @@ static int ehci_msm_probe(struct platform_device *pdev)
 	int ret;
 
 	dev_dbg(&pdev->dev, "ehci_msm proble\n");
-
-	if (!pdev->dev.dma_mask)
-		pdev->dev.dma_mask = &msm_ehci_dma_mask;
-	if (!pdev->dev.coherent_dma_mask)
-		pdev->dev.coherent_dma_mask = DMA_BIT_MASK(64);
 
 	hcd = usb_create_hcd(&ehci_msm_hc_driver, &pdev->dev,
 			     dev_name(&pdev->dev));
@@ -146,7 +152,7 @@ static int ehci_msm_probe(struct platform_device *pdev)
 		goto put_hcd;
 	}
 
-	hcd->phy = phy;
+	hcd_to_ehci(hcd)->transceiver = phy;
 	device_init_wakeup(&pdev->dev, 1);
 	pm_runtime_enable(&pdev->dev);
 
@@ -168,7 +174,7 @@ static int ehci_msm_remove(struct platform_device *pdev)
 	pm_runtime_disable(&pdev->dev);
 	pm_runtime_set_suspended(&pdev->dev);
 
-	hcd->phy = NULL;
+	hcd_to_ehci(hcd)->transceiver = NULL;
 	otg_set_host(phy->otg, NULL);
 
 	/* FIXME: need to call usb_remove_hcd() here? */
@@ -230,16 +236,11 @@ static int ehci_msm_pm_resume(struct device *dev)
 	if (!hcd->rh_registered)
 		return 0;
 
-	/* Notify OTG to bring hw out of LPM before restoring wakeup flags */
-	ret = usb_phy_set_suspend(phy, 0);
-	if (ret)
-		return ret;
-
 	ehci_resume(hcd, false);
 	/* Resume root-hub to handle USB event if any else initiate LPM again */
 	usb_hcd_resume_root_hub(hcd);
 
-	return ret;
+	return usb_phy_set_suspend(phy, 0);
 }
 #endif
 
@@ -264,6 +265,7 @@ static int __init ehci_msm_init(void)
 		return -ENODEV;
 
 	pr_info("%s: " DRIVER_DESC "\n", hcd_name);
+
 	ehci_init_driver(&ehci_msm_hc_driver, &ehci_msm_overrides);
 	return platform_driver_register(&ehci_msm_driver);
 }
@@ -274,7 +276,3 @@ static void __exit ehci_msm_cleanup(void)
 	platform_driver_unregister(&ehci_msm_driver);
 }
 module_exit(ehci_msm_cleanup);
-
-MODULE_DESCRIPTION(DRIVER_DESC);
-MODULE_ALIAS("platform:msm-ehci");
-MODULE_LICENSE("GPL");

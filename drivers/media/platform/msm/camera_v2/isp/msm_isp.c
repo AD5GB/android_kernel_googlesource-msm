@@ -1,4 +1,4 @@
-/* Copyright (c) 2013-2014, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2013, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -17,19 +17,17 @@
 #include <linux/proc_fs.h>
 #include <linux/debugfs.h>
 #include <linux/videodev2.h>
-#include <linux/of_device.h>
-#include <linux/qcom_iommu.h>
 #include <media/v4l2-subdev.h>
 #include <media/v4l2-device.h>
-#include <media/v4l2-ioctl.h>
-#include <media/v4l2-event.h>
+#include <mach/board.h>
+#include <mach/vreg.h>
+#include <mach/iommu.h>
 
 #include "msm_isp.h"
 #include "msm_isp_util.h"
 #include "msm_isp_axi_util.h"
 #include "msm_isp_stats_util.h"
 #include "msm_sd.h"
-#include "msm_isp44.h"
 #include "msm_isp40.h"
 #include "msm_isp32.h"
 
@@ -37,16 +35,8 @@ static struct msm_sd_req_vb2_q vfe_vb2_ops;
 
 static const struct of_device_id msm_vfe_dt_match[] = {
 	{
-		.compatible = "qcom,vfe44",
-		.data = &vfe44_hw_info,
-	},
-	{
 		.compatible = "qcom,vfe40",
 		.data = &vfe40_hw_info,
-	},
-	{
-		.compatible = "qcom,vfe32",
-		.data = &vfe32_hw_info,
 	},
 	{}
 };
@@ -59,42 +49,6 @@ static const struct platform_device_id msm_vfe_dev_id[] = {
 };
 
 static struct msm_isp_buf_mgr vfe_buf_mgr;
-static long msm_isp_subdev_do_ioctl(
-	struct file *file, unsigned int cmd, void *arg)
-{
-	struct video_device *vdev = video_devdata(file);
-	struct v4l2_subdev *sd = vdev_to_v4l2_subdev(vdev);
-	struct v4l2_fh *vfh = file->private_data;
-
-	switch (cmd) {
-	case VIDIOC_DQEVENT:
-		if (!(sd->flags & V4L2_SUBDEV_FL_HAS_EVENTS))
-			return -ENOIOCTLCMD;
-
-		return v4l2_event_dequeue(vfh, arg, file->f_flags & O_NONBLOCK);
-	case VIDIOC_SUBSCRIBE_EVENT:
-		return v4l2_subdev_call(sd, core, subscribe_event, vfh, arg);
-
-	case VIDIOC_UNSUBSCRIBE_EVENT:
-		return v4l2_subdev_call(sd, core, unsubscribe_event, vfh, arg);
-
-	default:
-		return v4l2_subdev_call(sd, core, ioctl, cmd, arg);
-	}
-}
-
-static long msm_isp_subdev_fops_ioctl(struct file *file, unsigned int cmd,
-	unsigned long arg)
-{
-	return video_usercopy(file, cmd, arg, msm_isp_subdev_do_ioctl);
-}
-
-static struct v4l2_file_operations msm_isp_v4l2_subdev_fops = {
-#ifdef CONFIG_COMPAT
-	.compat_ioctl = msm_isp_subdev_fops_ioctl,
-#endif
-	.unlocked_ioctl = msm_isp_subdev_fops_ioctl
-};
 
 static int vfe_probe(struct platform_device *pdev)
 {
@@ -159,28 +113,19 @@ static int vfe_probe(struct platform_device *pdev)
 	vfe_dev->subdev.sd.flags |= V4L2_SUBDEV_FL_HAS_EVENTS;
 	v4l2_set_subdevdata(&vfe_dev->subdev.sd, vfe_dev);
 	platform_set_drvdata(pdev, &vfe_dev->subdev.sd);
-	mutex_init(&vfe_dev->realtime_mutex);
-	mutex_init(&vfe_dev->core_mutex);
+	mutex_init(&vfe_dev->mutex);
 	spin_lock_init(&vfe_dev->tasklet_lock);
 	spin_lock_init(&vfe_dev->shared_data_lock);
 	media_entity_init(&vfe_dev->subdev.sd.entity, 0, NULL, 0);
 	vfe_dev->subdev.sd.entity.type = MEDIA_ENT_T_V4L2_SUBDEV;
 	vfe_dev->subdev.sd.entity.group_id = MSM_CAMERA_SUBDEV_VFE;
 	vfe_dev->subdev.sd.entity.name = pdev->name;
-	vfe_dev->subdev.close_seq = MSM_SD_CLOSE_1ST_CATEGORY | 0x2;
 	rc = msm_sd_register(&vfe_dev->subdev);
 	if (rc != 0) {
 		pr_err("%s: msm_sd_register error = %d\n", __func__, rc);
 		kfree(vfe_dev);
 		goto end;
 	}
-
-	msm_isp_v4l2_subdev_fops.owner = v4l2_subdev_fops.owner;
-	msm_isp_v4l2_subdev_fops.open = v4l2_subdev_fops.open;
-	msm_isp_v4l2_subdev_fops.release = v4l2_subdev_fops.release;
-	msm_isp_v4l2_subdev_fops.poll = v4l2_subdev_fops.poll;
-
-	vfe_dev->subdev.sd.devnode->fops = &msm_isp_v4l2_subdev_fops;
 
 	vfe_dev->buf_mgr = &vfe_buf_mgr;
 	v4l2_subdev_notify(&vfe_dev->subdev.sd,
@@ -192,8 +137,6 @@ static int vfe_probe(struct platform_device *pdev)
 		kfree(vfe_dev);
 		return -EINVAL;
 	}
-	vfe_dev->buf_mgr->ops->register_ctx(vfe_dev->buf_mgr,
-		&vfe_dev->iommu_ctx[0], vfe_dev->hw_info->num_iommu_ctx);
 	vfe_dev->vfe_open_cnt = 0;
 end:
 	return rc;

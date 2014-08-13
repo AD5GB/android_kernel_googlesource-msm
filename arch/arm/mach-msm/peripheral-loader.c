@@ -29,16 +29,15 @@
 #include <linux/list.h>
 #include <linux/list_sort.h>
 #include <linux/idr.h>
-#include <linux/interrupt.h>
 
 #include <asm/uaccess.h>
 #include <asm/setup.h>
 #include <asm-generic/io-64-nonatomic-lo-hi.h>
 
 #include <mach/msm_iomap.h>
-#include <mach/ramdump.h>
 
 #include "peripheral-loader.h"
+#include "ramdump.h"
 
 #define pil_err(desc, fmt, ...)						\
 	dev_err(desc->dev, "%s: " fmt, desc->name, ##__VA_ARGS__)
@@ -227,19 +226,8 @@ static void pil_proxy_unvote(struct pil_desc *desc, int immediate)
 
 		if (immediate)
 			timeout = 0;
-
-		if (!desc->proxy_unvote_irq || immediate)
-			schedule_delayed_work(&priv->proxy,
-					      msecs_to_jiffies(timeout));
+		schedule_delayed_work(&priv->proxy, msecs_to_jiffies(timeout));
 	}
-}
-
-static irqreturn_t proxy_unvote_intr_handler(int irq, void *dev_id)
-{
-	struct pil_desc *desc = dev_id;
-
-	schedule_delayed_work(&desc->priv->proxy, 0);
-	return IRQ_HANDLED;
 }
 
 static bool segment_is_relocatable(const struct elf32_phdr *p)
@@ -290,12 +278,10 @@ static int segment_is_loadable(const struct elf32_phdr *p)
 static void pil_dump_segs(const struct pil_priv *priv)
 {
 	struct pil_seg *seg;
-	phys_addr_t seg_h_paddr;
 
 	list_for_each_entry(seg, &priv->segs, list) {
-		seg_h_paddr = seg->paddr + seg->sz;
-		pil_info(priv->desc, "%d: %pa %pa\n", seg->num,
-				&seg->paddr, &seg_h_paddr);
+		pil_info(priv->desc, "%d: %#08zx %#08lx\n", seg->num,
+				seg->paddr, seg->paddr + seg->sz);
 	}
 }
 
@@ -324,7 +310,7 @@ static int pil_init_entry_addr(struct pil_priv *priv, const struct pil_mdt *mdt)
 				return 0;
 		}
 	}
-	pil_err(priv->desc, "entry address %pa not within range\n", &entry);
+	pil_err(priv->desc, "entry address %08zx not within range\n", entry);
 	pil_dump_segs(priv);
 	return -EADDRNOTAVAIL;
 }
@@ -336,14 +322,6 @@ static int pil_alloc_region(struct pil_priv *priv, phys_addr_t min_addr,
 	int ret;
 	unsigned int mask;
 	size_t size = max_addr - min_addr;
-
-	/* Don't reallocate due to fragmentation concerns, just sanity check */
-	if (priv->region) {
-		if (WARN(priv->region_end - priv->region_start < size,
-			"Can't reuse PIL memory, too small\n"))
-			return -ENOMEM;
-		return 0;
-	}
 
 	if (!ion) {
 		WARN_ON_ONCE("No ION client, can't support relocation\n");
@@ -481,6 +459,9 @@ static void pil_release_mmap(struct pil_desc *desc)
 	writeq(0, &priv->info->start);
 	writel_relaxed(0, &priv->info->size);
 
+	if (priv->region)
+		ion_free(ion, priv->region);
+	priv->region = NULL;
 	list_for_each_entry_safe(p, tmp, &priv->segs, list) {
 		list_del(&p->list);
 		kfree(p);
@@ -491,8 +472,7 @@ static void pil_release_mmap(struct pil_desc *desc)
 
 static int pil_load_seg(struct pil_desc *desc, struct pil_seg *seg)
 {
-	int ret = 0, count;
-	phys_addr_t paddr;
+	int ret = 0, count, paddr;
 	char fw_name[30];
 	const struct firmware *fw = NULL;
 	const u8 *data;
@@ -669,13 +649,8 @@ release_fw:
 	release_firmware(fw);
 out:
 	up_read(&pil_pm_rwsem);
-	if (ret) {
-		if (priv->region) {
-			ion_free(ion, priv->region);
-			priv->region = NULL;
-		}
+	if (ret)
 		pil_release_mmap(desc);
-	}
 	return ret;
 }
 EXPORT_SYMBOL(pil_boot);
@@ -710,16 +685,13 @@ static DEFINE_IDA(pil_ida);
 int pil_desc_init(struct pil_desc *desc)
 {
 	struct pil_priv *priv;
-	int ret;
+	int id;
 	void __iomem *addr;
 	char buf[sizeof(priv->info->name)];
 
 	/* Ignore users who don't make any sense */
-	WARN(desc->ops->proxy_unvote && desc->proxy_unvote_irq == 0
-		 && !desc->proxy_timeout,
-		 "Invalid proxy unvote callback or a proxy timeout of 0"
-		 " was specified or no proxy unvote IRQ was specified.\n");
-
+	WARN(desc->ops->proxy_unvote && !desc->proxy_timeout,
+			"A proxy timeout of 0 was specified.\n");
 	if (WARN(desc->ops->proxy_unvote && !desc->ops->proxy_vote,
 				"Invalid proxy voting. Ignoring\n"))
 		((struct pil_reset_ops *)desc->ops)->proxy_unvote = NULL;
@@ -730,28 +702,16 @@ int pil_desc_init(struct pil_desc *desc)
 	desc->priv = priv;
 	priv->desc = desc;
 
-	priv->id = ret = ida_simple_get(&pil_ida, 0, 10, GFP_KERNEL);
-	if (priv->id < 0)
-		goto err;
-
-	addr = PIL_IMAGE_INFO_BASE + sizeof(struct pil_image_info) * priv->id;
+	priv->id = id = ida_simple_get(&pil_ida, 0, 10, GFP_KERNEL);
+	if (id < 0) {
+		kfree(priv);
+		return id;
+	}
+	addr = PIL_IMAGE_INFO_BASE + sizeof(struct pil_image_info) * id;
 	priv->info = (struct pil_image_info __iomem *)addr;
 
 	strncpy(buf, desc->name, sizeof(buf));
 	__iowrite32_copy(priv->info->name, buf, sizeof(buf) / 4);
-
-	if (desc->proxy_unvote_irq > 0) {
-		ret = request_irq(desc->proxy_unvote_irq,
-				  proxy_unvote_intr_handler,
-				  IRQF_TRIGGER_RISING|IRQF_SHARED,
-				  desc->name, desc);
-		if (ret < 0) {
-			dev_err(desc->dev,
-				"Unable to request proxy unvote IRQ: %d\n",
-				ret);
-			goto err;
-		}
-	}
 
 	snprintf(priv->wname, sizeof(priv->wname), "pil-%s", desc->name);
 	wake_lock_init(&priv->wlock, WAKE_LOCK_SUSPEND, priv->wname);
@@ -759,9 +719,6 @@ int pil_desc_init(struct pil_desc *desc)
 	INIT_LIST_HEAD(&priv->segs);
 
 	return 0;
-err:
-	kfree(priv);
-	return ret;
 }
 EXPORT_SYMBOL(pil_desc_init);
 

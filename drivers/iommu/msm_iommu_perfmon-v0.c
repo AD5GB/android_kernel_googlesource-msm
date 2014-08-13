@@ -1,4 +1,4 @@
-/* Copyright (c) 2013-2014, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2013, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -19,9 +19,8 @@
 #include <linux/interrupt.h>
 #include <linux/module.h>
 #include <linux/device.h>
-#include "msm_iommu_hw-v0.h"
-#include "msm_iommu_perfmon.h"
-#include <linux/qcom_iommu.h>
+#include <mach/iommu_hw-v0.h>
+#include <mach/iommu_perfmon.h>
 
 #define PM_RESET_MASK		(0xF)
 #define PM_RESET_SHIFT		(0x8)
@@ -176,9 +175,9 @@ static irqreturn_t iommu_pm_evt_ovfl_int_handler(int irq, void *dev_id)
 		goto out;
 	}
 
-	iommu->ops->iommu_lock_acquire(1);
+	iommu->ops->iommu_lock_acquire();
 	iommu_pm_check_for_overflow(pmon);
-	iommu->ops->iommu_lock_release(1);
+	iommu->ops->iommu_lock_release();
 
 	mutex_unlock(&pmon->lock);
 
@@ -281,9 +280,7 @@ static void iommu_pm_initialize_hw(const struct iommu_pmon *pmon)
 	 * for locking here.
 	 */
 	iommu->ops->iommu_power_on(iommu_drvdata);
-	iommu->ops->iommu_clk_on(iommu_drvdata);
 	iommu_pm_set_int_active_high(iommu);
-	iommu->ops->iommu_clk_off(iommu_drvdata);
 	iommu->ops->iommu_power_off(iommu_drvdata);
 }
 

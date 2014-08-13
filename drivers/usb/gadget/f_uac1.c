@@ -1,7 +1,7 @@
 /*
  * f_audio.c -- USB Audio class function driver
  *
- * Copyright (c) 2012-2013, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012, The Linux Foundation. All rights reserved.
  * Copyright (C) 2008 Bryan Wu <cooloney@kernel.org>
  * Copyright (C) 2008 Analog Devices, Inc
  *
@@ -437,8 +437,8 @@ static void f_audio_buffer_free(struct f_audio_buf *audio_buf)
 {
 	if (audio_buf) {
 		kfree(audio_buf->buf);
-		audio_buf->buf = NULL;
 		kfree(audio_buf);
+		audio_buf->buf = NULL;
 		audio_buf = NULL;
 	}
 }
@@ -461,8 +461,6 @@ struct f_audio {
 	struct work_struct		capture_work;
 	struct list_head		capture_queue;
 	struct usb_request		*capture_req;
-
-	u8				alt_intf[F_AUDIO_NUM_INTERFACES];
 
 	/* Control Set command */
 	struct list_head		fu_cs;
@@ -952,7 +950,6 @@ static int f_audio_set_alt(struct usb_function *f, unsigned intf, unsigned alt)
 			}
 			spin_unlock_irqrestore(&audio->capture_lock, flags);
 		}
-		audio->alt_intf[0] = alt;
 	} else if (intf == ac_header_desc.baInterfaceNr[1]) {
 		if (alt == 1) {
 			err = usb_ep_enable(out_ep);
@@ -1001,12 +998,10 @@ static int f_audio_set_alt(struct usb_function *f, unsigned intf, unsigned alt)
 				list_add_tail(&playback_copy_buf->list,
 						&audio->play_queue);
 				schedule_work(&audio->playback_work);
-				audio->playback_copy_buf = NULL;
 			} else {
 				pr_err("playback_buf is empty. Stop.");
 			}
 		}
-		audio->alt_intf[1] = alt;
 	} else {
 		pr_err("Interface %d. Do nothing. Return %d\n", intf, err);
 	}
@@ -1083,7 +1078,6 @@ f_audio_bind(struct usb_configuration *c, struct usb_function *f)
 	microphone_as_interface_alt_0_desc.bInterfaceNumber = status;
 	microphone_as_interface_alt_1_desc.bInterfaceNumber = status;
 	ac_header_desc.baInterfaceNr[0] = status;
-	audio->alt_intf[0] = 0;
 
 	status = -ENODEV;
 
@@ -1095,7 +1089,6 @@ f_audio_bind(struct usb_configuration *c, struct usb_function *f)
 	speaker_as_interface_alt_0_desc.bInterfaceNumber = status;
 	speaker_as_interface_alt_1_desc.bInterfaceNumber = status;
 	ac_header_desc.baInterfaceNr[1] = status;
-	audio->alt_intf[1] = 0;
 
 	status = -ENODEV;
 

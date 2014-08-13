@@ -63,7 +63,6 @@ static struct clk *codec_clk;
 static int clk_users;
 
 static int msm8930_headset_gpios_configured;
-static struct mutex cdc_mclk_mutex;
 
 static struct snd_soc_jack hs_jack;
 static struct snd_soc_jack button_jack;
@@ -266,42 +265,35 @@ static int msm8930_enable_codec_ext_clk(
 		struct snd_soc_codec *codec, int enable,
 		bool dapm)
 {
-	int r = 0;
 	pr_debug("%s: enable = %d\n", __func__, enable);
-
-	mutex_lock(&cdc_mclk_mutex);
 	if (enable) {
 		clk_users++;
 		pr_debug("%s: clk_users = %d\n", __func__, clk_users);
-		if (clk_users == 1) {
-			if (codec_clk) {
-				clk_set_rate(codec_clk, SITAR_EXT_CLK_RATE);
-				clk_prepare_enable(codec_clk);
-				sitar_mclk_enable(codec, 1, dapm);
-			} else {
-				pr_err("%s: Error setting Sitar MCLK\n",
-					__func__);
-				clk_users--;
-				r = -EINVAL;
-			}
+		if (clk_users != 1)
+			return 0;
+
+		if (codec_clk) {
+			clk_set_rate(codec_clk, SITAR_EXT_CLK_RATE);
+			clk_prepare_enable(codec_clk);
+			sitar_mclk_enable(codec, 1, dapm);
+		} else {
+			pr_err("%s: Error setting Sitar MCLK\n", __func__);
+			clk_users--;
+			return -EINVAL;
 		}
 	} else {
-		if (clk_users > 0) {
-			clk_users--;
-			pr_debug("%s: clk_users = %d\n", __func__, clk_users);
-			if (clk_users == 0) {
-				pr_debug("%s: disabling MCLK. clk_users = %d\n",
+		pr_debug("%s: clk_users = %d\n", __func__, clk_users);
+		if (clk_users == 0)
+			return 0;
+		clk_users--;
+		if (!clk_users) {
+			pr_debug("%s: disabling MCLK. clk_users = %d\n",
 					 __func__, clk_users);
-				sitar_mclk_enable(codec, 0, dapm);
-				clk_disable_unprepare(codec_clk);
-			}
-		} else {
-			pr_err("%s: Error releasing Sitar MCLK\n", __func__);
-			r = -EINVAL;
+			sitar_mclk_enable(codec, 0, dapm);
+			clk_disable_unprepare(codec_clk);
 		}
 	}
-	mutex_unlock(&cdc_mclk_mutex);
-	return r;
+	return 0;
 }
 
 static int msm8930_mclk_event(struct snd_soc_dapm_widget *w,
@@ -1143,22 +1135,6 @@ static struct snd_soc_dai_link msm8930_dai[] = {
 		.ignore_pmdown_time = 1,
 		.be_id = MSM_FRONTEND_DAI_MULTIMEDIA5,
 	},
-	{
-		.name = "MSM8960 FM",
-		.stream_name = "MultiMedia6",
-		.cpu_dai_name	= "MultiMedia6",
-		.platform_name  = "msm-pcm-loopback",
-		.dynamic = 1,
-		.codec_dai_name = "snd-soc-dummy-dai",
-		.codec_name = "snd-soc-dummy",
-		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
-				SND_SOC_DPCM_TRIGGER_POST},
-		.ignore_suspend = 1,
-		.no_host_mode = SND_SOC_DAI_LINK_NO_HOST,
-		/* this dainlink has playback support */
-		.ignore_pmdown_time = 1,
-		.be_id = MSM_FRONTEND_DAI_MULTIMEDIA6,
-	},
 	/* Backend DAI Links */
 	{
 		.name = LPASS_BE_SLIMBUS_0_RX,
@@ -1402,7 +1378,6 @@ static int __init msm8930_audio_init(void)
 		msm8930_headset_gpios_configured = 1;
 
 	atomic_set(&auxpcm_rsc_ref, 0);
-	mutex_init(&cdc_mclk_mutex);
 	return ret;
 
 }
@@ -1417,7 +1392,6 @@ static void __exit msm8930_audio_exit(void)
 	msm8930_free_headset_mic_gpios();
 	platform_device_unregister(msm8930_snd_device);
 	kfree(mbhc_cfg.calibration);
-	mutex_destroy(&cdc_mclk_mutex);
 }
 module_exit(msm8930_audio_exit);
 

@@ -1302,7 +1302,7 @@ static int msm_compr_ioctl(struct snd_pcm_substream *substream,
 			}
 			rc = wait_event_timeout(the_locks.flush_wait,
 				prtd->cmd_ack, 5 * HZ);
-			if (!rc)
+			if (rc < 0)
 				pr_err("Flush cmd timeout\n");
 			prtd->pcm_irq_pos = 0;
 		}
@@ -1353,7 +1353,7 @@ static struct snd_soc_platform_driver msm_soc_platform = {
 	.pcm_new	= msm_asoc_pcm_new,
 };
 
-static __devinit int msm_compr_probe(struct platform_device *pdev)
+static int msm_compr_probe(struct platform_device *pdev)
 {
 	pr_info("%s: dev name %s\n", __func__, dev_name(&pdev->dev));
 	return snd_soc_register_platform(&pdev->dev,
@@ -1372,7 +1372,7 @@ static struct platform_driver msm_compr_driver = {
 		.owner = THIS_MODULE,
 	},
 	.probe = msm_compr_probe,
-	.remove = __devexit_p(msm_compr_remove),
+	.remove = msm_compr_remove,
 };
 
 static int __init msm_soc_platform_init(void)

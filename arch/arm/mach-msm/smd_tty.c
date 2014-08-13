@@ -58,21 +58,12 @@ do { \
 static void *smd_tty_log_ctx;
 static DEFINE_MUTEX(smd_tty_lock);
 
-static uint smd_tty_modem_wait;
-module_param_named(modem_wait, smd_tty_modem_wait,
-			uint, S_IRUGO | S_IWUSR | S_IWGRP);
-
-#ifdef CONFIG_MSM_SMD_TTY_DS_LEGACY
-static uint smd_tty_ds_modem_wait = 20;
-module_param_named(ds_modem_wait, smd_tty_ds_modem_wait,
-			uint, S_IRUGO | S_IWUSR | S_IWGRP);
-#endif
-
 struct smd_tty_info {
 	smd_channel_t *ch;
 	struct tty_port port;
 	struct device *device_ptr;
 	struct wake_lock wake_lock;
+	int open_count;
 	struct tasklet_struct tty_tsklt;
 	struct timer_list buf_req_timer;
 	struct completion ch_allocated;
@@ -82,9 +73,6 @@ struct smd_tty_info {
 	int in_reset_updated;
 	int is_open;
 	unsigned int open_wait;
-#ifdef CONFIG_MSM_SMD_TTY_DS_LEGACY
-	int is_dsmodem_ready;
-#endif
 	wait_queue_head_t ch_opened_wait_queue;
 	spinlock_t reset_lock;
 	spinlock_t ra_lock;		/* Read Available Lock*/
@@ -188,10 +176,8 @@ static ssize_t open_timeout_show(struct device *dev,
 		if (dev == smd_tty[num_dev].device_ptr)
 			break;
 	}
-	if (num_dev >= MAX_SMD_TTYS) {
+	if (num_dev >= MAX_SMD_TTYS)
 		SMD_TTY_ERR("[%s]: Device Not Found", __func__);
-		return -EINVAL;
-	}
 
 	return snprintf(buf, PAGE_SIZE, "%d\n",
 			smd_tty[num_dev].open_wait);
@@ -214,8 +200,8 @@ static void smd_tty_read(unsigned long param)
 	for (;;) {
 		if (is_in_reset(info)) {
 			/* signal TTY clients using TTY_BREAK */
-			tty_insert_flip_char(tty, 0x00, TTY_BREAK);
-			tty_flip_buffer_push(tty);
+			tty_insert_flip_char(tty->port, 0x00, TTY_BREAK);
+			tty_flip_buffer_push(tty->port);
 			break;
 		}
 
@@ -232,7 +218,7 @@ static void smd_tty_read(unsigned long param)
 		if (avail > MAX_TTY_BUF_SIZE)
 			avail = MAX_TTY_BUF_SIZE;
 
-		avail = tty_prepare_flip_string(tty, &ptr, avail);
+		avail = tty_prepare_flip_string(tty->port, &ptr, avail);
 		if (avail <= 0) {
 			mod_timer(&info->buf_req_timer,
 					jiffies + msecs_to_jiffies(30));
@@ -251,7 +237,7 @@ static void smd_tty_read(unsigned long param)
 		}
 
 		wake_lock_timeout(&info->wake_lock, HZ / 2);
-		tty_flip_buffer_push(tty);
+		tty_flip_buffer_push(tty->port);
 	}
 
 	/* XXX only when writable and necessary */
@@ -318,27 +304,6 @@ static void smd_tty_notify(void *priv, unsigned event)
 					msecs_to_jiffies(1000));
 		tty_kref_put(tty);
 		break;
-#ifdef CONFIG_MSM_SMD_TTY_DS_LEGACY
-		/*
-		 * At current smd_tty framework, if smd_tty_open()
-		 * is invoked by process before smd_tty_close() is
-		 * completely finished, smd_tty_open() may fail
-		 * because smd_tty_close() does not wait to close smd
-		 * channel from modem. To fix this situation, new SMD
-		 * notify status, SMD_EVENT_REOPEN_READY is used.
-		 * Until smd_tty receive this status, smd_tty_close()
-		 * will be wait(in fact, process will be wait).
-		 */
-	case SMD_EVENT_REOPEN_READY:
-		/* smd channel is closed completely */
-		spin_lock_irqsave(&info->reset_lock, flags);
-		info->in_reset = 1;
-		info->in_reset_updated = 1;
-		info->is_open = 0;
-		wake_up_interruptible(&info->ch_opened_wait_queue);
-		spin_unlock_irqrestore(&info->reset_lock, flags);
-		break;
-#endif
 	}
 }
 
@@ -368,136 +333,112 @@ static int smd_tty_port_activate(struct tty_port *tport,
 	mutex_lock(&smd_tty_lock);
 	tty->driver_data = info;
 
-	peripheral = smd_edge_to_subsystem(smd_tty[n].smd->edge);
-	if (peripheral) {
-		info->pil = subsystem_get(peripheral);
-		if (IS_ERR(info->pil)) {
-			SMD_TTY_INFO(
-				"%s failed on smd_tty device :%s subsystem_get failed for %s",
-				__func__, smd_tty[n].smd->port_name,
-				peripheral);
+	if (info->open_count++ == 0) {
+		peripheral = smd_edge_to_subsystem(smd_tty[n].smd->edge);
+		if (peripheral) {
+			info->pil = subsystem_get(peripheral);
+			if (IS_ERR(info->pil)) {
+				SMD_TTY_INFO(
+					"%s failed on smd_tty device :%s subsystem_get failed for %s",
+					__func__, smd_tty[n].smd->port_name,
+					peripheral);
+				/*
+				 * Sleep, inorder to reduce the frequency of
+				 * retry by user-space modules and to avoid
+				 * possible watchdog bite.
+				 */
+				msleep((smd_tty[n].open_wait * 1000));
+				res = PTR_ERR(info->pil);
+				goto out;
+			}
+
+			/* Wait for the modem SMSM to be inited for the SMD
+			 * Loopback channel to be allocated at the modem. Since
+			 * the wait need to be done atmost once, using msleep
+			 * doesn't degrade the performance.
+			 */
+			if (n == LOOPBACK_IDX) {
+				if (!is_modem_smsm_inited())
+					msleep(5000);
+				smsm_change_state(SMSM_APPS_STATE,
+					0, SMSM_SMD_LOOPBACK);
+				msleep(100);
+			}
+
 
 			/*
-			 * Sleep, inorder to reduce the frequency of
-			 * retry by user-space modules and to avoid
-			 * possible watchdog bite.
+			 * Wait for a channel to be allocated so we know
+			 * the modem is ready enough.
 			 */
-			msleep((smd_tty[n].open_wait * 1000));
-			res = PTR_ERR(info->pil);
-			goto out;
-		}
-
-		/* Wait for the modem SMSM to be inited for the SMD
-		 * Loopback channel to be allocated at the modem. Since
-		 * the wait need to be done atmost once, using msleep
-		 * doesn't degrade the performance.
-		 */
-		if (n == LOOPBACK_IDX) {
-			if (!is_modem_smsm_inited())
-				msleep(5000);
-			smsm_change_state(SMSM_APPS_STATE,
-					  0, SMSM_SMD_LOOPBACK);
-			msleep(100);
-		}
-
-		/*
-		 * Wait for a channel to be allocated so we know
-		 * the modem is ready enough.
-		 */
-		if (smd_tty[n].open_wait) {
-			res = wait_for_completion_interruptible_timeout(
+			if (smd_tty[n].open_wait) {
+				res = wait_for_completion_interruptible_timeout(
 					&info->ch_allocated,
 					msecs_to_jiffies(smd_tty[n].open_wait *
 									1000));
 
-			if (res == 0) {
-				SMD_TTY_INFO(
-					"Timed out waiting for SMD channel %s",
-					smd_tty[n].smd->port_name);
-				res = -ETIMEDOUT;
-				goto release_pil;
-			} else if (res < 0) {
-				SMD_TTY_INFO(
-					"Error waiting for SMD channel %s : %d\n",
-					smd_tty[n].smd->port_name, res);
-				goto release_pil;
-			}
-#ifdef CONFIG_MSM_SMD_TTY_DS_LEGACY
-			/*
-			 * on boot, process tried to open smd0 sleeps until
-			 * modem is ready or timeout.
-			 */
-			if (n == DS_IDX) {
-				/* wait for open ready status in seconds */
-				pr_info("%s: checking DS modem status\n", __func__);
-				res = wait_event_interruptible_timeout(
-						info->ch_opened_wait_queue,
-						info->is_dsmodem_ready,
-						(smd_tty_ds_modem_wait * HZ));
-				if (!res) {
+				if (res == 0) {
+					SMD_TTY_INFO(
+						"Timed out waiting for SMD channel %s",
+						smd_tty[n].smd->port_name);
 					res = -ETIMEDOUT;
-					pr_err("%s: timeout to wait for %s modem: %d\n",
-							__func__,
-							smd_tty[n].smd->port_name,
-							res);
 					goto release_pil;
 				} else if (res < 0) {
-					pr_err("%s: Error waiting for %s modem: %d\n",
-							__func__,
-							smd_tty[n].smd->port_name,
-							res);
+					SMD_TTY_INFO(
+						"Error waiting for SMD channel %s : %d\n",
+						smd_tty[n].smd->port_name, res);
 					goto release_pil;
 				}
-				pr_info("%s: DS modem is OK, open smd0..\n",
-						__func__);
+
+				res = 0;
 			}
-#endif
+		}
+
+		tasklet_init(&info->tty_tsklt, smd_tty_read,
+			     (unsigned long)info);
+		wake_lock_init(&info->wake_lock, WAKE_LOCK_SUSPEND,
+				smd_tty[n].smd->port_name);
+		scnprintf(info->ra_wake_lock_name,
+			  MAX_RA_WAKE_LOCK_NAME_LEN,
+			  "SMD_TTY_%s_RA", smd_tty[n].smd->port_name);
+		wake_lock_init(&info->ra_wake_lock, WAKE_LOCK_SUSPEND,
+				info->ra_wake_lock_name);
+		if (!info->ch) {
+			res = smd_named_open_on_edge(smd_tty[n].smd->port_name,
+							smd_tty[n].smd->edge,
+							&info->ch, info,
+							smd_tty_notify);
+			if (res < 0) {
+				SMD_TTY_INFO(
+					"%s: %s open failed %d\n",
+					__func__, smd_tty[n].smd->port_name,
+					res);
+				goto release_pil;
+			}
+
+			res = wait_event_interruptible_timeout(
+				info->ch_opened_wait_queue,
+				info->is_open, (2 * HZ));
+			if (res == 0)
+				res = -ETIMEDOUT;
+			if (res < 0) {
+				SMD_TTY_INFO(
+					"%s: wait for %s smd_open failed %d\n",
+					__func__, smd_tty[n].smd->port_name,
+					res);
+				goto release_pil;
+			}
+			res = 0;
+			SMD_TTY_INFO("%s with PID %u opened port %s",
+				current->comm, current->pid,
+				smd_tty[n].smd->port_name);
 		}
 	}
 
-	tasklet_init(&info->tty_tsklt, smd_tty_read, (unsigned long)info);
-	wake_lock_init(&info->wake_lock, WAKE_LOCK_SUSPEND,
-			smd_tty[n].smd->port_name);
-	scnprintf(info->ra_wake_lock_name, MAX_RA_WAKE_LOCK_NAME_LEN,
-		  "SMD_TTY_%s_RA", smd_tty[n].smd->port_name);
-	wake_lock_init(&info->ra_wake_lock, WAKE_LOCK_SUSPEND,
-			info->ra_wake_lock_name);
-
-	res = smd_named_open_on_edge(smd_tty[n].smd->port_name,
-				     smd_tty[n].smd->edge, &info->ch, info,
-				     smd_tty_notify);
-	if (res < 0) {
-		SMD_TTY_INFO("%s: %s open failed %d\n",
-			      __func__, smd_tty[n].smd->port_name, res);
-		goto release_wl_tl;
-	}
-
-	res = wait_event_interruptible_timeout(info->ch_opened_wait_queue,
-					       info->is_open, (2 * HZ));
-	if (res == 0)
-		res = -ETIMEDOUT;
-	if (res < 0) {
-		SMD_TTY_INFO("%s: wait for %s smd_open failed %d\n",
-			      __func__, smd_tty[n].smd->port_name, res);
-		goto close_ch;
-	}
-	SMD_TTY_INFO("%s with PID %u opened port %s",
-		      current->comm, current->pid, smd_tty[n].smd->port_name);
-	smd_disable_read_intr(info->ch);
-	mutex_unlock(&smd_tty_lock);
-	return 0;
-
-close_ch:
-	smd_close(info->ch);
-	info->ch = NULL;
-
-release_wl_tl:
-	tasklet_kill(&info->tty_tsklt);
-	wake_lock_destroy(&info->wake_lock);
-	wake_lock_destroy(&info->ra_wake_lock);
-
 release_pil:
-	subsystem_put(info->pil);
+	if (res < 0)
+		subsystem_put(info->pil);
+	else
+		smd_disable_read_intr(info->ch);
 out:
 	mutex_unlock(&smd_tty_lock);
 
@@ -509,10 +450,6 @@ static void smd_tty_port_shutdown(struct tty_port *tport)
 	struct smd_tty_info *info;
 	struct tty_struct *tty = tty_port_tty_get(tport);
 	unsigned long flags;
-#ifdef CONFIG_MSM_SMD_TTY_DS_LEGACY
-	int res = 0;
-	int n = tty->index;
-#endif
 
 	info = tty->driver_data;
 	if (info == 0) {
@@ -521,49 +458,26 @@ static void smd_tty_port_shutdown(struct tty_port *tport)
 	}
 
 	mutex_lock(&smd_tty_lock);
-
-	spin_lock_irqsave(&info->reset_lock, flags);
-	info->is_open = 0;
-	spin_unlock_irqrestore(&info->reset_lock, flags);
-
-	tasklet_kill(&info->tty_tsklt);
-	wake_lock_destroy(&info->wake_lock);
-	wake_lock_destroy(&info->ra_wake_lock);
-
-	SMD_TTY_INFO("%s with PID %u closed port %s",
-			current->comm, current->pid,
-			info->smd->port_name);
-	tty->driver_data = NULL;
-	del_timer(&info->buf_req_timer);
-
-	smd_close(info->ch);
-#ifdef CONFIG_MSM_SMD_TTY_DS_LEGACY
-	/*
-	 * At current smd_tty framework, if smd_tty_open()
-	 * is invoked by process before smd_tty_close() is
-	 * completely finished, smd_tty_open() may fail
-	 * because smd_tty_close() does not wait to close smd
-	 * channel from modem. To fix this situation, new SMD
-	 * notify status, SMD_EVENT_REOPEN_READY is used.
-	 * Until smd_tty receive this status, smd_tty_close()
-	 * will be wait(in fact, process will be wait).
-	 */
-	pr_info("%s: waiting to close smd %s completely\n",
-			__func__, smd_tty[n].smd->port_name);
-	/* wait for reopen ready status in seconds */
-	res = wait_event_interruptible_timeout(
-		info->ch_opened_wait_queue,
-		!info->is_open, (smd_tty_ds_modem_wait * HZ));
-	if (res <= 0) {
-		/* just in case, remain result value */
-		pr_err("%s: timeout to wait for %s smd_close. "
-				"next smd_open may fail\n",
-				__func__, smd_tty[n].smd->port_name);
+	if (--info->open_count == 0) {
+		spin_lock_irqsave(&info->reset_lock, flags);
+		info->is_open = 0;
+		spin_unlock_irqrestore(&info->reset_lock, flags);
+		if (tty) {
+			tasklet_kill(&info->tty_tsklt);
+			wake_lock_destroy(&info->wake_lock);
+			wake_lock_destroy(&info->ra_wake_lock);
+		}
+		SMD_TTY_INFO("%s with PID %u closed port %s",
+				current->comm, current->pid,
+				info->smd->port_name);
+		tty->driver_data = 0;
+		del_timer(&info->buf_req_timer);
+		if (info->ch) {
+			smd_close(info->ch);
+			info->ch = 0;
+			subsystem_put(info->pil);
+		}
 	}
-#endif
-	info->ch = NULL;
-	subsystem_put(info->pil);
-
 	mutex_unlock(&smd_tty_lock);
 	tty_kref_put(tty);
 }
@@ -739,29 +653,6 @@ static void smd_tty_log_init(void)
 		pr_err("%s: Unable to create IPC log", __func__);
 }
 
-#ifdef CONFIG_MSM_SMD_TTY_DS_LEGACY
-static int smd_tty_ds_probe(struct platform_device *pdev)
-{
-	if (!smd_configs[DS_IDX].dev_name) {
-		pr_err("%s: no device for DS\n", __func__);
-		return -EINVAL;
-	}
-
-	if (strncmp(pdev->name, smd_configs[DS_IDX].dev_name,
-				SMD_MAX_CH_NAME_LEN)) {
-		pr_err("%s: smd device is not DS %s %s\n", __func__,
-				pdev->name, smd_configs[DS_IDX].dev_name);
-		return -EINVAL;
-	}
-
-	complete_all(&smd_tty[DS_IDX].ch_allocated);
-	smd_tty[DS_IDX].is_dsmodem_ready = 1;
-	wake_up_interruptible(&smd_tty[DS_IDX].ch_opened_wait_queue);
-	pr_info("%s: probing of smd tty for DS modem is done\n", __func__);
-	return 0;
-}
-#endif
-
 static struct tty_driver *smd_tty_driver;
 
 static int __init smd_tty_init(void)
@@ -823,9 +714,6 @@ static int __init smd_tty_init(void)
 			 */
 			legacy_ds |= cpu_is_msm8x60() &&
 					(socinfo_get_platform_subtype() == 0x0);
-#ifdef CONFIG_MSM_SMD_TTY_DS_LEGACY
-			legacy_ds |= cpu_is_msm8974();
-#endif
 
 			if (!legacy_ds)
 				continue;
@@ -847,13 +735,6 @@ static int __init smd_tty_init(void)
 
 		/* register platform device */
 		smd_tty[idx].driver.probe = smd_tty_dummy_probe;
-#ifdef CONFIG_MSM_SMD_TTY_DS_LEGACY
-		if (idx == DS_IDX) {
-			/* register platform device for DS */
-			smd_tty[idx].driver.probe = smd_tty_ds_probe;
-			smd_tty[idx].is_dsmodem_ready = 0;
-		}
-#endif
 		smd_tty[idx].driver.driver.name = smd_configs[n].dev_name;
 		smd_tty[idx].driver.driver.owner = THIS_MODULE;
 		spin_lock_init(&smd_tty[idx].reset_lock);

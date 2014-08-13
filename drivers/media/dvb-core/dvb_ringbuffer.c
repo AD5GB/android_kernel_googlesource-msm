@@ -5,7 +5,7 @@
  * Copyright (C) 2003 Oliver Endriss
  * Copyright (C) 2004 Andrew de Quincey
  *
- * Copyright (c) 2012-2014, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012, The Linux Foundation. All rights reserved.
  *
  * based on code originally found in av7110.c & dvb_ci.c:
  * Copyright (C) 1999-2003 Ralph  Metzler
@@ -197,6 +197,35 @@ ssize_t dvb_ringbuffer_write_user(struct dvb_ringbuffer *rbuf,
 
 	rbuf->pwrite = (rbuf->pwrite + todo) % rbuf->size;
 	atomic_add(todo, &rbuf->fill);
+
+	return len;
+}
+
+ssize_t dvb_ringbuffer_write_user(struct dvb_ringbuffer *rbuf,
+					const u8 *buf, size_t len)
+{
+	size_t todo = len;
+	size_t split;
+	ssize_t oldpwrite = rbuf->pwrite;
+
+	split = (rbuf->pwrite + len > rbuf->size) ?
+			rbuf->size - rbuf->pwrite :
+			0;
+
+	if (split > 0) {
+		if (copy_from_user(rbuf->data + rbuf->pwrite, buf, split))
+			return -EFAULT;
+		buf += split;
+		todo -= split;
+		rbuf->pwrite = 0;
+	}
+
+	if (copy_from_user(rbuf->data + rbuf->pwrite, buf, todo)) {
+		rbuf->pwrite = oldpwrite;
+		return -EFAULT;
+	}
+
+	rbuf->pwrite = (rbuf->pwrite + todo) % rbuf->size;
 
 	return len;
 }

@@ -159,7 +159,7 @@
 #define DWC3_OCFG		0xcc00
 #define DWC3_OCTL		0xcc04
 #define DWC3_OEVT		0xcc08
-#define DWC3_OEVTEN		0xcc0C
+#define DWC3_OEVTEN		0xcc0c
 #define DWC3_OSTS		0xcc10
 
 /* Bit fields */
@@ -201,7 +201,6 @@
 #define DWC3_GUSB3PIPECTL_SUSPHY	(1 << 17)
 #define DWC3_GUSB3PIPECTL_DELAY_P1P2P3	(7 << 19)
 #define DWC3_GUSB3PIPECTL_DIS_RXDET_U3_RXDET (1 << 22)
-#define DWC3_GUSB3PIPECTL_ELASTIC_BUF_MODE	(1 << 0)
 
 /* Global TX Fifo Size Register */
 #define DWC3_GTXFIFOSIZ_TXFDEF(n)	((n) & 0xffff)
@@ -221,12 +220,6 @@
 
 /* Global HWPARAMS6 Register */
 #define DWC3_GHWPARAMS6_SRP_SUPPORT	(1 << 10)
-
-/* Global Frame Length Adjustment Register */
-#define DWC3_GFLADJ_REFCLK_240MHZDECR_PLS1	(1 << 31)
-#define DWC3_GFLADJ_REFCLK_240MHZ_DECR		(0x7F << 24)
-#define DWC3_GFLADJ_REFCLK_LPM_SEL		(1 << 23)
-#define DWC3_GFLADJ_REFCLK_FLADJ		(0x3FFF << 8)
 
 /* Device Configuration Register */
 #define DWC3_DCFG_LPM_CAP	(1 << 22)
@@ -783,8 +776,6 @@ struct dwc3 {
 #define DWC3_REVISION_210A	0x5533210a
 #define DWC3_REVISION_220A	0x5533220a
 #define DWC3_REVISION_230A	0x5533230a
-#define DWC3_REVISION_240A	0x5533240a
-#define DWC3_REVISION_250A	0x5533250a
 
 	unsigned		is_selfpowered:1;
 	unsigned		three_stage_setup:1;
@@ -832,14 +823,6 @@ struct dwc3 {
 
 	/* Indicate if software connect was issued by the usb_gadget_driver */
 	bool			softconnect;
-	void (*notify_event) (struct dwc3 *, unsigned);
-	int			tx_fifo_size;
-	bool			tx_fifo_reduced;
-
-	bool			nominal_elastic_buffer;
-	bool			core_reset_after_phy_init;
-	bool			err_evt_seen;
-	bool			hsphy_auto_suspend_disable;
 };
 
 /* -------------------------------------------------------------------------- */
@@ -1001,39 +984,7 @@ static inline void dwc3_gadget_exit(struct dwc3 *dwc)
 { }
 #endif
 
-/* power management interface */
-#if !IS_ENABLED(CONFIG_USB_DWC3_HOST)
-int dwc3_gadget_prepare(struct dwc3 *dwc);
-void dwc3_gadget_complete(struct dwc3 *dwc);
-int dwc3_gadget_suspend(struct dwc3 *dwc);
-int dwc3_gadget_resume(struct dwc3 *dwc);
-#else
-static inline int dwc3_gadget_prepare(struct dwc3 *dwc)
-{
-	return 0;
-}
-
-static inline void dwc3_gadget_complete(struct dwc3 *dwc)
-{
-}
-
-static inline int dwc3_gadget_suspend(struct dwc3 *dwc)
-{
-	return 0;
-}
-
-static inline int dwc3_gadget_resume(struct dwc3 *dwc)
-{
-	return 0;
-}
-#endif /* !IS_ENABLED(CONFIG_USB_DWC3_HOST) */
-
 void dwc3_gadget_restart(struct dwc3 *dwc);
 void dwc3_post_host_reset_core_init(struct dwc3 *dwc);
-int dwc3_event_buffers_setup(struct dwc3 *dwc);
-
-extern void dwc3_set_notifier(
-		void (*notify) (struct dwc3 *dwc3, unsigned event));
-extern int dwc3_notify_event(struct dwc3 *dwc3, unsigned event);
 
 #endif /* __DRIVERS_USB_DWC3_CORE_H */

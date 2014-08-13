@@ -2,7 +2,7 @@
  * drivers/serial/msm_serial.c - driver for msm7k serial device and console
  *
  * Copyright (C) 2007 Google, Inc.
- * Copyright (c) 2010-2014, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2010-2013, The Linux Foundation. All rights reserved.
  *
  * This software is licensed under the terms of the GNU General Public
  * License version 2, as published by the Free Software Foundation, and
@@ -47,10 +47,10 @@
 #include <linux/of_device.h>
 #include <linux/of_gpio.h>
 #include <linux/wakelock.h>
-#include <linux/types.h>
-#include <asm/byteorder.h>
-#include <linux/platform_data/qcom-serial_hs_lite.h>
-#include <linux/msm-bus.h>
+#include <mach/board.h>
+#include <mach/msm_serial_hs_lite.h>
+#include <mach/msm_bus.h>
+#include <asm/mach-types.h>
 #include "msm_serial_hs_hwreg.h"
 
 /*
@@ -84,7 +84,7 @@ struct msm_hsl_port {
 	unsigned int            *gsbi_mapbase;
 	unsigned int            *mapped_gsbi;
 	unsigned int            old_snap_state;
-	unsigned long		ver_id;
+	unsigned int		ver_id;
 	int			tx_timeout;
 	struct mutex		clk_mutex;
 	enum uart_core_type	uart_type;
@@ -166,17 +166,12 @@ static inline void wait_for_xmitr(struct uart_port *port);
 static inline void msm_hsl_write(struct uart_port *port,
 				 unsigned int val, unsigned int off)
 {
-	__iowmb();
-	__raw_writel((__force __u32)cpu_to_le32(val),
-		port->membase + off);
+	iowrite32(val, port->membase + off);
 }
 static inline unsigned int msm_hsl_read(struct uart_port *port,
 		     unsigned int off)
 {
-	unsigned int v = le32_to_cpu((__force __le32)__raw_readl(
-		port->membase + off));
-	__iormb();
-	return v;
+	return ioread32(port->membase + off);
 }
 
 static unsigned int msm_serial_hsl_has_gsbi(struct uart_port *port)
@@ -369,22 +364,6 @@ static int get_line(struct platform_device *pdev)
 	return msm_hsl_port->uart.line;
 }
 
-static int bus_vote(uint32_t client, int vector)
-{
-	int ret = 0;
-
-	if (!client)
-		return ret;
-
-	pr_debug("Voting for bus scaling:%d\n", vector);
-
-	ret = msm_bus_scale_client_update_request(client, vector);
-	if (ret)
-		pr_err("Failed to request bus bw vector %d\n", vector);
-
-	return ret;
-}
-
 static int clk_en(struct uart_port *port, int enable)
 {
 	struct msm_hsl_port *msm_hsl_port = UART_TO_MSM(port);
@@ -393,13 +372,9 @@ static int clk_en(struct uart_port *port, int enable)
 	if (enable) {
 
 		msm_hsl_port->clk_enable_count++;
-		ret = bus_vote(msm_hsl_port->bus_perf_client,
-				!!msm_hsl_port->clk_enable_count);
-		if (ret)
-			goto err;
 		ret = clk_prepare_enable(msm_hsl_port->clk);
 		if (ret)
-			goto err_bus;
+			goto err;
 		if (msm_hsl_port->pclk) {
 			ret = clk_prepare_enable(msm_hsl_port->pclk);
 			if (ret)
@@ -411,17 +386,23 @@ static int clk_en(struct uart_port *port, int enable)
 		clk_disable_unprepare(msm_hsl_port->clk);
 		if (msm_hsl_port->pclk)
 			clk_disable_unprepare(msm_hsl_port->pclk);
-		ret = bus_vote(msm_hsl_port->bus_perf_client,
+	}
+
+	if (msm_hsl_port->bus_perf_client) {
+			pr_debug("Voting for bus scaling:%d\n",
+					!!msm_hsl_port->clk_enable_count);
+			ret = msm_bus_scale_client_update_request(
+				msm_hsl_port->bus_perf_client,
 				!!msm_hsl_port->clk_enable_count);
+			if (ret)
+				pr_err("Failed to request bus bw vector %d\n",
+					!!msm_hsl_port->clk_enable_count);
 	}
 
 	return ret;
 
 err_clk_disable:
 	clk_disable_unprepare(msm_hsl_port->clk);
-err_bus:
-	bus_vote(msm_hsl_port->bus_perf_client,
-			!!(msm_hsl_port->clk_enable_count - 1));
 err:
 	msm_hsl_port->clk_enable_count--;
 	return ret;
@@ -521,10 +502,6 @@ static void msm_hsl_start_tx(struct uart_port *port)
 {
 	struct msm_hsl_port *msm_hsl_port = UART_TO_MSM(port);
 
-	if (port->suspended) {
-		pr_err("%s: System is in Suspend state\n", __func__);
-		return;
-	}
 	msm_hsl_port->imr |= UARTDM_ISR_TXLEV_BMSK;
 	msm_hsl_write(port, msm_hsl_port->imr,
 		regmap[msm_hsl_port->ver_id][UARTDM_IMR]);
@@ -1005,6 +982,10 @@ static int msm_hsl_startup(struct uart_port *port)
 			}
 		}
 	}
+#ifndef CONFIG_PM_RUNTIME
+	msm_hsl_init_clock(port);
+#endif
+	pm_runtime_get_sync(port->dev);
 
 	/*
 	 * Set RFR Level as 3/4 of UARTDM FIFO Size
@@ -1057,6 +1038,10 @@ static void msm_hsl_shutdown(struct uart_port *port)
 
 	free_irq(port->irq, port);
 
+#ifndef CONFIG_PM_RUNTIME
+	msm_hsl_deinit_clock(port);
+#endif
+	pm_runtime_put_sync(port->dev);
 	if (!(is_console(port)) || (!port->cons) ||
 		(port->cons && (!(port->cons->flags & CON_ENABLED)))) {
 		/* Free UART GPIOs */
@@ -1394,7 +1379,7 @@ static void dump_hsl_regs(struct uart_port *port)
 /*
  *  Wait for transmitter & holding register to empty
  *  Derived from wait_for_xmitr in 8250 serial driver by Russell King  */
-static inline void wait_for_xmitr(struct uart_port *port)
+static void wait_for_xmitr(struct uart_port *port)
 {
 	struct msm_hsl_port *msm_hsl_port = UART_TO_MSM(port);
 	unsigned int vid = msm_hsl_port->ver_id;
@@ -1410,13 +1395,8 @@ static inline void wait_for_xmitr(struct uart_port *port)
 			touch_nmi_watchdog();
 			cpu_relax();
 			if (++count == msm_hsl_port->tx_timeout) {
-				pr_info("%s: UART TX Stuck, Resetting TX\n",
-								 __func__);
-				msm_hsl_write(port, RESET_TX,
-					regmap[vid][UARTDM_CR]);
-				mb();
 				dump_hsl_regs(port);
-				break;
+				panic("MSM HSL wait_for_xmitr is stuck!");
 			}
 		}
 		msm_hsl_write(port, CLEAR_TX_READY, regmap[vid][UARTDM_CR]);
@@ -1734,30 +1714,6 @@ static int msm_serial_hsl_probe(struct platform_device *pdev)
 	port->uartclk = 7372800;
 	msm_hsl_port = UART_TO_MSM(port);
 
-	msm_hsl_port->clk = clk_get(&pdev->dev, "core_clk");
-	if (unlikely(IS_ERR(msm_hsl_port->clk))) {
-		ret = PTR_ERR(msm_hsl_port->clk);
-		if (ret != -EPROBE_DEFER)
-			pr_err("Error getting clk\n");
-		return ret;
-	}
-
-	/* Interface clock is not required by all UART configurations.
-	 * GSBI UART and BLSP UART needs interface clock but Legacy UART
-	 * do not require interface clock. Hence, do not fail probe with
-	 * iface clk_get failure.
-	 */
-	msm_hsl_port->pclk = clk_get(&pdev->dev, "iface_clk");
-	if (unlikely(IS_ERR(msm_hsl_port->pclk))) {
-		ret = PTR_ERR(msm_hsl_port->pclk);
-		if (ret == -EPROBE_DEFER) {
-			clk_put(msm_hsl_port->clk);
-			return ret;
-		} else {
-			msm_hsl_port->pclk = NULL;
-		}
-	}
-
 	/* Identify UART functional mode as 2-wire or 4-wire. */
 	if (pdata && pdata->config_gpio == 4)
 		msm_hsl_port->func_mode = UART_FOUR_WIRE;
@@ -1768,7 +1724,7 @@ static int msm_serial_hsl_probe(struct platform_device *pdev)
 	if (!match) {
 		msm_hsl_port->ver_id = UARTDM_VERSION_11_13;
 	} else {
-		msm_hsl_port->ver_id = (unsigned long)match->data;
+		msm_hsl_port->ver_id = (unsigned int)match->data;
 		/*
 		 * BLSP based UART configuration is available with
 		 * UARTDM v14 Revision. Hence set uart_type as UART_BLSP.
@@ -1795,12 +1751,22 @@ static int msm_serial_hsl_probe(struct platform_device *pdev)
 						     "gsbi_resource");
 	if (!gsbi_resource)
 		gsbi_resource = platform_get_resource(pdev, IORESOURCE_MEM, 1);
+	msm_hsl_port->clk = clk_get(&pdev->dev, "core_clk");
+	msm_hsl_port->pclk = clk_get(&pdev->dev, "iface_clk");
 
 	if (gsbi_resource)
 		msm_hsl_port->uart_type = GSBI_HSUART;
 	else
 		msm_hsl_port->uart_type = LEGACY_HSUART;
 
+	if (unlikely(IS_ERR(msm_hsl_port->clk))) {
+		pr_err("Error getting clk\n");
+		return PTR_ERR(msm_hsl_port->clk);
+	}
+	if (unlikely(IS_ERR(msm_hsl_port->pclk))) {
+		pr_err("Error getting pclk\n");
+		return PTR_ERR(msm_hsl_port->pclk);
+	}
 
 	uart_resource = platform_get_resource_byname(pdev,
 						     IORESOURCE_MEM,

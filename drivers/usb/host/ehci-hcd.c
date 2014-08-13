@@ -1223,6 +1223,23 @@ void ehci_init_driver(struct hc_driver *drv,
 		drv->hcd_priv_size += over->extra_priv_size;
 		if (over->reset)
 			drv->reset = over->reset;
+		if (over->irq)
+			drv->irq = over->irq;
+		if (over->urb_enqueue)
+			drv->urb_enqueue = over->urb_enqueue;
+		if (over->bus_suspend)
+			drv->bus_suspend = over->bus_suspend;
+		if (over->bus_resume)
+			drv->bus_resume = over->bus_resume;
+		if (over->start)
+			drv->start = over->start;
+		if (over->log_urb)
+			drv->log_urb = over->log_urb;
+		if (over->set_autosuspend_delay) {
+			drv->set_autosuspend_delay =
+				over->set_autosuspend_delay;
+		}
+		drv->flags |= over->flags;
 	}
 }
 EXPORT_SYMBOL_GPL(ehci_init_driver);
@@ -1358,12 +1375,9 @@ static struct platform_driver *plat_drivers[]  = {
 	&cns3xxx_ehci_driver,
 #endif
 
-#ifdef CONFIG_ARCH_VT8500
-	&vt8500_ehci_driver,
-#endif
-
-#ifdef CONFIG_PLAT_SPEAR
-	&spear_ehci_hcd_driver,
+#ifdef CONFIG_TILE_USB
+#include "ehci-tilegx.c"
+#define	PLATFORM_DRIVER		ehci_hcd_tilegx_driver
 #endif
 
 #ifdef CONFIG_USB_EHCI_HCD_PMC_MSP
@@ -1414,8 +1428,18 @@ static struct platform_driver *plat_drivers[]  = {
 	&ehci_ls1x_driver,
 #endif
 
-#ifdef CONFIG_USB_EHCI_HCD_PLATFORM
-	&ehci_platform_driver,
+#if !IS_ENABLED(CONFIG_USB_EHCI_PCI) && \
+	!IS_ENABLED(CONFIG_USB_EHCI_HCD_PLATFORM) && \
+	!IS_ENABLED(CONFIG_USB_CHIPIDEA_HOST) && \
+	!IS_ENABLED(CONFIG_USB_EHCI_MXC) && \
+	!IS_ENABLED(CONFIG_USB_MSM_HSIC) && \
+	!IS_ENABLED(CONFIG_USB_EHCI_MSM_72K) && \
+	!IS_ENABLED(CONFIG_USB_EHCI_MSM) && \
+	!defined(PLATFORM_DRIVER) && \
+	!defined(PS3_SYSTEM_BUS_DRIVER) && \
+	!defined(OF_PLATFORM_DRIVER) && \
+	!defined(XILINX_OF_PLATFORM_DRIVER)
+#error "missing bus glue for ehci-hcd"
 #endif
 };
 

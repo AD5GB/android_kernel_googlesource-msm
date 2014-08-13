@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2014, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2013, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -19,53 +19,9 @@
 
 #include <asm/cacheflush.h>
 
-#include <linux/qcom_iommu.h>
-#include "msm_iommu_priv.h"
-#include <trace/events/kmem.h>
+#include <mach/iommu.h>
+#include <mach/msm_iommu_priv.h>
 #include "msm_iommu_pagetable.h"
-
-#define NUM_FL_PTE      4096
-#define NUM_SL_PTE      256
-#define NUM_TEX_CLASS   8
-
-/* First-level page table bits */
-#define FL_BASE_MASK            0xFFFFFC00
-#define FL_TYPE_TABLE           (1 << 0)
-#define FL_TYPE_SECT            (2 << 0)
-#define FL_SUPERSECTION         (1 << 18)
-#define FL_AP0                  (1 << 10)
-#define FL_AP1                  (1 << 11)
-#define FL_AP2                  (1 << 15)
-#define FL_SHARED               (1 << 16)
-#define FL_BUFFERABLE           (1 << 2)
-#define FL_CACHEABLE            (1 << 3)
-#define FL_TEX0                 (1 << 12)
-#define FL_OFFSET(va)           (((va) & 0xFFF00000) >> 20)
-#define FL_NG                   (1 << 17)
-
-/* Second-level page table bits */
-#define SL_BASE_MASK_LARGE      0xFFFF0000
-#define SL_BASE_MASK_SMALL      0xFFFFF000
-#define SL_TYPE_LARGE           (1 << 0)
-#define SL_TYPE_SMALL           (2 << 0)
-#define SL_AP0                  (1 << 4)
-#define SL_AP1                  (2 << 4)
-#define SL_AP2                  (1 << 9)
-#define SL_SHARED               (1 << 10)
-#define SL_BUFFERABLE           (1 << 2)
-#define SL_CACHEABLE            (1 << 3)
-#define SL_TEX0                 (1 << 6)
-#define SL_OFFSET(va)           (((va) & 0xFF000) >> 12)
-#define SL_NG                   (1 << 11)
-
-/* Memory type and cache policy attributes */
-#define MT_SO                   0
-#define MT_DEV                  1
-#define MT_IOMMU_NORMAL         2
-#define CP_NONCACHED            0
-#define CP_WB_WA                1
-#define CP_WT                   2
-#define CP_WB_NWA               3
 
 /* Sharability attributes of MSM IOMMU mappings */
 #define MSM_IOMMU_ATTR_NON_SH		0x0
@@ -79,14 +35,8 @@
 
 static int msm_iommu_tex_class[4];
 
-/* TEX Remap Registers */
-#define NMRR_ICP(nmrr, n) (((nmrr) & (3 << ((n) * 2))) >> ((n) * 2))
-#define NMRR_OCP(nmrr, n) (((nmrr) & (3 << ((n) * 2 + 16))) >> ((n) * 2 + 16))
-
-#define PRRR_NOS(prrr, n) ((prrr) & (1 << ((n) + 24)) ? 1 : 0)
-#define PRRR_MT(prrr, n)  ((((prrr) & (3 << ((n) * 2))) >> ((n) * 2)))
-
-static inline void clean_pte(u32 *start, u32 *end, int redirect)
+static inline void clean_pte(unsigned long *start, unsigned long *end,
+				int redirect)
 {
 	if (!redirect)
 		dmac_flush_range(start, end);
@@ -94,7 +44,7 @@ static inline void clean_pte(u32 *start, u32 *end, int redirect)
 
 int msm_iommu_pagetable_alloc(struct msm_iommu_pt *pt)
 {
-	pt->fl_table = (u32 *)__get_free_pages(GFP_KERNEL,
+	pt->fl_table = (unsigned long *)__get_free_pages(GFP_KERNEL,
 							  get_order(SZ_16K));
 	if (!pt->fl_table)
 		return -ENOMEM;
@@ -107,7 +57,7 @@ int msm_iommu_pagetable_alloc(struct msm_iommu_pt *pt)
 
 void msm_iommu_pagetable_free(struct msm_iommu_pt *pt)
 {
-	u32 *fl_table;
+	unsigned long *fl_table;
 	int i;
 
 	fl_table = pt->fl_table;
@@ -135,7 +85,7 @@ static int __get_pgprot(int prot, int len)
 	}
 
 	if (prot & IOMMU_CACHE)
-		tex = (pgprot_val(PAGE_KERNEL) >> 2) & 0x07;
+		tex = (pgprot_kernel >> 2) & 0x07;
 	else
 		tex = msm_iommu_tex_class[MSM_IOMMU_ATTR_NONCACHED];
 
@@ -161,11 +111,11 @@ static int __get_pgprot(int prot, int len)
 	return pgprot;
 }
 
-static u32 *make_second_level(struct msm_iommu_pt *pt,
-					u32 *fl_pte)
+static unsigned long *make_second_level(struct msm_iommu_pt *pt,
+					unsigned long *fl_pte)
 {
-	u32 *sl;
-	sl = (u32 *) __get_free_pages(GFP_KERNEL,
+	unsigned long *sl;
+	sl = (unsigned long *) __get_free_pages(GFP_KERNEL,
 			get_order(SZ_4K));
 
 	if (!sl) {
@@ -183,7 +133,7 @@ fail:
 	return sl;
 }
 
-static int sl_4k(u32 *sl_pte, phys_addr_t pa, unsigned int pgprot)
+static int sl_4k(unsigned long *sl_pte, phys_addr_t pa, unsigned int pgprot)
 {
 	int ret = 0;
 
@@ -198,7 +148,7 @@ fail:
 	return ret;
 }
 
-static int sl_64k(u32 *sl_pte, phys_addr_t pa, unsigned int pgprot)
+static int sl_64k(unsigned long *sl_pte, phys_addr_t pa, unsigned int pgprot)
 {
 	int ret = 0;
 
@@ -218,7 +168,7 @@ fail:
 	return ret;
 }
 
-static inline int fl_1m(u32 *fl_pte, phys_addr_t pa, int pgprot)
+static inline int fl_1m(unsigned long *fl_pte, phys_addr_t pa, int pgprot)
 {
 	if (*fl_pte)
 		return -EBUSY;
@@ -229,7 +179,7 @@ static inline int fl_1m(u32 *fl_pte, phys_addr_t pa, int pgprot)
 	return 0;
 }
 
-static inline int fl_16m(u32 *fl_pte, phys_addr_t pa, int pgprot)
+static inline int fl_16m(unsigned long *fl_pte, phys_addr_t pa, int pgprot)
 {
 	int i;
 	int ret = 0;
@@ -248,17 +198,17 @@ fail:
 int msm_iommu_pagetable_map(struct msm_iommu_pt *pt, unsigned long va,
 			phys_addr_t pa, size_t len, int prot)
 {
-	u32 *fl_pte;
-	u32 fl_offset;
-	u32 *sl_table;
-	u32 *sl_pte;
-	u32 sl_offset;
+	unsigned long *fl_pte;
+	unsigned long fl_offset;
+	unsigned long *sl_table;
+	unsigned long *sl_pte;
+	unsigned long sl_offset;
 	unsigned int pgprot;
 	int ret = 0;
 
 	if (len != SZ_16M && len != SZ_1M &&
 	    len != SZ_64K && len != SZ_4K) {
-		pr_debug("Bad size: %zd\n", len);
+		pr_debug("Bad size: %d\n", len);
 		ret = -EINVAL;
 		goto fail;
 	}
@@ -308,7 +258,7 @@ int msm_iommu_pagetable_map(struct msm_iommu_pt *pt, unsigned long va,
 		}
 	}
 
-	sl_table = (u32 *) __va(((*fl_pte) & FL_BASE_MASK));
+	sl_table = (unsigned long *) __va(((*fl_pte) & FL_BASE_MASK));
 	sl_offset = SL_OFFSET(va);
 	sl_pte = sl_table + sl_offset;
 
@@ -333,8 +283,79 @@ fail:
 size_t msm_iommu_pagetable_unmap(struct msm_iommu_pt *pt, unsigned long va,
 				size_t len)
 {
-	msm_iommu_pagetable_unmap_range(pt, va, len);
-	return len;
+	unsigned long *fl_pte;
+	unsigned long fl_offset;
+	unsigned long *sl_table;
+	unsigned long *sl_pte;
+	unsigned long sl_offset;
+	int i, ret = 0;
+
+	if (len != SZ_16M && len != SZ_1M &&
+	    len != SZ_64K && len != SZ_4K) {
+		pr_debug("Bad length: %d\n", len);
+		ret = -EINVAL;
+		goto fail;
+	}
+
+	if (!pt->fl_table) {
+		pr_debug("Null page table\n");
+		ret = -EINVAL;
+		goto fail;
+	}
+
+	fl_offset = FL_OFFSET(va);		/* Upper 12 bits */
+	fl_pte = pt->fl_table + fl_offset;	/* int pointers, 4 bytes */
+
+	if (*fl_pte == 0) {
+		pr_debug("First level PTE is 0\n");
+		ret = -ENODEV;
+		goto fail;
+	}
+
+	/* Unmap supersection */
+	if (len == SZ_16M) {
+		for (i = 0; i < 16; i++)
+			*(fl_pte+i) = 0;
+
+		clean_pte(fl_pte, fl_pte + 16, pt->redirect);
+	}
+
+	if (len == SZ_1M) {
+		*fl_pte = 0;
+		clean_pte(fl_pte, fl_pte + 1, pt->redirect);
+	}
+
+	sl_table = (unsigned long *) __va(((*fl_pte) & FL_BASE_MASK));
+	sl_offset = SL_OFFSET(va);
+	sl_pte = sl_table + sl_offset;
+
+	if (len == SZ_64K) {
+		for (i = 0; i < 16; i++)
+			*(sl_pte+i) = 0;
+
+		clean_pte(sl_pte, sl_pte + 16, pt->redirect);
+	}
+
+	if (len == SZ_4K) {
+		*sl_pte = 0;
+		clean_pte(sl_pte, sl_pte + 1, pt->redirect);
+	}
+
+	if (len == SZ_4K || len == SZ_64K) {
+		int used = 0;
+
+		for (i = 0; i < NUM_SL_PTE; i++)
+			if (sl_table[i])
+				used = 1;
+		if (!used) {
+			free_page((unsigned long)sl_table);
+			*fl_pte = 0;
+			clean_pte(fl_pte, fl_pte + 1, pt->redirect);
+		}
+	}
+
+fail:
+	return ret;
 }
 
 static phys_addr_t get_phys_addr(struct scatterlist *sg)
@@ -350,14 +371,14 @@ static phys_addr_t get_phys_addr(struct scatterlist *sg)
 	return pa;
 }
 
-static int check_range(u32 *fl_table, unsigned int va,
+static int check_range(unsigned long *fl_table, unsigned int va,
 				 unsigned int len)
 {
 	unsigned int offset = 0;
-	u32 *fl_pte;
-	u32 fl_offset;
-	u32 *sl_table;
-	u32 sl_start, sl_end;
+	unsigned long *fl_pte;
+	unsigned long fl_offset;
+	unsigned long *sl_table;
+	unsigned long sl_start, sl_end;
 	int i;
 
 	fl_offset = FL_OFFSET(va);	/* Upper 12 bits */
@@ -410,12 +431,11 @@ int msm_iommu_pagetable_map_range(struct msm_iommu_pt *pt, unsigned int va,
 		       struct scatterlist *sg, unsigned int len, int prot)
 {
 	phys_addr_t pa;
-	unsigned int start_va = va;
 	unsigned int offset = 0;
-	u32 *fl_pte;
-	u32 fl_offset;
-	u32 *sl_table = NULL;
-	u32 sl_offset, sl_start;
+	unsigned long *fl_pte;
+	unsigned long fl_offset;
+	unsigned long *sl_table = NULL;
+	unsigned long sl_offset, sl_start;
 	unsigned int chunk_size, chunk_offset = 0;
 	int ret = 0;
 	unsigned int pgprot4k, pgprot64k, pgprot1m, pgprot16m;
@@ -450,8 +470,6 @@ int msm_iommu_pagetable_map_range(struct msm_iommu_pt *pt, unsigned int va,
 			chunk_size = SZ_1M;
 		/* 64k or 4k determined later */
 
-		trace_iommu_map_range(va, pa, sg->length, chunk_size);
-
 		/* for 1M and 16M, only first level entries are required */
 		if (chunk_size >= SZ_1M) {
 			if (chunk_size == SZ_16M) {
@@ -477,6 +495,12 @@ int msm_iommu_pagetable_map_range(struct msm_iommu_pt *pt, unsigned int va,
 				chunk_offset = 0;
 				sg = sg_next(sg);
 				pa = get_phys_addr(sg);
+				if (pa == 0) {
+					pr_debug("No dma address for sg %p\n",
+							sg);
+					ret = -EINVAL;
+					goto fail;
+				}
 			}
 			continue;
 		}
@@ -510,9 +534,6 @@ int msm_iommu_pagetable_map_range(struct msm_iommu_pt *pt, unsigned int va,
 			else
 				chunk_size = SZ_4K;
 
-			trace_iommu_map_range(va, pa, sg->length,
-							chunk_size);
-
 			if (chunk_size == SZ_4K) {
 				sl_4k(&sl_table[sl_offset], pa, pgprot4k);
 				sl_offset++;
@@ -532,6 +553,12 @@ int msm_iommu_pagetable_map_range(struct msm_iommu_pt *pt, unsigned int va,
 				chunk_offset = 0;
 				sg = sg_next(sg);
 				pa = get_phys_addr(sg);
+				if (pa == 0) {
+					pr_debug("No dma address for sg %p\n",
+							sg);
+					ret = -EINVAL;
+					goto fail;
+				}
 			}
 		}
 
@@ -542,9 +569,6 @@ int msm_iommu_pagetable_map_range(struct msm_iommu_pt *pt, unsigned int va,
 	}
 
 fail:
-	if (ret && offset > 0)
-		msm_iommu_pagetable_unmap_range(pt, start_va, offset);
-
 	return ret;
 }
 
@@ -552,10 +576,10 @@ void msm_iommu_pagetable_unmap_range(struct msm_iommu_pt *pt, unsigned int va,
 				 unsigned int len)
 {
 	unsigned int offset = 0;
-	u32 *fl_pte;
-	u32 fl_offset;
-	u32 *sl_table;
-	u32 sl_start, sl_end;
+	unsigned long *fl_pte;
+	unsigned long fl_offset;
+	unsigned long *sl_table;
+	unsigned long sl_start, sl_end;
 	int used, i;
 
 	BUG_ON(len & (SZ_4K - 1));
@@ -614,55 +638,15 @@ void msm_iommu_pagetable_unmap_range(struct msm_iommu_pt *pt, unsigned int va,
 	}
 }
 
-phys_addr_t msm_iommu_iova_to_phys_soft(struct iommu_domain *domain,
-					  phys_addr_t va)
-{
-	struct msm_iommu_priv *priv = domain->priv;
-	struct msm_iommu_pt *pt = &priv->pt;
-	u32 *fl_pte;
-	u32 fl_offset;
-	u32 *sl_table = NULL;
-	u32 sl_offset;
-	u32 *sl_pte;
-
-	if (!pt->fl_table) {
-		pr_err("Page table doesn't exist\n");
-		return 0;
-	}
-
-	fl_offset = FL_OFFSET(va);
-	fl_pte = pt->fl_table + fl_offset;
-
-	if (*fl_pte & FL_TYPE_TABLE) {
-		sl_table = __va(((*fl_pte) & FL_BASE_MASK));
-		sl_offset = SL_OFFSET(va);
-		sl_pte = sl_table + sl_offset;
-		/* 64 KB section */
-		if (*sl_pte & SL_TYPE_LARGE)
-			return (*sl_pte & 0xFFFF0000) | (va & ~0xFFFF0000);
-		/* 4 KB section */
-		if (*sl_pte & SL_TYPE_SMALL)
-			return (*sl_pte & 0xFFFFF000) | (va & ~0xFFFFF000);
-	} else {
-		/* 16 MB section */
-		if (*fl_pte & FL_SUPERSECTION)
-			return (*fl_pte & 0xFF000000) | (va & ~0xFF000000);
-		/* 1 MB section */
-		if (*fl_pte & FL_TYPE_SECT)
-			return (*fl_pte & 0xFFF00000) | (va & ~0xFFF00000);
-	}
-	return 0;
-}
-
 static int __init get_tex_class(int icp, int ocp, int mt, int nos)
 {
 	int i = 0;
-	unsigned int prrr;
-	unsigned int nmrr;
+	unsigned int prrr = 0;
+	unsigned int nmrr = 0;
 	int c_icp, c_ocp, c_mt, c_nos;
 
-	prrr = msm_iommu_get_prrr();
-	nmrr = msm_iommu_get_nmrr();
+	RCP15_PRRR(prrr);
+	RCP15_NMRR(nmrr);
 
 	for (i = 0; i < NUM_TEX_CLASS; i++) {
 		c_nos = PRRR_NOS(prrr, i);
@@ -680,17 +664,16 @@ static int __init get_tex_class(int icp, int ocp, int mt, int nos)
 static void __init setup_iommu_tex_classes(void)
 {
 	msm_iommu_tex_class[MSM_IOMMU_ATTR_NONCACHED] =
-			get_tex_class(CP_NONCACHED, CP_NONCACHED,
-			MT_IOMMU_NORMAL, 1);
+			get_tex_class(CP_NONCACHED, CP_NONCACHED, MT_NORMAL, 1);
 
 	msm_iommu_tex_class[MSM_IOMMU_ATTR_CACHED_WB_WA] =
-			get_tex_class(CP_WB_WA, CP_WB_WA, MT_IOMMU_NORMAL, 1);
+			get_tex_class(CP_WB_WA, CP_WB_WA, MT_NORMAL, 1);
 
 	msm_iommu_tex_class[MSM_IOMMU_ATTR_CACHED_WB_NWA] =
-			get_tex_class(CP_WB_NWA, CP_WB_NWA, MT_IOMMU_NORMAL, 1);
+			get_tex_class(CP_WB_NWA, CP_WB_NWA, MT_NORMAL, 1);
 
 	msm_iommu_tex_class[MSM_IOMMU_ATTR_CACHED_WT] =
-			get_tex_class(CP_WT, CP_WT, MT_IOMMU_NORMAL, 1);
+			get_tex_class(CP_WT, CP_WT, MT_NORMAL, 1);
 }
 
 void __init msm_iommu_pagetable_init(void)

@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2011 Google, Inc
- * Copyright (c) 2011-2013, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2011-2012, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -13,16 +13,13 @@
  */
 
 #include <linux/memory_alloc.h>
-#include <linux/slab.h>
 #include <linux/types.h>
 #include <mach/scm.h>
-#include <linux/highmem.h>
 
 #include "../ion_priv.h"
 #include "ion_cp_common.h"
 
 #define MEM_PROTECT_LOCK_ID	0x05
-#define MEM_PROTECT_LOCK_ID2 0x0A
 
 struct cp2_mem_chunks {
 	unsigned int *chunk_list;
@@ -30,11 +27,10 @@ struct cp2_mem_chunks {
 	unsigned int chunk_size;
 } __attribute__ ((__packed__));
 
-struct cp2_lock2_req {
+struct cp2_lock_req {
 	struct cp2_mem_chunks chunks;
 	unsigned int mem_usage;
 	unsigned int lock;
-	unsigned int flags;
 } __attribute__ ((__packed__));
 
 /*  SCM related code for locking down memory for content protection */
@@ -98,17 +94,18 @@ static int ion_cp_change_mem_v2(unsigned int phy_base, unsigned int size,
 
 	nchunks = size / V2_CHUNK_SIZE;
 
-	chunk_list = kmalloc(sizeof(unsigned long)*nchunks, GFP_KERNEL);
+	chunk_list = allocate_contiguous_ebi(sizeof(unsigned long)*nchunks,
+						SZ_4K, 0);
 	if (!chunk_list)
 		return -ENOMEM;
 
 	for (i = 0; i < nchunks; i++)
 		chunk_list[i] = phy_base + i * V2_CHUNK_SIZE;
 
-	ret = ion_cp_change_chunks_state(__pa(chunk_list),
+	ret = ion_cp_change_chunks_state(memory_pool_node_paddr(chunk_list),
 					nchunks, V2_CHUNK_SIZE, usage, lock);
 
-	kfree(chunk_list);
+	free_contiguous_memory(chunk_list);
 	return ret;
 }
 
@@ -147,20 +144,17 @@ int ion_cp_change_chunks_state(unsigned long chunks, unsigned int nchunks,
 				enum cp_mem_usage usage,
 				int lock)
 {
-	struct cp2_lock2_req request;
+	struct cp2_lock_req request;
 	u32 resp;
 
 	request.mem_usage = usage;
 	request.lock = lock;
-	request.flags = 0;
 
 	request.chunks.chunk_list = (unsigned int *)chunks;
 	request.chunks.chunk_list_size = nchunks;
 	request.chunks.chunk_size = chunk_size;
 
-	kmap_flush_unused();
-	kmap_atomic_flush_unused();
-	return scm_call(SCM_SVC_MP, MEM_PROTECT_LOCK_ID2,
+	return scm_call(SCM_SVC_MP, MEM_PROTECT_LOCK_ID,
 			&request, sizeof(request), &resp, sizeof(resp));
 
 }
@@ -273,7 +267,7 @@ int ion_cp_secure_buffer(struct ion_buffer *buffer, int version, void *data,
 		goto out_unlock;
 	}
 
-	if (atomic_read(&buf->secure_cnt) && !buf->ignore_check) {
+	if (atomic_read(&buf->secure_cnt)) {
 		if (buf->version != version || buf->data != data) {
 			pr_err("%s: Trying to re-secure buffer with different values",
 				__func__);

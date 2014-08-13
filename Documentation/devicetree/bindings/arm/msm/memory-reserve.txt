@@ -26,13 +26,12 @@ range is not affected. Any driver needing to remove a block of memory should
 add the appropriate binding:
 
 Required parameters:
-- qcom,memblock-remove: array of the base and size of blocks to be removed
+- qcom,memblock-remove: base and size of block to be removed
 
 	qcom,a-driver {
 		compatible = "qcom,a-driver";
-		/* Remove 4MB at 0x200000 and 2MB at 0x800000*/
-		qcom,memblock-remove = <0x200000 0x400000
-					0x800000 0x200000>;
+		/* Remove 4MB at 0x200000*/
+		qcom,memblock-remove = <0x200000 0x400000>;
 	};
 
 In order to ensure memory is only reserved when a driver is actually enabled,
@@ -70,20 +69,3 @@ Required parameters:
 This region is assumed to be a part of a separate hole that has been removed
 and this binding specifies the fixed location and size of the region within
 that hole.
-
-
-Some drivers may only wish to reserve memory from the system. Reserved memory
-is still tracked internally by the Linux page allocator. The memory is reserved
-from the buddy allocator at bootup but may be freed back at a later point in
-time with memblock_free and free_bootmem_late.
-
-Required parameters:
--qcom,memblock-reserve: base and size of block to be reserved. Drivers should
-call memblock_is_reserved before attempting to use the base address to ensure
-the memory was completely reserved.
-
-	qcom,a-driver {
-		compatible = "qcom,a-driver";
-		/* reserve a 4MB region @ 0x200000 for use later */
-		qcom,memblock-reserve = <0x200000 0x400000>;
-	};

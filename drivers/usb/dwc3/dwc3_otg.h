@@ -41,7 +41,7 @@ struct dwc3_otg {
 	struct dwc3		*dwc;
 	void __iomem		*regs;
 	struct regulator	*vbus_otg;
-	struct delayed_work	sm_work;
+	struct work_struct	sm_work;
 	struct dwc3_charger	*charger;
 	struct dwc3_ext_xceiv	*ext_xceiv;
 #define ID		0
@@ -49,8 +49,7 @@ struct dwc3_otg {
 	unsigned long inputs;
 	struct power_supply	*psy;
 	struct completion	dwc3_xcvr_vbus_init;
-	int			charger_retry_count;
-	int			vbus_retry_count;
+	int			host_bus_suspend;
 };
 
 /**
@@ -64,7 +63,6 @@ struct dwc3_otg {
  *                      IDEV_CHG_MAX can be drawn irrespective of USB state.
  * DWC3_PROPRIETARY_CHARGER A proprietary charger pull DP and DM to specific
  *                     voltages between 2.0-3.3v for identification.
- * DWC3_FLOATED_CHARGER Non standard charger whose data lines are floating.
  */
 enum dwc3_chg_type {
 	DWC3_INVALID_CHARGER = 0,
@@ -72,15 +70,12 @@ enum dwc3_chg_type {
 	DWC3_DCP_CHARGER,
 	DWC3_CDP_CHARGER,
 	DWC3_PROPRIETARY_CHARGER,
-	DWC3_FLOATED_CHARGER,
 };
 
 struct dwc3_charger {
 	enum dwc3_chg_type	chg_type;
 	unsigned		max_power;
 	bool			charging_disabled;
-
-	bool			skip_chg_detect;
 
 	/* start/stop charger detection, provided by external charger module */
 	void	(*start_detection)(struct dwc3_charger *charger, bool start);
@@ -114,8 +109,7 @@ struct dwc3_ext_xceiv {
 	void	(*notify_ext_events)(struct usb_otg *otg,
 					enum dwc3_ext_events ext_event);
 	/* for block reset USB core */
-	void	(*ext_block_reset)(struct dwc3_ext_xceiv *ext_xceiv,
-					bool core_reset);
+	void	(*ext_block_reset)(bool core_reset);
 };
 
 /* for external transceiver driver */

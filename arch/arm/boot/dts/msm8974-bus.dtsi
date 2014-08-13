@@ -10,7 +10,7 @@
  * GNU General Public License for more details.
  */
 
-&soc {
+/ {
 	msm-mmss-noc@fc478000 {
 		compatible = "msm-bus-fabric";
 		reg = <0xfc478000 0x00004000>;
@@ -284,8 +284,8 @@
 			qcom,qport = <0>;
 			qcom,mas-hw-id = <18>;
 			qcom,mode = "Fixed";
-			qcom,prio1 = <2>;
-			qcom,prio0 = <2>;
+			qcom,prio-rd = <2>;
+			qcom,prio-wr = <2>;
 		};
 
 		mas-qdss-bam {
@@ -296,9 +296,6 @@
 			qcom,mode = "Fixed";
 			qcom,qport = <1>;
 			qcom,mas-hw-id = <19>;
-			qcom,prio1 = <1>;
-			qcom,prio0 = <1>;
-			qcom,hw-sel = "NoC";
 		};
 
 		mas-snoc-cfg {
@@ -342,8 +339,8 @@
 			qcom,mas-hw-id = <29>;
 			qcom,slv-hw-id = <28>;
 			qcom,mode = "Fixed";
-			qcom,prio1 = <2>;
-			qcom,prio0 = <2>;
+			qcom,prio-rd = <2>;
+			qcom,prio-wr = <2>;
 		};
 
 		fab-ovnoc {
@@ -364,8 +361,8 @@
 			qcom,qport = <2>;
 			qcom,mas-hw-id = <23>;
 			qcom,hw-sel = "NoC";
-			qcom,prio1 = <1>;
-			qcom,prio0 = <1>;
+			qcom,prio-rd = <1>;
+			qcom,prio-wr = <1>;
 		};
 
 		mas-crypto-core1 {
@@ -377,8 +374,8 @@
 			qcom,qport = <3>;
 			qcom,mas-hw-id = <24>;
 			qcom,hw-sel = "NoC";
-			qcom,prio1 = <1>;
-			qcom,prio0 = <1>;
+			qcom,prio-rd = <1>;
+			qcom,prio-wr = <1>;
 		};
 
 		mas-lpass-proc {
@@ -389,8 +386,8 @@
 			qcom,qport = <4>;
 			qcom,mas-hw-id = <25>;
 			qcom,mode = "Fixed";
-			qcom,prio1 = <2>;
-			qcom,prio0 = <2>;
+			qcom,prio-rd = <2>;
+			qcom,prio-wr = <2>;
 		};
 
 		mas-mss {
@@ -435,9 +432,6 @@
 			qcom,qport = <10>;
 			qcom,mode = "Fixed";
 			qcom,mas-hw-id = <31>;
-			qcom,prio1 = <1>;
-			qcom,prio0 = <1>;
-			qcom,hw-sel = "NoC";
 		};
 
 		mas-usb3 {
@@ -448,8 +442,8 @@
 			qcom,mode = "Fixed";
 			qcom,qport = <11>;
 			qcom,mas-hw-id = <32>;
-			qcom,prio1 = <1>;
-			qcom,prio0 = <1>;
+			qcom,prio-rd = <2>;
+			qcom,prio-wr = <2>;
 			qcom,hw-sel = "NoC";
 			qcom,iface-clk-node = "msm_usb3";
 		};
@@ -1151,7 +1145,7 @@
 		qcom,fabclk-dual = "mem_clk";
 		qcom,fabclk-active = "mem_a_clk";
 		qcom,ntieredslaves = <0>;
-		qcom,qos-freq = <19200>;
+		qcom,qos-freq = <4800>;
 		qcom,hw-sel = "BIMC";
 		qcom,rpm-en;
 
@@ -1168,18 +1162,12 @@
 			qcom,masterp = <0>;
 			qcom,tier = <2>;
 			qcom,hw-sel = "BIMC";
-			qcom,mode = "Limiter";
+			qcom,mode = "Fixed";
 			qcom,qport = <0>;
 			qcom,ws = <10000>;
 			qcom,mas-hw-id = <0>;
 			qcom,prio-rd = <0>;
 			qcom,prio-wr = <0>;
-			qcom,mode-thresh = "Fixed";
-			qcom,thresh = <2000000>;
-			qcom,dual-conf;
-			qcom,bimc,bw = <300000>;
-			qcom,bimc,gp = <5>;
-			qcom,bimc,thmp = <50>;
 		};
 
 		mas-ampss-m1 {
@@ -1188,18 +1176,12 @@
 			qcom,masterp = <1>;
 			qcom,tier = <2>;
 			qcom,hw-sel = "BIMC";
-			qcom,mode = "Limiter";
+			qcom,mode = "Fixed";
 			qcom,qport = <1>;
 			qcom,ws = <10000>;
 			qcom,mas-hw-id = <0>;
 			qcom,prio-rd = <0>;
 			qcom,prio-wr = <0>;
-			qcom,mode-thresh = "Fixed";
-			qcom,thresh = <2000000>;
-			qcom,dual-conf;
-			qcom,bimc,bw = <300000>;
-			qcom,bimc,gp = <5>;
-			qcom,bimc,thmp = <50>;
 		};
 
 		mas-mss-proc {
@@ -1361,15 +1343,27 @@
 			qcom,hw-sel = "NoC";
 		};
 
-		mas-video-ocmem {
+		mas-video-p0-ocmem {
 			cell-id = <68>;
-			label = "mas-video-ocmem";
-			qcom,masterp = <3 4>;
+			label = "mas-video-p0-ocmem";
+			qcom,masterp = <3>;
 			qcom,tier = <2>;
 			qcom,perm-mode = "Fixed";
 			qcom,mode = "Fixed";
-			qcom,qport = <2 3>;
+			qcom,qport = <2>;
 			qcom,mas-hw-id = <15>;
+			qcom,hw-sel = "NoC";
+		};
+
+		mas-video-p1-ocmem {
+			cell-id = <69>;
+			label = "mas-video-p1-ocmem";
+			qcom,masterp = <4>;
+			qcom,tier = <2>;
+			qcom,perm-mode = "Fixed";
+			qcom,mode = "Fixed";
+			qcom,qport = <3>;
+			qcom,mas-hw-id = <16>;
 			qcom,hw-sel = "NoC";
 		};
 

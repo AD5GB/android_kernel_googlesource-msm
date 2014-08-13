@@ -510,6 +510,15 @@ config TOUCHSCREEN_EDT_FT5X06
 	  To compile this driver as a module, choose M here: the
 	  module will be called edt-ft5x06.
 
+config TOUCHSCREEN_MSM
+	bool "Qualcomm MSM touchscreen controller"
+	depends on ARCH_MSM7X30 && MARIMBA_TSADC
+	default n
+	help
+	  Say Y here if you have a 4-wire resistive touchscreen panel
+	  connected to the TSSC touchscreen controller on a
+	  Qualcomm MSM/QSD based SoC.
+
 config TOUCHSCREEN_MIGOR
 	tristate "Renesas MIGO-R touchscreen"
 	depends on SH_MIGOR && I2C
@@ -884,6 +893,17 @@ config TOUCHSCREEN_TSC2007
 	  To compile this driver as a module, choose M here: the
 	  module will be called tsc2007.
 
+config TOUCHSCREEN_MSM_LEGACY
+	default n
+	tristate "MSM Touchscreen"
+	depends on ARCH_MSM && !ARCH_MSM7X30
+	help
+	  Say Y here if you have a touchscreen interface using MSM
+	  touchscreen controller.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called msm_touch.
+
 config ANDROID_TOUCHSCREEN_MSM_HACKS
 	default y
 	depends on TOUCHSCREEN_MSM_LEGACY
@@ -946,6 +966,34 @@ config TOUCHSCREEN_TPS6507X
 
 	  To compile this driver as a module, choose M here: the
 	  module will be called tps6507x_ts.
+
+config TOUCHSCREEN_CY8C_TS
+	tristate "Cypress TMA300-TMG200 based touchscreens"
+	depends on I2C
+	default n
+	help
+	  Say Y here if you have a Cypress TMA300/TMG200 based touchscreen.
+	  TMA300 is a multi-touch screen which can report upto 10
+	  touches at a time. TMG200 supports 2 touches.
+
+	  If unsure, say N.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called cy8c_ts.
+
+config TOUCHSCREEN_CYTTSP_I2C_QC
+       tristate "Cypress TTSP based touchscreens"
+       depends on I2C
+       default n
+       help
+         Say Y here if you have a Cypress TTSP based touchscreen.
+         TMA300 is a multi-touch screen which can report upto 10
+         touches at a time.
+
+         If unsure, say N.
+
+         To compile this driver as a module, choose M here: the
+         module will be called cyttsp-i2c.
 
 config TOUCHSCREEN_FT5X06
        tristate "FocalTech touchscreens"
@@ -1021,30 +1069,5 @@ config SECURE_TOUCH
 	  driver.
 
 	  If unsure, say N.
-
-config TOUCHSCREEN_GT9XX
-	bool "Goodix touchpanel GT9xx series"
-	depends on I2C
-	help
-	  Say Y here if you have a Goodix GT9xx touchscreen.
-	  Gt9xx controllers are multi touch controllers which can
-	  report 5 touches at a time.
-
-          If unsure, say N.
-
-config TOUCHSCREEN_MELFAS_MMS136
-	tristate "MELFAS MMS136 touchscreen"
-	depends on I2C
-	help
-	  Say Y here if you have the MELFAS MMS136 touchscreen controller
-	  chip in your system.
-
-	  If unsure, say N.
-
-	  To compile this driver as a module, choose M here: the
-	  module will be called melfas-ts.
-
-source "drivers/input/touchscreen/gt9xx/Kconfig"
-source "drivers/input/touchscreen/cyttsp5/Kconfig"
 
 endif

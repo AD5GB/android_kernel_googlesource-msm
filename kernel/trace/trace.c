@@ -640,7 +640,6 @@ static const char *trace_options[] = {
 	"disable_on_free",
 	"irq-info",
 	"markers",
-	"function-trace",
 	"print-tgid",
 	NULL
 };
@@ -2373,14 +2372,14 @@ static void print_func_help_header(struct trace_buffer *buf, struct seq_file *m)
 	seq_puts(m, "#              | |       |          |         |\n");
 }
 
-static void print_func_help_header_tgid(struct trace_buffer *buf, struct seq_file *m)
+static void print_func_help_header_tgid(struct trace_array *tr, struct seq_file *m)
 {
-	print_event_info(buf, m);
+	print_event_info(tr, m);
 	seq_puts(m, "#           TASK-PID    TGID   CPU#      TIMESTAMP  FUNCTION\n");
 	seq_puts(m, "#              | |        |      |          |         |\n");
 }
 
-static void print_func_help_header_irq(struct trace_buffer *buf, struct seq_file *m)
+static void print_func_help_header_irq(struct trace_array *tr, struct seq_file *m)
 {
 	print_event_info(buf, m);
 	seq_puts(m, "#                              _-----=> irqs-off\n");
@@ -2392,9 +2391,9 @@ static void print_func_help_header_irq(struct trace_buffer *buf, struct seq_file
 	seq_puts(m, "#              | |       |   ||||       |         |\n");
 }
 
-static void print_func_help_header_irq_tgid(struct trace_buffer *buf, struct seq_file *m)
+static void print_func_help_header_irq_tgid(struct trace_array *tr, struct seq_file *m)
 {
-	print_event_info(buf, m);
+	print_event_info(tr, m);
 	seq_puts(m, "#                                      _-----=> irqs-off\n");
 	seq_puts(m, "#                                     / _----=> need-resched\n");
 	seq_puts(m, "#                                    | / _---=> hardirq/softirq\n");
@@ -2705,14 +2704,14 @@ void trace_default_header(struct seq_file *m)
 		if (!(trace_flags & TRACE_ITER_VERBOSE)) {
 			if (trace_flags & TRACE_ITER_IRQ_INFO)
 				if (trace_flags & TRACE_ITER_TGID)
-					print_func_help_header_irq_tgid(iter->trace_buffer, m);
+					print_func_help_header_irq_tgid(iter->tr, m);
 				else
-					print_func_help_header_irq(iter->trace_buffer, m);
+					print_func_help_header_irq(iter->tr, m);
 			else
 				if (trace_flags & TRACE_ITER_TGID)
-					print_func_help_header_tgid(iter->trace_buffer, m);
+					print_func_help_header_tgid(iter->tr, m);
 				else
-					print_func_help_header(iter->trace_buffer, m);
+					print_func_help_header(iter->tr, m);
 		}
 	}
 }
@@ -6092,6 +6091,15 @@ static __init int tracer_init_debugfs(void)
 
 	trace_create_file("saved_cmdlines", 0444, d_tracer,
 			NULL, &tracing_saved_cmdlines_fops);
+
+	trace_create_file("saved_tgids", 0444, d_tracer,
+			NULL, &tracing_saved_tgids_fops);
+
+	trace_create_file("trace_clock", 0644, d_tracer, NULL,
+			  &trace_clock_fops);
+
+	trace_create_file("tracing_on", 0644, d_tracer,
+			    &global_trace, &rb_simple_fops);
 
 #ifdef CONFIG_DYNAMIC_FTRACE
 	trace_create_file("dyn_ftrace_total_info", 0444, d_tracer,

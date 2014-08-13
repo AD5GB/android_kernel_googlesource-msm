@@ -168,11 +168,21 @@ struct iommu_group *iommu_group_alloc(void)
 	ret = idr_alloc(&iommu_group_idr, group, 1, 0, GFP_KERNEL);
 	mutex_unlock(&iommu_group_mutex);
 
-	if (ret < 0) {
+again:
+	if (unlikely(0 == idr_pre_get(&iommu_group_idr, GFP_KERNEL))) {
 		kfree(group);
 		return ERR_PTR(ret);
 	}
-	group->id = ret;
+
+	ret = idr_get_new_above(&iommu_group_idr, group, 1, &group->id);
+	if (ret == -EAGAIN)
+		goto again;
+	mutex_unlock(&iommu_group_mutex);
+
+	if (ret == -ENOSPC) {
+		kfree(group);
+		return ERR_PTR(ret);
+	}
 
 	ret = kobject_init_and_add(&group->kobj, &iommu_group_ktype,
 				   NULL, "%d", group->id);

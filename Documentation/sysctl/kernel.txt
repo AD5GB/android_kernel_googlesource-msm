@@ -23,7 +23,7 @@ show up in /proc/sys/kernel:
 - auto_msgmni
 - bootloader_type	     [ X86 only ]
 - bootloader_version	     [ X86 only ]
-- boot_reason		     [ ARM and ARM64 only ]
+- boot_reason		     [ ARM only ]
 - callhome		     [ S390 only ]
 - cap_last_cap
 - cold_boot		     [ ARM and ARM64 only ]
@@ -149,7 +149,7 @@ Documentation/x86/boot.txt for additional information.
 
 boot_reason:
 
-ARM and ARM64 -- reason for device boot
+ARM -- reason for device boot
 
 A single bit will be set in the unsigned integer value to identify the
 reason the device was booted / powered on. The value will be zero if this

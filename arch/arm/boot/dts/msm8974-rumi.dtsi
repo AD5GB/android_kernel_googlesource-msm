@@ -11,9 +11,9 @@
  */
 
 /include/ "msm8974-leds.dtsi"
-/include/ "msm8974-camera-sensor-cdp.dtsi"
+/include/ "msm8974-camera-sensor-cdp-mtp.dtsi"
 
-&soc {
+/ {
 	timer {
 		clock-frequency = <5000000>;
 	};

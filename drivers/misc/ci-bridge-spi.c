@@ -49,7 +49,7 @@ struct ci_bridge {
 
 static struct ci_bridge ci;
 
-static int __devinit ci_bridge_spi_probe(struct spi_device *spi)
+static int ci_bridge_spi_probe(struct spi_device *spi)
 {
 	int ret;
 	struct ci_bridge_platform_data *pdata;
@@ -103,7 +103,7 @@ err_free_reset_pin:
 	return ret;
 }
 
-static int __devexit ci_bridge_spi_remove(struct spi_device *spi)
+static int ci_bridge_spi_remove(struct spi_device *spi)
 {
 	struct ci_bridge *bridge = spi_get_drvdata(spi);
 
@@ -123,7 +123,7 @@ static struct spi_driver ci_bridge_driver = {
 		.owner = THIS_MODULE,
 	},
 	.probe = ci_bridge_spi_probe,
-	.remove = __devexit_p(ci_bridge_spi_remove),
+	.remove = ci_bridge_spi_remove,
 };
 
 static void ci_bridge_spi_completion_cb(void *arg)

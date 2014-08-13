@@ -97,7 +97,7 @@ static const struct row_queue_params row_queues_def[] = {
 
 /* Default values for idling on read queues (in msec) */
 #define ROW_IDLE_TIME_MSEC 5
-#define ROW_READ_FREQ_MSEC 5
+#define ROW_READ_FREQ_MSEC 20
 
 /**
  * struct rowq_idling_data -  parameters for idling on the queue
@@ -158,20 +158,6 @@ struct idling_data {
 };
 
 /**
- * struct starvation_data - data for starvation management
- * @starvation_limit:	number of times this priority class
- *			can tolerate being starved
- * @starvation_counter:	number of requests from higher
- *			priority classes that were dispatched while this
- *			priority request were pending
- *
- */
-struct starvation_data {
-	int				starvation_limit;
-	int				starvation_counter;
-};
-
-/**
  * struct row_queue - Per block device rqueue structure
  * @dispatch_queue:	dispatch rqueue
  * @row_queues:		array of priority request queues
@@ -184,8 +170,6 @@ struct starvation_data {
  *			complete.
  * @pending_urgent_rq:	pointer to the pending urgent request
  * @last_served_ioprio_class: I/O priority class that was last dispatched from
- * @reg_prio_starvation: starvation data for REGULAR priority queues
- * @low_prio_starvation: starvation data for LOW priority queues
  * @cycle_flags:	used for marking unserved queueus
  *
  */
@@ -199,12 +183,6 @@ struct row_data {
 	bool				urgent_in_flight;
 	struct request			*pending_urgent_rq;
 	int				last_served_ioprio_class;
-
-#define	ROW_REG_STARVATION_TOLLERANCE	5000
-	struct starvation_data		reg_prio_starvation;
-#define	ROW_LOW_STARVATION_TOLLERANCE	10000
-	struct starvation_data		low_prio_starvation;
-
 	unsigned int			cycle_flags;
 };
 
@@ -280,42 +258,6 @@ static enum hrtimer_restart row_idle_hrtimer_fn(struct hrtimer *hr_timer)
 	return HRTIMER_NORESTART;
 }
 
-/*
- * row_regular_req_pending() - Check if there are REGULAR priority requests
- *				 Pending in scheduler
- * @rd:		pointer to struct row_data
- *
- * Returns True if there are REGULAR priority requests in scheduler queues.
- *		False, otherwise.
- */
-static inline bool row_regular_req_pending(struct row_data *rd)
-{
-	int i;
-
-	for (i = ROWQ_REG_PRIO_IDX; i < ROWQ_LOW_PRIO_IDX; i++)
-		if (!list_empty(&rd->row_queues[i].fifo))
-			return true;
-	return false;
-}
-
-/*
- * row_low_req_pending() - Check if there are LOW priority requests
- *				 Pending in scheduler
- * @rd:		pointer to struct row_data
- *
- * Returns True if there are LOW priority requests in scheduler queues.
- *		False, otherwise.
- */
-static inline bool row_low_req_pending(struct row_data *rd)
-{
-	int i;
-
-	for (i = ROWQ_LOW_PRIO_IDX; i < ROWQ_MAX_PRIO; i++)
-		if (!list_empty(&rd->row_queues[i].fifo))
-			return true;
-	return false;
-}
-
 /******************* Elevator callback functions *********************/
 
 /*
@@ -330,11 +272,6 @@ static void row_add_request(struct request_queue *q,
 	struct row_data *rd = (struct row_data *)q->elevator->elevator_data;
 	struct row_queue *rqueue = RQ_ROWQ(rq);
 	s64 diff_ms;
-	bool queue_was_empty = list_empty(&rqueue->fifo);
-	unsigned long bv_page_flags = 0;
-
-	if (rq->bio && rq->bio->bi_io_vec && rq->bio->bi_io_vec->bv_page)
-		bv_page_flags = rq->bio->bi_io_vec->bv_page->flags;
 
 	list_add_tail(&rq->queuelist, &rqueue->fifo);
 	rd->nr_reqs[rq_data_dir(rq)]++;
@@ -350,14 +287,11 @@ static void row_add_request(struct request_queue *q,
 	if (row_queues_def[rqueue->prio].idling_enabled) {
 		if (rd->rd_idle_data.idling_queue_idx == rqueue->prio &&
 		    hrtimer_active(&rd->rd_idle_data.hr_timer)) {
-			if (hrtimer_try_to_cancel(
-				&rd->rd_idle_data.hr_timer) >= 0) {
-				row_log_rowq(rd, rqueue->prio,
-				    "Canceled delayed work on %d",
-				    rd->rd_idle_data.idling_queue_idx);
-				rd->rd_idle_data.idling_queue_idx =
-					ROWQ_MAX_PRIO;
-			}
+			(void)hrtimer_cancel(&rd->rd_idle_data.hr_timer);
+			row_log_rowq(rd, rqueue->prio,
+				"Canceled delayed work on %d",
+				rd->rd_idle_data.idling_queue_idx);
+			rd->rd_idle_data.idling_queue_idx = ROWQ_MAX_PRIO;
 		}
 		diff_ms = ktime_to_ms(ktime_sub(ktime_get(),
 				rqueue->idle_data.last_insert_time));
@@ -367,9 +301,7 @@ static void row_add_request(struct request_queue *q,
 			rqueue->idle_data.begin_idling = false;
 			return;
 		}
-
-		if ((bv_page_flags & (1L << PG_readahead)) ||
-		    (diff_ms < rd->rd_idle_data.freq_ms)) {
+		if (diff_ms < rd->rd_idle_data.freq_ms) {
 			rqueue->idle_data.begin_idling = true;
 			row_log_rowq(rd, rqueue->prio, "Enable idling");
 		} else {
@@ -384,8 +316,7 @@ static void row_add_request(struct request_queue *q,
 	    !rd->pending_urgent_rq && !rd->urgent_in_flight) {
 		/* Handle High Priority queues */
 		if (rqueue->prio < ROWQ_REG_PRIO_IDX &&
-		    rd->last_served_ioprio_class != IOPRIO_CLASS_RT &&
-		    queue_was_empty) {
+		    rd->last_served_ioprio_class != IOPRIO_CLASS_RT) {
 			row_log_rowq(rd, rqueue->prio,
 				"added (high prio) urgent request");
 			rq->cmd_flags |= REQ_URGENT;
@@ -396,6 +327,7 @@ static void row_add_request(struct request_queue *q,
 				"added urgent request (total on queue=%d)",
 				rqueue->nr_req);
 			rq->cmd_flags |= REQ_URGENT;
+			WARN_ON(rqueue->nr_req > 1);
 			rd->pending_urgent_rq = rq;
 		}
 	} else
@@ -540,21 +472,12 @@ static void row_dispatch_insert(struct row_data *rd, struct request *rq)
 	row_log_rowq(rd, rqueue->prio,
 		" Dispatched request %p nr_disp = %d", rq,
 		rqueue->nr_dispatched);
-	if (rqueue->prio < ROWQ_REG_PRIO_IDX) {
+	if (rqueue->prio < ROWQ_REG_PRIO_IDX)
 		rd->last_served_ioprio_class = IOPRIO_CLASS_RT;
-		if (row_regular_req_pending(rd))
-			rd->reg_prio_starvation.starvation_counter++;
-		if (row_low_req_pending(rd))
-			rd->low_prio_starvation.starvation_counter++;
-	} else if (rqueue->prio < ROWQ_LOW_PRIO_IDX) {
+	else if (rqueue->prio < ROWQ_LOW_PRIO_IDX)
 		rd->last_served_ioprio_class = IOPRIO_CLASS_BE;
-		rd->reg_prio_starvation.starvation_counter = 0;
-		if (row_low_req_pending(rd))
-			rd->low_prio_starvation.starvation_counter++;
-	} else {
+	else
 		rd->last_served_ioprio_class = IOPRIO_CLASS_IDLE;
-		rd->low_prio_starvation.starvation_counter = 0;
-	}
 }
 
 /*
@@ -585,27 +508,16 @@ static int row_get_ioprio_class_to_serve(struct row_data *rd, int force)
 	for (i = 0; i < ROWQ_REG_PRIO_IDX; i++) {
 		if (!list_empty(&rd->row_queues[i].fifo)) {
 			if (hrtimer_active(&rd->rd_idle_data.hr_timer)) {
-				if (hrtimer_try_to_cancel(
-					&rd->rd_idle_data.hr_timer) >= 0) {
-					row_log(rd->dispatch_queue,
+				(void)hrtimer_cancel(
+					&rd->rd_idle_data.hr_timer);
+				row_log_rowq(rd,
+					rd->rd_idle_data.idling_queue_idx,
 					"Canceling delayed work on %d. RT pending",
-					     rd->rd_idle_data.idling_queue_idx);
-					rd->rd_idle_data.idling_queue_idx =
-						ROWQ_MAX_PRIO;
-				}
+					rd->rd_idle_data.idling_queue_idx);
+				rd->rd_idle_data.idling_queue_idx =
+					ROWQ_MAX_PRIO;
 			}
-
-			if (row_regular_req_pending(rd) &&
-			    (rd->reg_prio_starvation.starvation_counter >=
-			     rd->reg_prio_starvation.starvation_limit))
-				ret = IOPRIO_CLASS_BE;
-			else if (row_low_req_pending(rd) &&
-			    (rd->low_prio_starvation.starvation_counter >=
-			     rd->low_prio_starvation.starvation_limit))
-				ret = IOPRIO_CLASS_IDLE;
-			else
-				ret = IOPRIO_CLASS_RT;
-
+			ret = IOPRIO_CLASS_RT;
 			goto done;
 		}
 	}
@@ -634,12 +546,7 @@ check_idling:
 			    !force && row_queues_def[i].idling_enabled)
 				goto initiate_idling;
 		} else {
-			if (row_low_req_pending(rd) &&
-			    (rd->low_prio_starvation.starvation_counter >=
-			     rd->low_prio_starvation.starvation_limit))
-				ret = IOPRIO_CLASS_IDLE;
-			else
-				ret = IOPRIO_CLASS_BE;
+			ret = IOPRIO_CLASS_BE;
 			goto done;
 		}
 	}
@@ -728,12 +635,11 @@ static int row_dispatch_requests(struct request_queue *q, int force)
 	int ret = 0, currq, ioprio_class_to_serve, start_idx, end_idx;
 
 	if (force && hrtimer_active(&rd->rd_idle_data.hr_timer)) {
-		if (hrtimer_try_to_cancel(&rd->rd_idle_data.hr_timer) >= 0) {
-			row_log(rd->dispatch_queue,
-				"Canceled delayed work on %d - forced dispatch",
-				rd->rd_idle_data.idling_queue_idx);
-			rd->rd_idle_data.idling_queue_idx = ROWQ_MAX_PRIO;
-		}
+		(void)hrtimer_cancel(&rd->rd_idle_data.hr_timer);
+		row_log_rowq(rd, rd->rd_idle_data.idling_queue_idx,
+			"Canceled delayed work on %d - forced dispatch",
+			rd->rd_idle_data.idling_queue_idx);
+		rd->rd_idle_data.idling_queue_idx = ROWQ_MAX_PRIO;
 	}
 
 	if (rd->pending_urgent_rq) {
@@ -810,10 +716,6 @@ static int row_init_queue(struct request_queue *q)
 			ktime_set(0, 0);
 	}
 
-	rdata->reg_prio_starvation.starvation_limit =
-			ROW_REG_STARVATION_TOLLERANCE;
-	rdata->low_prio_starvation.starvation_limit =
-			ROW_LOW_STARVATION_TOLLERANCE;
 	/*
 	 * Currently idling is enabled only for READ queues. If we want to
 	 * enable it for write queues also, note that idling frequency will
@@ -965,42 +867,42 @@ static ssize_t row_var_store(int *var, const char *page, size_t count)
 	return count;
 }
 
-#define SHOW_FUNCTION(__FUNC, __VAR)				\
+#define SHOW_FUNCTION(__FUNC, __VAR, __CONV)				\
 static ssize_t __FUNC(struct elevator_queue *e, char *page)		\
 {									\
 	struct row_data *rowd = e->elevator_data;			\
 	int __data = __VAR;						\
+	if (__CONV)							\
+		__data = jiffies_to_msecs(__data);			\
 	return row_var_show(__data, (page));			\
 }
 SHOW_FUNCTION(row_hp_read_quantum_show,
-	rowd->row_queues[ROWQ_PRIO_HIGH_READ].disp_quantum);
+	rowd->row_queues[ROWQ_PRIO_HIGH_READ].disp_quantum, 0);
 SHOW_FUNCTION(row_rp_read_quantum_show,
-	rowd->row_queues[ROWQ_PRIO_REG_READ].disp_quantum);
+	rowd->row_queues[ROWQ_PRIO_REG_READ].disp_quantum, 0);
 SHOW_FUNCTION(row_hp_swrite_quantum_show,
-	rowd->row_queues[ROWQ_PRIO_HIGH_SWRITE].disp_quantum);
+	rowd->row_queues[ROWQ_PRIO_HIGH_SWRITE].disp_quantum, 0);
 SHOW_FUNCTION(row_rp_swrite_quantum_show,
-	rowd->row_queues[ROWQ_PRIO_REG_SWRITE].disp_quantum);
+	rowd->row_queues[ROWQ_PRIO_REG_SWRITE].disp_quantum, 0);
 SHOW_FUNCTION(row_rp_write_quantum_show,
-	rowd->row_queues[ROWQ_PRIO_REG_WRITE].disp_quantum);
+	rowd->row_queues[ROWQ_PRIO_REG_WRITE].disp_quantum, 0);
 SHOW_FUNCTION(row_lp_read_quantum_show,
-	rowd->row_queues[ROWQ_PRIO_LOW_READ].disp_quantum);
+	rowd->row_queues[ROWQ_PRIO_LOW_READ].disp_quantum, 0);
 SHOW_FUNCTION(row_lp_swrite_quantum_show,
-	rowd->row_queues[ROWQ_PRIO_LOW_SWRITE].disp_quantum);
-SHOW_FUNCTION(row_rd_idle_data_show, rowd->rd_idle_data.idle_time_ms);
-SHOW_FUNCTION(row_rd_idle_data_freq_show, rowd->rd_idle_data.freq_ms);
-SHOW_FUNCTION(row_reg_starv_limit_show,
-	rowd->reg_prio_starvation.starvation_limit);
-SHOW_FUNCTION(row_low_starv_limit_show,
-	rowd->low_prio_starvation.starvation_limit);
+	rowd->row_queues[ROWQ_PRIO_LOW_SWRITE].disp_quantum, 0);
+SHOW_FUNCTION(row_rd_idle_data_show, rowd->rd_idle_data.idle_time_ms, 0);
+SHOW_FUNCTION(row_rd_idle_data_freq_show, rowd->rd_idle_data.freq_ms, 0);
 #undef SHOW_FUNCTION
 
-#define STORE_FUNCTION(__FUNC, __PTR, MIN, MAX)			\
+#define STORE_FUNCTION(__FUNC, __PTR, MIN, MAX, __CONV)			\
 static ssize_t __FUNC(struct elevator_queue *e,				\
 		const char *page, size_t count)				\
 {									\
 	struct row_data *rowd = e->elevator_data;			\
 	int __data;						\
 	int ret = row_var_store(&__data, (page), count);		\
+	if (__CONV)							\
+		__data = (int)msecs_to_jiffies(__data);			\
 	if (__data < (MIN))						\
 		__data = (MIN);						\
 	else if (__data > (MAX))					\
@@ -1009,35 +911,29 @@ static ssize_t __FUNC(struct elevator_queue *e,				\
 	return ret;							\
 }
 STORE_FUNCTION(row_hp_read_quantum_store,
-&rowd->row_queues[ROWQ_PRIO_HIGH_READ].disp_quantum, 1, INT_MAX);
+&rowd->row_queues[ROWQ_PRIO_HIGH_READ].disp_quantum, 1, INT_MAX, 0);
 STORE_FUNCTION(row_rp_read_quantum_store,
 			&rowd->row_queues[ROWQ_PRIO_REG_READ].disp_quantum,
-			1, INT_MAX);
+			1, INT_MAX, 0);
 STORE_FUNCTION(row_hp_swrite_quantum_store,
 			&rowd->row_queues[ROWQ_PRIO_HIGH_SWRITE].disp_quantum,
-			1, INT_MAX);
+			1, INT_MAX, 0);
 STORE_FUNCTION(row_rp_swrite_quantum_store,
 			&rowd->row_queues[ROWQ_PRIO_REG_SWRITE].disp_quantum,
-			1, INT_MAX);
+			1, INT_MAX, 0);
 STORE_FUNCTION(row_rp_write_quantum_store,
 			&rowd->row_queues[ROWQ_PRIO_REG_WRITE].disp_quantum,
-			1, INT_MAX);
+			1, INT_MAX, 0);
 STORE_FUNCTION(row_lp_read_quantum_store,
 			&rowd->row_queues[ROWQ_PRIO_LOW_READ].disp_quantum,
-			1, INT_MAX);
+			1, INT_MAX, 0);
 STORE_FUNCTION(row_lp_swrite_quantum_store,
 			&rowd->row_queues[ROWQ_PRIO_LOW_SWRITE].disp_quantum,
-			1, INT_MAX);
+			1, INT_MAX, 0);
 STORE_FUNCTION(row_rd_idle_data_store, &rowd->rd_idle_data.idle_time_ms,
-			1, INT_MAX);
+			1, INT_MAX, 0);
 STORE_FUNCTION(row_rd_idle_data_freq_store, &rowd->rd_idle_data.freq_ms,
-			1, INT_MAX);
-STORE_FUNCTION(row_reg_starv_limit_store,
-			&rowd->reg_prio_starvation.starvation_limit,
-			1, INT_MAX);
-STORE_FUNCTION(row_low_starv_limit_store,
-			&rowd->low_prio_starvation.starvation_limit,
-			1, INT_MAX);
+			1, INT_MAX, 0);
 
 #undef STORE_FUNCTION
 
@@ -1055,8 +951,6 @@ static struct elv_fs_entry row_attrs[] = {
 	ROW_ATTR(lp_swrite_quantum),
 	ROW_ATTR(rd_idle_data),
 	ROW_ATTR(rd_idle_data_freq),
-	ROW_ATTR(reg_starv_limit),
-	ROW_ATTR(low_starv_limit),
 	__ATTR_NULL
 };
 

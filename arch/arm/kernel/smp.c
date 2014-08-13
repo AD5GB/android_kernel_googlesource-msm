@@ -242,13 +242,8 @@ void __ref cpu_die(void)
 
 	local_irq_disable();
 
-	/*
-	 * Flush the data out of the L1 cache for this CPU.  This must be
-	 * before the completion to ensure that data is safely written out
-	 * before platform_cpu_kill() gets called - which may disable
-	 * *this* CPU and power down its cache.
-	 */
-	flush_cache_louis();
+	/* Tell __cpu_die() that this CPU is now safe to dispose of */
+	complete(&cpu_died);
 
 	/*
 	 * Tell __cpu_die() that this CPU is now safe to dispose of.  Once

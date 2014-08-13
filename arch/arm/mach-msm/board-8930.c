@@ -79,6 +79,7 @@
 #include <mach/ion.h>
 #include <mach/mdm2.h>
 #include <mach/msm_rtb.h>
+#include <linux/fmem.h>
 #include <mach/msm_cache_dump.h>
 
 #include <mach/kgsl.h>
@@ -95,6 +96,7 @@
 #include "rpm_resources.h"
 #include <mach/mpm.h>
 #include "clock.h"
+#include "smd_private.h"
 #include "pm-boot.h"
 #include "msm_watchdog.h"
 #include "board-8930.h"
@@ -182,6 +184,9 @@ static int __init msm_contig_mem_size_setup(char *p)
 early_param("msm_contig_mem_size", msm_contig_mem_size_setup);
 #endif
 
+struct fmem_platform_data msm8930_fmem_pdata = {
+};
+
 #define DSP_RAM_BASE_8960 0x8da00000
 #define DSP_RAM_SIZE_8960 0x1800000
 static int dspcrashd_pdata_8960 = 0xDEADDEAD;
@@ -221,33 +226,40 @@ static void __init reserve_rtb_memory(void)
 #endif
 }
 
-static int msm8930_paddr_to_memtype(phys_addr_t paddr)
+static int msm8930_paddr_to_memtype(unsigned int paddr)
 {
 	return MEMTYPE_EBI1;
 }
 
+#define FMEM_ENABLED 0
 #ifdef CONFIG_ION_MSM
 #ifdef CONFIG_MSM_MULTIMEDIA_USE_ION
 static struct ion_cp_heap_pdata cp_mm_msm8930_ion_pdata = {
 	.permission_type = IPT_TYPE_MM_CARVEOUT,
 	.align = PAGE_SIZE,
+	.reusable = FMEM_ENABLED,
+	.mem_is_fmem = FMEM_ENABLED,
 	.fixed_position = FIXED_MIDDLE,
 };
 
 static struct ion_cp_heap_pdata cp_mfc_msm8930_ion_pdata = {
 	.permission_type = IPT_TYPE_MFC_SHAREDMEM,
 	.align = PAGE_SIZE,
+	.reusable = 0,
+	.mem_is_fmem = FMEM_ENABLED,
 	.fixed_position = FIXED_HIGH,
 };
 
 static struct ion_co_heap_pdata co_msm8930_ion_pdata = {
 	.adjacent_mem_id = INVALID_HEAP_ID,
 	.align = PAGE_SIZE,
+	.mem_is_fmem = 0,
 };
 
 static struct ion_co_heap_pdata fw_co_msm8930_ion_pdata = {
 	.adjacent_mem_id = ION_CP_MM_HEAP_ID,
 	.align = SZ_128K,
+	.mem_is_fmem = FMEM_ENABLED,
 	.fixed_position = FIXED_LOW,
 };
 #endif
@@ -371,6 +383,12 @@ static struct platform_device msm8930_ion_dev = {
 };
 #endif
 
+struct platform_device msm8930_fmem_device = {
+	.name = "fmem",
+	.id = 1,
+	.dev = { .platform_data = &msm8930_fmem_pdata },
+};
+
 static void __init reserve_mem_for_ion(enum ion_memory_types mem_type,
 				      unsigned long size)
 {
@@ -396,10 +414,15 @@ static void __init msm8930_reserve_fixed_area(unsigned long fixed_area_size)
 }
 
 /**
- * Reserve memory for ION. Also handle special case
+ * Reserve memory for ION and calculate amount of reusable memory for fmem.
+ * We only reserve memory for heaps that are not reusable. However, we only
+ * support one reusable heap at the moment so we ignore the reusable flag for
+ * other than the first heap with reusable flag set. Also handle special case
  * for video heaps (MM,FW, and MFC). Video requires heaps MM and MFC to be
  * at a higher address than FW in addition to not more than 256MB away from the
- * base address of the firmware. In addition the MM heap must be
+ * base address of the firmware. This means that if MM is reusable the other
+ * two heaps must be allocated in the same region as FW. This is handled by the
+ * mem_is_fmem flag in the platform data. In addition the MM heap must be
  * adjacent to the FW heap for content protection purposes.
  */
 static void __init reserve_ion_memory(void)
@@ -454,7 +477,7 @@ static void __init reserve_ion_memory(void)
 
 			if (fixed_position != NOT_FIXED)
 				fixed_size += heap->size;
-			else if (!use_cma)
+			else
 				reserve_mem_for_ion(MEMTYPE_EBI1, heap->size);
 
 			if (fixed_position == FIXED_LOW) {
@@ -934,7 +957,7 @@ static struct msm_bus_paths qseecom_hw_bus_scale_usecases[] = {
 	},
 	{
 		ARRAY_SIZE(qseecom_enable_dfab_vectors),
-		qseecom_enable_dfab_vectors,
+		qseecom_enable_sfpb_vectors,
 	},
 	{
 		ARRAY_SIZE(qseecom_enable_sfpb_vectors),
@@ -1695,6 +1718,12 @@ fail_gpio_req:
 
 static struct isa1200_regulator isa1200_reg_data[] = {
 	{
+		.name = "vddp",
+		.min_uV = ISA_I2C_VTG_MIN_UV,
+		.max_uV = ISA_I2C_VTG_MAX_UV,
+		.load_uA = ISA_I2C_CURR_UA,
+	},
+	{
 		.name = "vcc_i2c",
 		.min_uV = ISA_I2C_VTG_MIN_UV,
 		.max_uV = ISA_I2C_VTG_MAX_UV,
@@ -2142,7 +2171,7 @@ static struct platform_device fish_battery_device = {
 #ifndef MSM8930_PHASE_2
 
 /* 8930 Phase 1 */
-static struct platform_device msm8930_device_ext_5v_vreg __devinitdata = {
+static struct platform_device msm8930_device_ext_5v_vreg = {
 	.name	= GPIO_REGULATOR_DEV_NAME,
 	.id	= PM8921_MPP_PM_TO_SYS(7),
 	.dev	= {
@@ -2150,7 +2179,7 @@ static struct platform_device msm8930_device_ext_5v_vreg __devinitdata = {
 	},
 };
 
-static struct platform_device msm8930_device_ext_l2_vreg __devinitdata = {
+static struct platform_device msm8930_device_ext_l2_vreg = {
 	.name	= GPIO_REGULATOR_DEV_NAME,
 	.id	= 91,
 	.dev	= {
@@ -2161,7 +2190,7 @@ static struct platform_device msm8930_device_ext_l2_vreg __devinitdata = {
 #else
 
 /* 8930 Phase 2 */
-static struct platform_device msm8930_device_ext_5v_vreg __devinitdata = {
+static struct platform_device msm8930_device_ext_5v_vreg = {
 	.name	= GPIO_REGULATOR_DEV_NAME,
 	.id	= 63,
 	.dev	= {
@@ -2170,7 +2199,7 @@ static struct platform_device msm8930_device_ext_5v_vreg __devinitdata = {
 	},
 };
 
-static struct platform_device msm8930_device_ext_otg_sw_vreg __devinitdata = {
+static struct platform_device msm8930_device_ext_otg_sw_vreg = {
 	.name	= GPIO_REGULATOR_DEV_NAME,
 	.id	= 97,
 	.dev	= {
@@ -2181,7 +2210,7 @@ static struct platform_device msm8930_device_ext_otg_sw_vreg __devinitdata = {
 
 #endif
 
-static struct platform_device msm8930_device_rpm_regulator __devinitdata = {
+static struct platform_device msm8930_device_rpm_regulator = {
 	.name	= "rpm-regulator",
 	.id	= -1,
 	.dev	= {
@@ -2252,6 +2281,7 @@ static struct platform_device *common_devices[] __initdata = {
 #ifdef CONFIG_MSM_FAKE_BATTERY
 	&fish_battery_device,
 #endif
+	&msm8930_fmem_device,
 	&msm_device_bam_dmux,
 	&msm_fm_platform_init,
 
@@ -2326,7 +2356,6 @@ static struct platform_device *cdp_devices[] __initdata = {
 	&msm_pcm_hostless,
 	&msm_multi_ch_pcm,
 	&msm_lowlatency_pcm,
-	&msm_fm_loopback,
 };
 
 static void __init msm8930_i2c_init(void)
@@ -2847,7 +2876,6 @@ MACHINE_START(MSM8930_CDP, "QCT MSM8930 CDP")
 	.map_io = msm8930_map_io,
 	.reserve = msm8930_reserve,
 	.init_irq = msm8930_init_irq,
-	.handle_irq = gic_handle_irq,
 	.timer = &msm_timer,
 	.init_machine = msm8930_cdp_init,
 	.init_early = msm8930_allocate_memory_regions,
@@ -2860,7 +2888,6 @@ MACHINE_START(MSM8930_MTP, "QCT MSM8930 MTP")
 	.map_io = msm8930_map_io,
 	.reserve = msm8930_reserve,
 	.init_irq = msm8930_init_irq,
-	.handle_irq = gic_handle_irq,
 	.timer = &msm_timer,
 	.init_machine = msm8930_cdp_init,
 	.init_early = msm8930_allocate_memory_regions,
@@ -2873,7 +2900,6 @@ MACHINE_START(MSM8930_FLUID, "QCT MSM8930 FLUID")
 	.map_io = msm8930_map_io,
 	.reserve = msm8930_reserve,
 	.init_irq = msm8930_init_irq,
-	.handle_irq = gic_handle_irq,
 	.timer = &msm_timer,
 	.init_machine = msm8930_cdp_init,
 	.init_early = msm8930_allocate_memory_regions,
@@ -2886,7 +2912,6 @@ MACHINE_START(MSM8627_CDP, "QCT MSM8627 CDP")
 	.map_io = msm8930_map_io,
 	.reserve = msm8930_reserve,
 	.init_irq = msm8930_init_irq,
-	.handle_irq = gic_handle_irq,
 	.timer = &msm_timer,
 	.init_machine = msm8930_cdp_init,
 	.init_early = msm8930_allocate_memory_regions,
@@ -2899,7 +2924,6 @@ MACHINE_START(MSM8627_MTP, "QCT MSM8627 MTP")
 	.map_io = msm8930_map_io,
 	.reserve = msm8930_reserve,
 	.init_irq = msm8930_init_irq,
-	.handle_irq = gic_handle_irq,
 	.timer = &msm_timer,
 	.init_machine = msm8930_cdp_init,
 	.init_early = msm8930_allocate_memory_regions,

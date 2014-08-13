@@ -73,7 +73,14 @@ obj-$(CONFIG_TWL4030_POWER)    += twl4030-power.o
 obj-$(CONFIG_MFD_TWL4030_AUDIO)	+= twl4030-audio.o
 obj-$(CONFIG_TWL6040_CORE)	+= twl6040.o
 
+obj-$(CONFIG_MARIMBA_CORE)	+= marimba-core.o
+obj-$(CONFIG_MARIMBA_CODEC)     += marimba-codec.o
+obj-$(CONFIG_MARIMBA_CODEC)	+= msm-adie-codec.o
+obj-$(CONFIG_MARIMBA_TSADC)	+= marimba-tsadc.o
+obj-$(CONFIG_TPS65023)		+= tps65023.o
 
+obj-$(CONFIG_TIMPANI_CODEC)	+= timpani-codec.o
+obj-$(CONFIG_TIMPANI_CODEC)	+= msm-adie-codec.o
 
 obj-$(CONFIG_MFD_MC13XXX)	+= mc13xxx-core.o
 obj-$(CONFIG_MFD_MC13XXX_SPI)	+= mc13xxx-spi.o
@@ -89,14 +96,11 @@ obj-$(CONFIG_MCP_UCB1200)	+= ucb1x00-core.o
 obj-$(CONFIG_MFD_SMSC)        += smsc-ece1099.o
 obj-$(CONFIG_MCP_UCB1200_TS)	+= ucb1x00-ts.o
 
-obj-$(CONFIG_WCD9310_CODEC)	+= wcd9xxx-core.o wcd9xxx-irq.o \
-						wcd9xxx-slimslave.o wcd9xxx-core-resource.o
-obj-$(CONFIG_WCD9304_CODEC)	+= wcd9xxx-core.o wcd9xxx-irq.o \
-						wcd9xxx-slimslave.o wcd9xxx-core-resource.o
-obj-$(CONFIG_WCD9320_CODEC)	+= wcd9xxx-core.o wcd9xxx-irq.o wcd9xxx-slimslave.o\
-						wcd9xxx-core-resource.o
-obj-$(CONFIG_WCD9306_CODEC)	+= wcd9xxx-core.o wcd9xxx-irq.o\
-						wcd9xxx-slimslave.o wcd9xxx-core-resource.o
+obj-$(CONFIG_WCD9310_CODEC)       += wcd9xxx-core.o wcd9xxx-irq.o wcd9xxx-slimslave.o
+obj-$(CONFIG_WCD9304_CODEC)       += wcd9xxx-core.o wcd9xxx-irq.o wcd9xxx-slimslave.o
+obj-$(CONFIG_WCD9320_CODEC)       += wcd9xxx-core.o wcd9xxx-irq.o wcd9xxx-slimslave.o
+obj-$(CONFIG_WCD9306_CODEC)       += wcd9xxx-core.o wcd9xxx-irq.o wcd9xxx-slimslave.o
+
 
 ifeq ($(CONFIG_SA1100_ASSABET),y)
 obj-$(CONFIG_MCP_UCB1200)	+= ucb1x00-assabet.o
@@ -169,3 +173,12 @@ obj-$(CONFIG_MFD_LM3533)	+= lm3533-core.o lm3533-ctrlbank.o
 obj-$(CONFIG_VEXPRESS_CONFIG)	+= vexpress-config.o vexpress-sysreg.o
 obj-$(CONFIG_MFD_RETU)		+= retu-mfd.o
 obj-$(CONFIG_MFD_AS3711)	+= as3711.o
+obj-$(CONFIG_PMIC8058)		+= pmic8058.o
+obj-$(CONFIG_PMIC8901)		+= pmic8901.o
+obj-$(CONFIG_MFD_PM8038_CORE) 	+= pm8038-core.o
+obj-$(CONFIG_MFD_PM8821_IRQ) 	+= pm8821-irq.o
+obj-$(CONFIG_MFD_PM8XXX_DEBUG) 	+= pm8xxx-debug.o
+obj-$(CONFIG_MFD_PM8XXX_PWM) 	+= pm8xxx-pwm.o
+obj-$(CONFIG_MFD_PM8XXX_MISC) 	+= pm8xxx-misc.o
+obj-$(CONFIG_MFD_PM8XXX_SPK) 	+= pm8xxx-spk.o
+obj-$(CONFIG_MFD_PM8XXX_BATT_ALARM) 	+= pm8xxx-batt-alarm.o

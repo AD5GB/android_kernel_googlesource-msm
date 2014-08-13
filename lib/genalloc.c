@@ -34,8 +34,6 @@
 #include <linux/rculist.h>
 #include <linux/interrupt.h>
 #include <linux/genalloc.h>
-#include <linux/of_address.h>
-#include <linux/of_device.h>
 #include <linux/vmalloc.h>
 
 static int set_bits_ll(unsigned long *addr, unsigned long mask_to_set)
@@ -251,7 +249,7 @@ void gen_pool_destroy(struct gen_pool *pool)
 
 		end_bit = (chunk->end_addr - chunk->start_addr) >> order;
 		nbytes = sizeof(struct gen_pool_chunk) +
-				BITS_TO_LONGS(end_bit) * sizeof(long);
+				(end_bit + BITS_PER_BYTE - 1) / BITS_PER_BYTE;
 		bit = find_next_bit(chunk->bits, end_bit, 0);
 		BUG_ON(bit < end_bit);
 
@@ -278,11 +276,11 @@ EXPORT_SYMBOL(gen_pool_destroy);
  * Can not be used in NMI handler on architectures without
  * NMI-safe cmpxchg implementation.
  */
-u64 gen_pool_alloc_aligned(struct gen_pool *pool, size_t size,
+unsigned long gen_pool_alloc_aligned(struct gen_pool *pool, size_t size,
 				     unsigned alignment_order)
 {
 	struct gen_pool_chunk *chunk;
-	u64 addr = 0, align_mask = 0;
+	unsigned long addr = 0, align_mask = 0;
 	int order = pool->min_alloc_order;
 	int nbits, start_bit = 0, remain;
 
@@ -319,7 +317,7 @@ retry:
 			goto retry;
 		}
 
-		addr = chunk->start_addr + ((u64)start_bit << order);
+		addr = chunk->start_addr + ((unsigned long)start_bit << order);
 		size = nbits << pool->min_alloc_order;
 		atomic_sub(size, &chunk->avail);
 		break;

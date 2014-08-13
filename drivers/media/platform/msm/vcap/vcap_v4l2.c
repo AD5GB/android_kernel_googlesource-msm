@@ -2278,7 +2278,7 @@ static int vcap_debugfs_init(struct vcap_dev *dev)
 static void vcap_debugfs_remove(void) {}
 #endif
 
-static int __devinit vcap_probe(struct platform_device *pdev)
+static int vcap_probe(struct platform_device *pdev)
 {
 	struct vcap_dev *dev;
 	struct video_device *vfd;
@@ -2461,7 +2461,7 @@ free_dev:
 	return ret;
 }
 
-static int __devexit vcap_remove(struct platform_device *pdev)
+static int vcap_remove(struct platform_device *pdev)
 {
 	struct vcap_dev *dev = vcap_ctrl;
 	vcap_debugfs_remove();

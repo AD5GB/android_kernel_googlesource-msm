@@ -176,7 +176,7 @@ static int __init pl310_create_sysfs(struct device *dev)
 	return device_create_file(dev, &dev_attr_cache_erp);
 }
 
-static int __devinit pl310_cache_erp_probe(struct platform_device *pdev)
+static int pl310_cache_erp_probe(struct platform_device *pdev)
 {
 	struct resource *r;
 	struct pl310_drv_data *drv_data;
@@ -247,7 +247,7 @@ error:
 	return  ret;
 }
 
-static int __devexit pl310_cache_erp_remove(struct platform_device *pdev)
+static int pl310_cache_erp_remove(struct platform_device *pdev)
 {
 	struct pl310_drv_data *p = platform_get_drvdata(pdev);
 
@@ -289,7 +289,7 @@ static const struct dev_pm_ops pl310_cache_pm_ops = {
 
 static struct platform_driver pl310_cache_erp_driver = {
 	.probe = pl310_cache_erp_probe,
-	.remove = __devexit_p(pl310_cache_erp_remove),
+	.remove = pl310_cache_erp_remove,
 	.driver = {
 		.name = MODULE_NAME,
 		.owner = THIS_MODULE,

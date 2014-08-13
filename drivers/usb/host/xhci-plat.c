@@ -16,11 +16,12 @@
 #include <linux/module.h>
 #include <linux/slab.h>
 #include <linux/usb/otg.h>
-#include <linux/usb/msm_hsusb.h>
 
 #include "xhci.h"
 
 #define SYNOPSIS_DWC3_VENDOR	0x5533
+
+static struct usb_phy *phy;
 
 static void xhci_plat_quirks(struct device *dev, struct xhci_hcd *xhci)
 {
@@ -31,22 +32,13 @@ static void xhci_plat_quirks(struct device *dev, struct xhci_hcd *xhci)
 	 * here that the generic code does not try to make a pci_dev from our
 	 * dev struct in order to setup MSI
 	 */
-	xhci->quirks |= XHCI_PLAT;
+	xhci->quirks |= XHCI_BROKEN_MSI;
 
 	if (!pdata)
 		return;
-
-	if (pdata->vendor == SYNOPSIS_DWC3_VENDOR && pdata->revision < 0x230A)
+	else if (pdata->vendor == SYNOPSIS_DWC3_VENDOR &&
+			pdata->revision < 0x230A)
 		xhci->quirks |= XHCI_PORTSC_DELAY;
-
-	if (pdata->vendor == SYNOPSIS_DWC3_VENDOR && pdata->revision <= 0x250A)
-		xhci->quirks |= XHCI_TR_DEQ_ERR_QUIRK;
-
-	if (pdata->vendor == SYNOPSIS_DWC3_VENDOR && pdata->revision == 0x250A)
-		xhci->quirks |= XHCI_RESET_DELAY;
-
-	if (pdata->vendor == SYNOPSIS_DWC3_VENDOR && pdata->revision <= 0x230A)
-		xhci->quirks |= XHCI_RESET_RS_ON_RESUME_QUIRK;
 }
 
 /* called during probe() after chip reset completes */
@@ -180,7 +172,23 @@ static int xhci_plat_probe(struct platform_device *pdev)
 	if (ret)
 		goto put_usb3_hcd;
 
-	pm_runtime_put(&pdev->dev);
+	phy = devm_usb_get_phy(&pdev->dev, USB_PHY_TYPE_USB2);
+	if (phy && phy->otg) {
+		dev_dbg(&pdev->dev, "%s otg support available\n", __func__);
+		ret = otg_set_host(phy->otg, &hcd->self);
+		if (ret) {
+			dev_err(&pdev->dev, "%s otg_set_host failed\n",
+				__func__);
+			goto put_usb3_hcd;
+		}
+		pm_runtime_set_active(&pdev->dev);
+		pm_runtime_enable(&pdev->dev);
+	} else {
+		pm_runtime_no_callbacks(&pdev->dev);
+		pm_runtime_set_active(&pdev->dev);
+		pm_runtime_enable(&pdev->dev);
+		pm_runtime_get(&pdev->dev);
+	}
 
 	return 0;
 
@@ -207,7 +215,6 @@ static int xhci_plat_remove(struct platform_device *dev)
 	struct usb_hcd	*hcd = platform_get_drvdata(dev);
 	struct xhci_hcd	*xhci = hcd_to_xhci(hcd);
 
-	pm_runtime_disable(&dev->dev);
 
 	usb_remove_hcd(xhci->shared_hcd);
 	usb_put_hcd(xhci->shared_hcd);
@@ -220,7 +227,9 @@ static int xhci_plat_remove(struct platform_device *dev)
 
 	if (phy && phy->otg) {
 		otg_set_host(phy->otg, NULL);
-		usb_put_transceiver(phy);
+	} else {
+		pm_runtime_put(&dev->dev);
+		pm_runtime_disable(&dev->dev);
 	}
 
 	return 0;
@@ -288,45 +297,12 @@ static const struct dev_pm_ops xhci_msm_dev_pm_ops = {
 				xhci_msm_runtime_idle)
 };
 
-#ifdef CONFIG_PM_RUNTIME
-static int xhci_plat_runtime_suspend(struct device *dev)
-{
-	struct usb_hcd *hcd = dev_get_drvdata(dev);
-	struct xhci_hcd *xhci = hcd_to_xhci(hcd);
-
-	if (!xhci)
-		return 0;
-
-	dev_dbg(dev, "xhci-plat runtime suspend\n");
-
-	return xhci_suspend(xhci);
-}
-
-static int xhci_plat_runtime_resume(struct device *dev)
-{
-	struct usb_hcd *hcd = dev_get_drvdata(dev);
-	struct xhci_hcd *xhci = hcd_to_xhci(hcd);
-
-	if (!xhci)
-		return 0;
-
-	dev_dbg(dev, "xhci-plat runtime resume\n");
-
-	return xhci_resume(xhci, false);
-}
-#endif
-
-static const struct dev_pm_ops xhci_plat_pm_ops = {
-	SET_RUNTIME_PM_OPS(xhci_plat_runtime_suspend, xhci_plat_runtime_resume,
-			   NULL)
-};
-
 static struct platform_driver usb_xhci_driver = {
 	.probe	= xhci_plat_probe,
 	.remove	= xhci_plat_remove,
 	.driver	= {
 		.name = "xhci-hcd",
-		.pm = &xhci_plat_pm_ops,
+		.pm = &xhci_msm_dev_pm_ops,
 	},
 };
 MODULE_ALIAS("platform:xhci-hcd");

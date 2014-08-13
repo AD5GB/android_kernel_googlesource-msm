@@ -1,4 +1,4 @@
-/* Copyright (c) 2012,2013 The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -22,10 +22,9 @@
 
 #include <mach/subsystem_restart.h>
 #include <mach/msm_smsm.h>
-#include <mach/ramdump.h>
-#include <mach/msm_smem.h>
 
 #include "smd_private.h"
+#include "ramdump.h"
 #include "peripheral-loader.h"
 #include "pil-q6v4.h"
 #include "scm-pas.h"
@@ -293,7 +292,7 @@ static irqreturn_t modem_wdog_bite_irq(int irq, void *dev_id)
 	return IRQ_HANDLED;
 }
 
-static int __devinit
+static int 
 pil_q6v4_proc_init(struct q6v4_data *drv, struct platform_device *pdev, int i)
 {
 	static const char *name[2] = { "fw", "sw" };
@@ -339,7 +338,7 @@ pil_q6v4_proc_init(struct q6v4_data *drv, struct platform_device *pdev, int i)
 	return 0;
 }
 
-static int __devinit pil_q6v4_modem_driver_probe(struct platform_device *pdev)
+static int pil_q6v4_modem_driver_probe(struct platform_device *pdev)
 {
 	struct q6v4_data *drv_fw, *drv_sw;
 	struct q6v4_modem *drv;
@@ -484,7 +483,7 @@ err_pil_sw:
 	return ret;
 }
 
-static int __devexit pil_q6v4_modem_driver_exit(struct platform_device *pdev)
+static int pil_q6v4_modem_driver_exit(struct platform_device *pdev)
 {
 	struct q6v4_modem *drv = platform_get_drvdata(pdev);
 
@@ -503,7 +502,7 @@ static int __devexit pil_q6v4_modem_driver_exit(struct platform_device *pdev)
 
 static struct platform_driver pil_q6v4_modem_driver = {
 	.probe = pil_q6v4_modem_driver_probe,
-	.remove = __devexit_p(pil_q6v4_modem_driver_exit),
+	.remove = pil_q6v4_modem_driver_exit,
 	.driver = {
 		.name = "pil-q6v4-modem",
 		.owner = THIS_MODULE,

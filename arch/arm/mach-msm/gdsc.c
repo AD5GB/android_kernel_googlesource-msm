@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012-2013, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -22,9 +22,6 @@
 #include <linux/regulator/driver.h>
 #include <linux/regulator/machine.h>
 #include <linux/regulator/of_regulator.h>
-#include <linux/slab.h>
-#include <linux/clk.h>
-#include <mach/clk.h>
 
 #define PWR_ON_MASK		BIT(31)
 #define EN_REST_WAIT_MASK	(0xF << 20)
@@ -45,20 +42,11 @@ struct gdsc {
 	struct regulator_dev	*rdev;
 	struct regulator_desc	rdesc;
 	void __iomem		*gdscr;
-	struct clk		**clocks;
-	int			clock_count;
-	bool			toggle_mem;
-	bool			toggle_periph;
-	bool			toggle_logic;
-	bool			resets_asserted;
 };
 
 static int gdsc_is_enabled(struct regulator_dev *rdev)
 {
 	struct gdsc *sc = rdev_get_drvdata(rdev);
-
-	if (!sc->toggle_logic)
-		return !sc->resets_asserted;
 
 	return !!(readl_relaxed(sc->gdscr) & PWR_ON_MASK);
 }
@@ -67,38 +55,22 @@ static int gdsc_enable(struct regulator_dev *rdev)
 {
 	struct gdsc *sc = rdev_get_drvdata(rdev);
 	uint32_t regval;
-	int i, ret;
+	int ret;
 
-	if (sc->toggle_logic) {
-		regval = readl_relaxed(sc->gdscr);
-		regval &= ~SW_COLLAPSE_MASK;
-		writel_relaxed(regval, sc->gdscr);
+	regval = readl_relaxed(sc->gdscr);
+	regval &= ~SW_COLLAPSE_MASK;
+	writel_relaxed(regval, sc->gdscr);
 
-		ret = readl_tight_poll_timeout(sc->gdscr, regval,
-					regval & PWR_ON_MASK, TIMEOUT_US);
-		if (ret) {
-			dev_err(&rdev->dev, "%s enable timed out\n",
-				sc->rdesc.name);
-			return ret;
-		}
-	} else {
-		for (i = 0; i < sc->clock_count; i++)
-			clk_reset(sc->clocks[i], CLK_RESET_DEASSERT);
-		sc->resets_asserted = false;
-	}
-
-	for (i = 0; i < sc->clock_count; i++) {
-		if (sc->toggle_mem)
-			clk_set_flags(sc->clocks[i], CLKFLAG_RETAIN_MEM);
-		if (sc->toggle_periph)
-			clk_set_flags(sc->clocks[i], CLKFLAG_RETAIN_PERIPH);
+	ret = readl_tight_poll_timeout(sc->gdscr, regval, regval & PWR_ON_MASK,
+				       TIMEOUT_US);
+	if (ret) {
+		dev_err(&rdev->dev, "%s enable timed out\n", sc->rdesc.name);
+		return ret;
 	}
 
 	/*
 	 * If clocks to this power domain were already on, they will take an
 	 * additional 4 clock cycles to re-enable after the rail is enabled.
-	 * Delay to account for this. A delay is also needed to ensure clocks
-	 * are not enabled within 400ns of enabling power to the memories.
 	 */
 	udelay(1);
 
@@ -109,31 +81,16 @@ static int gdsc_disable(struct regulator_dev *rdev)
 {
 	struct gdsc *sc = rdev_get_drvdata(rdev);
 	uint32_t regval;
-	int i, ret = 0;
+	int ret;
 
-	for (i = 0; i < sc->clock_count; i++) {
-		if (sc->toggle_mem)
-			clk_set_flags(sc->clocks[i], CLKFLAG_NORETAIN_MEM);
-		if (sc->toggle_periph)
-			clk_set_flags(sc->clocks[i], CLKFLAG_NORETAIN_PERIPH);
-	}
+	regval = readl_relaxed(sc->gdscr);
+	regval |= SW_COLLAPSE_MASK;
+	writel_relaxed(regval, sc->gdscr);
 
-	if (sc->toggle_logic) {
-		regval = readl_relaxed(sc->gdscr);
-		regval |= SW_COLLAPSE_MASK;
-		writel_relaxed(regval, sc->gdscr);
-
-		ret = readl_tight_poll_timeout(sc->gdscr, regval,
-					       !(regval & PWR_ON_MASK),
-						TIMEOUT_US);
-		if (ret)
-			dev_err(&rdev->dev, "%s disable timed out\n",
-				sc->rdesc.name);
-	} else {
-		for (i = 0; i < sc->clock_count; i++)
-			clk_reset(sc->clocks[i], CLK_RESET_ASSERT);
-		sc->resets_asserted = true;
-	}
+	ret = readl_tight_poll_timeout(sc->gdscr, regval,
+				       !(regval & PWR_ON_MASK), TIMEOUT_US);
+	if (ret)
+		dev_err(&rdev->dev, "%s disable timed out\n", sc->rdesc.name);
 
 	return ret;
 }
@@ -144,15 +101,15 @@ static struct regulator_ops gdsc_ops = {
 	.disable = gdsc_disable,
 };
 
-static int __devinit gdsc_probe(struct platform_device *pdev)
+static int gdsc_probe(struct platform_device *pdev)
 {
 	static atomic_t gdsc_count = ATOMIC_INIT(-1);
+	struct regulator_config reg_config = {};
 	struct regulator_init_data *init_data;
 	struct resource *res;
 	struct gdsc *sc;
 	uint32_t regval;
-	bool retain_mem, retain_periph;
-	int i, ret;
+	int ret;
 
 	sc = devm_kzalloc(&pdev->dev, sizeof(struct gdsc), GFP_KERNEL);
 	if (sc == NULL)
@@ -177,34 +134,6 @@ static int __devinit gdsc_probe(struct platform_device *pdev)
 	if (sc->gdscr == NULL)
 		return -ENOMEM;
 
-	sc->clock_count = of_property_count_strings(pdev->dev.of_node,
-					    "qcom,clock-names");
-	if (sc->clock_count == -EINVAL) {
-		sc->clock_count = 0;
-	} else if (IS_ERR_VALUE(sc->clock_count)) {
-		dev_err(&pdev->dev, "Failed to get clock names\n");
-		return -EINVAL;
-	}
-
-	sc->clocks = devm_kzalloc(&pdev->dev,
-			sizeof(struct clk *) * sc->clock_count, GFP_KERNEL);
-	if (!sc->clocks)
-		return -ENOMEM;
-	for (i = 0; i < sc->clock_count; i++) {
-		const char *clock_name;
-		of_property_read_string_index(pdev->dev.of_node,
-					      "qcom,clock-names", i,
-					      &clock_name);
-		sc->clocks[i] = devm_clk_get(&pdev->dev, clock_name);
-		if (IS_ERR(sc->clocks[i])) {
-			int rc = PTR_ERR(sc->clocks[i]);
-			if (rc != -EPROBE_DEFER)
-				dev_err(&pdev->dev, "Failed to get %s\n",
-					clock_name);
-			return rc;
-		}
-	}
-
 	sc->rdesc.id = atomic_inc_return(&gdsc_count);
 	sc->rdesc.ops = &gdsc_ops;
 	sc->rdesc.type = REGULATOR_VOLTAGE;
@@ -223,41 +152,11 @@ static int __devinit gdsc_probe(struct platform_device *pdev)
 	regval |= EN_REST_WAIT_VAL | EN_FEW_WAIT_VAL | CLK_DIS_WAIT_VAL;
 	writel_relaxed(regval, sc->gdscr);
 
-	retain_mem = of_property_read_bool(pdev->dev.of_node,
-					    "qcom,retain-mem");
-	sc->toggle_mem = !retain_mem;
-	retain_periph = of_property_read_bool(pdev->dev.of_node,
-					    "qcom,retain-periph");
-	sc->toggle_periph = !retain_periph;
-	sc->toggle_logic = !of_property_read_bool(pdev->dev.of_node,
-						"qcom,skip-logic-collapse");
-	if (!sc->toggle_logic) {
-		regval &= ~SW_COLLAPSE_MASK;
-		writel_relaxed(regval, sc->gdscr);
-
-		ret = readl_tight_poll_timeout(sc->gdscr, regval,
-					regval & PWR_ON_MASK, TIMEOUT_US);
-		if (ret) {
-			dev_err(&pdev->dev, "%s enable timed out\n",
-				sc->rdesc.name);
-			return ret;
-		}
-	}
-
-	for (i = 0; i < sc->clock_count; i++) {
-		if (retain_mem || (regval & PWR_ON_MASK))
-			clk_set_flags(sc->clocks[i], CLKFLAG_RETAIN_MEM);
-		else
-			clk_set_flags(sc->clocks[i], CLKFLAG_NORETAIN_MEM);
-
-		if (retain_periph || (regval & PWR_ON_MASK))
-			clk_set_flags(sc->clocks[i], CLKFLAG_RETAIN_PERIPH);
-		else
-			clk_set_flags(sc->clocks[i], CLKFLAG_NORETAIN_PERIPH);
-	}
-
-	sc->rdev = regulator_register(&sc->rdesc, &pdev->dev, init_data, sc,
-				      pdev->dev.of_node);
+	reg_config.dev = &pdev->dev;
+	reg_config.init_data = init_data;
+	reg_config.driver_data = sc;
+	reg_config.of_node = pdev->dev.of_node;
+	sc->rdev = regulator_register(&sc->rdesc, &reg_config);
 	if (IS_ERR(sc->rdev)) {
 		dev_err(&pdev->dev, "regulator_register(\"%s\") failed.\n",
 			sc->rdesc.name);
@@ -267,7 +166,7 @@ static int __devinit gdsc_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static int __devexit gdsc_remove(struct platform_device *pdev)
+static int gdsc_remove(struct platform_device *pdev)
 {
 	struct gdsc *sc = platform_get_drvdata(pdev);
 	regulator_unregister(sc->rdev);
@@ -281,7 +180,7 @@ static struct of_device_id gdsc_match_table[] = {
 
 static struct platform_driver gdsc_driver = {
 	.probe		= gdsc_probe,
-	.remove		= __devexit_p(gdsc_remove),
+	.remove		= gdsc_remove,
 	.driver		= {
 		.name		= "gdsc",
 		.of_match_table = gdsc_match_table,

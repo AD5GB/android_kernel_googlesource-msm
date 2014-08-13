@@ -50,7 +50,7 @@ static int msm_pmic_led_probe(struct platform_device *pdev)
 	return rc;
 }
 
-static int __devexit msm_pmic_led_remove(struct platform_device *pdev)
+static int msm_pmic_led_remove(struct platform_device *pdev)
 {
 	led_classdev_unregister(&msm_kp_bl_led);
 
@@ -79,7 +79,7 @@ static int msm_pmic_led_resume(struct platform_device *dev)
 
 static struct platform_driver msm_pmic_led_driver = {
 	.probe		= msm_pmic_led_probe,
-	.remove		= __devexit_p(msm_pmic_led_remove),
+	.remove		= msm_pmic_led_remove,
 	.suspend	= msm_pmic_led_suspend,
 	.resume		= msm_pmic_led_resume,
 	.driver		= {

@@ -233,6 +233,28 @@ struct mmc_wr_pack_stats {
 	bool print_in_read;
 };
 
+enum mmc_packed_stop_reasons {
+	EXCEEDS_SEGMENTS = 0,
+	EXCEEDS_SECTORS,
+	WRONG_DATA_DIR,
+	FLUSH_OR_DISCARD,
+	EMPTY_QUEUE,
+	REL_WRITE,
+	THRESHOLD,
+	LARGE_SEC_ALIGN,
+	RANDOM,
+	FUA,
+	MAX_REASONS,
+};
+
+struct mmc_wr_pack_stats {
+	u32 *packing_events;
+	u32 pack_stop_reason[MAX_REASONS];
+	spinlock_t lock;
+	bool enabled;
+	bool print_in_read;
+};
+
 /* The number of MMC physical partitions.  These consist of:
  * boot partitions (2), general purpose partitions (4) in MMC v4.4.
  */
@@ -283,6 +305,7 @@ struct mmc_bkops_stats {
  *        percentage of sectors that should issue check for
  *        BKOPS need
  * @bkops_stats: BKOPS statistics
+ * @poll_for_completion:	Poll on BKOPS completion
  * @cancel_delayed_work: A flag to indicate if the delayed work
  *        should be cancelled
  * @sectors_changed:  number of  sectors written or
@@ -300,6 +323,10 @@ struct mmc_bkops_info {
  * is idle.
  */
 #define MMC_IDLE_BKOPS_TIME_MS 200
+	struct work_struct	poll_for_completion;
+/* Polling timeout and interval for waiting on non-blocking BKOPs completion */
+#define BKOPS_COMPLETION_POLLING_TIMEOUT_MS (4 * 60 * 1000) /* in ms */
+#define BKOPS_COMPLETION_POLLING_INTERVAL_MS 1000 /* in ms */
 	bool			cancel_delayed_work;
 	unsigned int		sectors_changed;
 /*
@@ -353,11 +380,6 @@ struct mmc_card {
 #define MMC_QUIRK_SEC_ERASE_TRIM_BROKEN (1<<10)	/* Skip secure for erase/trim */
 						/* byte mode */
 #define MMC_QUIRK_INAND_DATA_TIMEOUT  (1<<11)   /* For incorrect data timeout */
-/* To avoid eMMC device getting broken permanently due to HPI feature */
-#define MMC_QUIRK_BROKEN_HPI (1 << 12)
- /* Skip data-timeout advertised by card */
-#define MMC_QUIRK_BROKEN_DATA_TIMEOUT	(1<<13)
-#define MMC_QUIRK_CACHE_DISABLE (1 << 14)       /* prevent cache enable */
 
 	unsigned int		erase_size;	/* erase size in sectors */
  	unsigned int		erase_shift;	/* if erase unit is power 2 */
@@ -396,9 +418,6 @@ struct mmc_card {
 
 	struct device_attribute rpm_attrib;
 	unsigned int		idle_timeout;
-	struct notifier_block        reboot_notify;
-	bool issue_long_pon;
-	u8 *cached_ext_csd;
 };
 
 /*
@@ -653,6 +672,5 @@ extern void mmc_fixup_device(struct mmc_card *card,
 extern struct mmc_wr_pack_stats *mmc_blk_get_packed_statistics(
 			struct mmc_card *card);
 extern void mmc_blk_init_packed_statistics(struct mmc_card *card);
-extern void mmc_blk_disable_wr_packing(struct mmc_queue *mq);
-extern int mmc_send_long_pon(struct mmc_card *card);
+
 #endif /* LINUX_MMC_CARD_H */

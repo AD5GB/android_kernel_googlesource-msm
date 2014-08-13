@@ -66,7 +66,7 @@ static void *ocmem_base;
 #define NUM_PORTS_SHIFT (0)
 #define GFX_MPU_SHIFT (12)
 
-#define NUM_MACROS_MASK (0x3F << 8)
+#define NUM_MACROS_MASK (0xF << 8)
 #define NUM_MACROS_SHIFT (8)
 
 #define INTERLEAVING_MASK (0x1 << 17)
@@ -97,11 +97,8 @@ static void *ocmem_base;
 #define REGION_SLEEP_PERI_ON 0x00007777
 
 #define REGION_DEFAULT_OFF REGION_SLEEP_NO_RETENTION
-#define REGION_DEFAULT_ON REGION_FORCE_CORE_ON
+#define REGION_DEFAULT_ON REGION_NORMAL_PASSTHROUGH
 #define REGION_DEFAULT_RETENTION REGION_SLEEP_PERI_OFF
-
-#define REGION_STAGING_SET(x) (REGION_SLEEP_PERI_OFF & (0xF << (x * 0x4)))
-#define REGION_ON_SET(x) (REGION_DEFAULT_OFF & (0xF << (x * 0x4)))
 
 enum rpm_macro_state {
 	rpm_macro_off = 0x0,
@@ -198,51 +195,6 @@ static int read_region_state(unsigned region_num)
 
 	return state;
 }
-#ifndef CONFIG_MSM_OCMEM_POWER_DISABLE
-static int commit_region_staging(unsigned region_num, unsigned start_m,
-				unsigned new_state)
-{
-	int rc = -1;
-	unsigned state = 0x0;
-	unsigned read_state = 0x0;
-	unsigned curr_state = 0x0;
-
-	if (region_num >= num_regions)
-		return -EINVAL;
-
-	if (rpm_power_control)
-		return 0;
-	else {
-		if (new_state != REGION_DEFAULT_OFF) {
-			curr_state = read_region_state(region_num);
-			state = curr_state | REGION_STAGING_SET(start_m);
-			rc = ocmem_write(state,
-				ocmem_base + PSCGC_CTL_n(region_num));
-			/* Barrier to commit the region state */
-			mb();
-			read_state = read_region_state(region_num);
-			if (new_state == REGION_DEFAULT_ON) {
-				curr_state = read_region_state(region_num);
-				state = curr_state ^ REGION_ON_SET(start_m);
-				rc = ocmem_write(state,
-					ocmem_base + PSCGC_CTL_n(region_num));
-				/* Barrier to commit the region state */
-				mb();
-				read_state = read_region_state(region_num);
-			}
-		} else {
-			curr_state = read_region_state(region_num);
-			state = curr_state ^ REGION_STAGING_SET(start_m);
-			rc = ocmem_write(state,
-				ocmem_base + PSCGC_CTL_n(region_num));
-			/* Barrier to commit the region state */
-			mb();
-			read_state = read_region_state(region_num);
-		}
-	}
-	return 0;
-}
-#endif
 
 /* Returns the current state of a OCMEM macro that belongs to a region */
 static int read_macro_state(unsigned region_num, unsigned macro_num)
@@ -759,7 +711,7 @@ unlock_fail:
 	return -EINVAL;
 }
 
-#if defined(CONFIG_MSM_OCMEM_DEBUG_ALWAYS_ON)
+#if defined(CONFIG_MSM_OCMEM_POWER_DISABLE)
 static int ocmem_core_set_default_state(void)
 {
 	int rc = 0;
@@ -775,14 +727,7 @@ static int ocmem_core_set_default_state(void)
 
 	return 0;
 }
-#else
-static int ocmem_core_set_default_state(void)
-{
-	return 0;
-}
-#endif
 
-#if defined(CONFIG_MSM_OCMEM_POWER_DISABLE)
 /* Initializes a region to be turned ON in wide mode */
 static int ocmem_region_set_default_state(unsigned int r_num)
 {
@@ -807,9 +752,15 @@ static int ocmem_region_set_default_state(unsigned int region_num)
 {
 	return 0;
 }
+
+static int ocmem_core_set_default_state(void)
+{
+	return 0;
+}
 #endif
 
 #if defined(CONFIG_MSM_OCMEM_POWER_DEBUG)
+
 static int read_hw_region_state(unsigned region_num)
 {
 	int state;
@@ -997,11 +948,9 @@ static int switch_power_state(int id, unsigned long offset, unsigned long len,
 			apply_macro_vote(id, i, j,
 				hw_macro_state(new_state));
 			aggregate_macro_state(i, j);
-			commit_region_staging(i, j, new_state);
 		}
 		aggregate_region_state(i);
-		if (rpm_power_control)
-			commit_region_state(i);
+		commit_region_state(i);
 		len -= region_size;
 
 		/* If we voted ON/retain the banks must never be OFF */

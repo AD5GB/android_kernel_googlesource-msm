@@ -36,6 +36,9 @@
 #define MIN_LATENCY_MULTIPLIER			(20)
 #define TRANSITION_LATENCY_LIMIT		(10 * 1000 * 1000)
 
+#define POWERSAVE_BIAS_MAXLEVEL			(1000)
+#define POWERSAVE_BIAS_MINLEVEL			(-1000)
+
 /* Ondemand Sampling types */
 enum {OD_NORMAL_SAMPLE, OD_SUB_SAMPLE};
 
@@ -152,6 +155,8 @@ struct od_cpu_dbs_info_s {
 	unsigned int freq_lo_jiffies;
 	unsigned int freq_hi_jiffies;
 	unsigned int rate_mult;
+	unsigned int prev_load;
+	unsigned int max_load;
 	unsigned int sample_type:1;
 };
 
@@ -168,7 +173,13 @@ struct od_dbs_tuners {
 	unsigned int sampling_rate;
 	unsigned int sampling_down_factor;
 	unsigned int up_threshold;
-	unsigned int powersave_bias;
+	unsigned int up_threshold_multi_core;
+	unsigned int down_differential_multi_core;
+	unsigned int optimal_freq;
+	unsigned int up_threshold_any_cpu_load;
+	unsigned int sync_freq;
+	unsigned int adj_up_threshold;
+	int powersave_bias;
 	unsigned int io_is_busy;
 };
 
@@ -224,7 +235,8 @@ struct od_ops {
 	void (*powersave_bias_init_cpu)(int cpu);
 	unsigned int (*powersave_bias_target)(struct cpufreq_policy *policy,
 			unsigned int freq_next, unsigned int relation);
-	void (*freq_increase)(struct cpufreq_policy *policy, unsigned int freq);
+	void (*freq_increase)(struct cpufreq_policy *p, unsigned int freq);
+	struct input_handler *input_handler;
 };
 
 struct cs_ops {
@@ -260,12 +272,12 @@ static ssize_t show_sampling_rate_min_gov_pol				\
 void dbs_check_cpu(struct dbs_data *dbs_data, int cpu);
 bool need_load_eval(struct cpu_dbs_common_info *cdbs,
 		unsigned int sampling_rate);
-int cpufreq_governor_dbs(struct cpufreq_policy *policy,
-		struct common_dbs_data *cdata, unsigned int event);
-void gov_queue_work(struct dbs_data *dbs_data, struct cpufreq_policy *policy,
-		unsigned int delay, bool all_cpus);
-void od_register_powersave_bias_handler(unsigned int (*f)
-		(struct cpufreq_policy *, unsigned int, unsigned int),
-		unsigned int powersave_bias);
-void od_unregister_powersave_bias_handler(void);
+void dbs_timer_init(struct dbs_data *dbs_data, int cpu,
+				  unsigned int sampling_rate);
+void dbs_timer_exit(struct dbs_data *dbs_data, int cpu);
+int ondemand_powersave_bias_setspeed(struct cpufreq_policy *policy,
+				     struct cpufreq_policy *altpolicy,
+				     int level);
+int cpufreq_governor_dbs(struct dbs_data *dbs_data,
+		struct cpufreq_policy *policy, unsigned int event);
 #endif /* _CPUFREQ_GOVERNOR_H */

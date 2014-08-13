@@ -58,8 +58,6 @@ struct ci13xxx_ep {
 	struct ci13xxx				*ci;
 	spinlock_t				*lock;
 	struct dma_pool				*td_pool;
-	struct ci13xxx_td			*last_zptr;
-	dma_addr_t				last_zdma;
 	unsigned long dTD_update_fail_count;
 	unsigned long			      prime_fail_count;
 	int				      prime_timer_count;
@@ -191,8 +189,7 @@ struct ci13xxx {
 	unsigned long dTD_update_fail_count;
 	struct usb_phy			*transceiver;
 	struct usb_hcd			*hcd;
-	struct dentry			*debugfs;
-	bool                      skip_flush; /* skip flushing remaining EP */
+	bool                      skip_flush; /* skip flushing remaining EP
 };
 
 static inline struct ci_role_driver *ci_role(struct ci13xxx *ci)

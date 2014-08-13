@@ -2782,12 +2782,12 @@ static int mmc_blk_issue_rq(struct mmc_queue *mq, struct request *req)
 	struct mmc_host *host = card->host;
 	unsigned long flags;
 
-	if (req && !mq->mqrq_prev->req) {
-		mmc_rpm_hold(host, &card->dev);
 #ifdef CONFIG_MMC_BLOCK_DEFERRED_RESUME
 	if (mmc_bus_needs_resume(card->host))
 		mmc_resume_bus(card->host);
 #endif
+
+	if (req && !mq->mqrq_prev->req)
 		/* claim host only for the first request */
 		mmc_claim_host(card->host);
 		if (card->ext_csd.bkops_en)
@@ -3327,40 +3327,6 @@ static void mmc_blk_remove(struct mmc_card *card)
 #ifdef CONFIG_MMC_BLOCK_DEFERRED_RESUME
 	mmc_set_bus_resume_policy(card->host, 0);
 #endif
-}
-
-static void mmc_blk_shutdown(struct mmc_card *card)
-{
-	struct mmc_blk_data *part_md;
-	struct mmc_blk_data *md = mmc_get_drvdata(card);
-	int rc;
-
-	/* Silent the block layer */
-	if (md) {
-		rc = mmc_queue_suspend(&md->queue, 1);
-		if (rc)
-			goto suspend_error;
-		list_for_each_entry(part_md, &md->part, part) {
-			rc = mmc_queue_suspend(&part_md->queue, 1);
-			if (rc)
-				goto suspend_error;
-		}
-	}
-
-	/* send power off notification */
-	if (mmc_card_mmc(card)) {
-		mmc_rpm_hold(card->host, &card->dev);
-		mmc_claim_host(card->host);
-		mmc_stop_bkops(card);
-		mmc_release_host(card->host);
-		mmc_send_long_pon(card);
-		mmc_rpm_release(card->host, &card->dev);
-	}
-	return;
-
-suspend_error:
-	pr_err("%s: mmc_queue_suspend returned error = %d",
-			mmc_hostname(card->host), rc);
 }
 
 #ifdef CONFIG_PM

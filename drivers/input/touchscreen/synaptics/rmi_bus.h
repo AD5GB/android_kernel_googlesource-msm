@@ -30,3 +30,4 @@
 extern struct bus_type rmi_bus_type;
 
 #endif
+

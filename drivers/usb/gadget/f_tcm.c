@@ -27,6 +27,8 @@
 
 #include "f_tcm.h"
 
+USB_GADGET_COMPOSITE_OPTIONS();
+
 static struct target_fabric_configfs *usbg_fabric_configfs;
 static int (*usbg_connect_cb) (bool connect);
 
@@ -273,7 +275,7 @@ static int bot_send_write_request(struct usbg_cmd *cmd)
 		pr_err("%s(%d)\n", __func__, __LINE__);
 
 	wait_for_completion(&cmd->write_complete);
-	transport_generic_process_write(se_cmd);
+	target_execute_cmd(se_cmd);
 cleanup:
 	return ret;
 }
@@ -704,7 +706,7 @@ static int uasp_send_write_request(struct usbg_cmd *cmd)
 	}
 
 	wait_for_completion(&cmd->write_complete);
-	transport_generic_process_write(se_cmd);
+	target_execute_cmd(se_cmd);
 cleanup:
 	return ret;
 }
@@ -1044,16 +1046,20 @@ static void usbg_cmd_work(struct work_struct *work)
 				tv_nexus->tvn_se_sess->se_tpg->se_tpg_tfo,
 				tv_nexus->tvn_se_sess, cmd->data_len, DMA_NONE,
 				cmd->prio_attr, cmd->sense_iu.sense);
-
-		transport_send_check_condition_and_sense(se_cmd,
-				TCM_UNSUPPORTED_SCSI_OPCODE, 1);
-		usbg_cleanup_cmd(cmd);
-		return;
+		goto out;
 	}
 
-	target_submit_cmd(se_cmd, tv_nexus->tvn_se_sess,
+	if (target_submit_cmd(se_cmd, tv_nexus->tvn_se_sess,
 			cmd->cmd_buf, cmd->sense_iu.sense, cmd->unpacked_lun,
-			0, cmd->prio_attr, dir, TARGET_SCF_UNKNOWN_SIZE);
+			0, cmd->prio_attr, dir, TARGET_SCF_UNKNOWN_SIZE) < 0)
+		goto out;
+
+	return;
+
+out:
+	transport_send_check_condition_and_sense(se_cmd,
+			TCM_UNSUPPORTED_SCSI_OPCODE, 1);
+	usbg_cleanup_cmd(cmd);
 }
 
 static int usbg_submit_command(struct f_uas *fu,
@@ -1156,16 +1162,20 @@ static void bot_cmd_work(struct work_struct *work)
 				tv_nexus->tvn_se_sess->se_tpg->se_tpg_tfo,
 				tv_nexus->tvn_se_sess, cmd->data_len, DMA_NONE,
 				cmd->prio_attr, cmd->sense_iu.sense);
-
-		transport_send_check_condition_and_sense(se_cmd,
-				TCM_UNSUPPORTED_SCSI_OPCODE, 1);
-		usbg_cleanup_cmd(cmd);
-		return;
+		goto out;
 	}
 
-	target_submit_cmd(se_cmd, tv_nexus->tvn_se_sess,
+	if (target_submit_cmd(se_cmd, tv_nexus->tvn_se_sess,
 			cmd->cmd_buf, cmd->sense_iu.sense, cmd->unpacked_lun,
-			cmd->data_len, cmd->prio_attr, dir, 0);
+			cmd->data_len, cmd->prio_attr, dir, 0) < 0)
+		goto out;
+
+	return;
+
+out:
+	transport_send_check_condition_and_sense(se_cmd,
+				TCM_UNSUPPORTED_SCSI_OPCODE, 1);
+	usbg_cleanup_cmd(cmd);
 }
 
 static int bot_submit_command(struct f_uas *fu,
@@ -1358,7 +1368,7 @@ static struct se_node_acl *usbg_alloc_fabric_acl(struct se_portal_group *se_tpg)
 
 	nacl = kzalloc(sizeof(struct usbg_nacl), GFP_KERNEL);
 	if (!nacl) {
-		printk(KERN_ERR "Unable to alocate struct usbg_nacl\n");
+		printk(KERN_ERR "Unable to allocate struct usbg_nacl\n");
 		return NULL;
 	}
 
@@ -1377,19 +1387,6 @@ static void usbg_release_fabric_acl(
 static u32 usbg_tpg_get_inst_index(struct se_portal_group *se_tpg)
 {
 	return 1;
-}
-
-static int usbg_new_cmd(struct se_cmd *se_cmd)
-{
-	struct usbg_cmd *cmd = container_of(se_cmd, struct usbg_cmd,
-			se_cmd);
-	int ret;
-
-	ret = target_setup_cmd_from_cdb(se_cmd, cmd->cmd_buf);
-	if (ret)
-		return ret;
-
-	return transport_generic_map_mem_to_cmd(se_cmd, NULL, 0, NULL, 0);
 }
 
 static void usbg_cmd_release(struct kref *ref)
@@ -1455,16 +1452,6 @@ static int usbg_get_cmd_state(struct se_cmd *se_cmd)
 }
 
 static int usbg_queue_tm_rsp(struct se_cmd *se_cmd)
-{
-	return 0;
-}
-
-static u16 usbg_set_fabric_sense_len(struct se_cmd *se_cmd, u32 sense_length)
-{
-	return 0;
-}
-
-static u16 usbg_get_fabric_sense_len(void)
 {
 	return 0;
 }
@@ -1798,9 +1785,10 @@ static int tcm_usbg_drop_nexus(struct usbg_tpg *tpg)
 	tpg->tpg_nexus = NULL;
 
 	kfree(tv_nexus);
+	ret = 0;
 out:
 	mutex_unlock(&tpg->tpg_mutex);
-	return 0;
+	return ret;
 }
 
 static ssize_t tcm_usbg_tpg_store_nexus(
@@ -1816,7 +1804,7 @@ static ssize_t tcm_usbg_tpg_store_nexus(
 		ret = tcm_usbg_drop_nexus(tpg);
 		return (!ret) ? count : ret;
 	}
-	if (strlen(page) > USBG_NAMELEN) {
+	if (strlen(page) >= USBG_NAMELEN) {
 		pr_err("Emulated NAA Sas Address: %s, exceeds"
 				" max: %d\n", page, USBG_NAMELEN);
 		return -EINVAL;
@@ -1888,7 +1876,6 @@ static struct target_core_fabric_ops usbg_ops = {
 	.tpg_alloc_fabric_acl		= usbg_alloc_fabric_acl,
 	.tpg_release_fabric_acl		= usbg_release_fabric_acl,
 	.tpg_get_inst_index		= usbg_tpg_get_inst_index,
-	.new_cmd_map			= usbg_new_cmd,
 	.release_cmd			= usbg_release_cmd,
 	.shutdown_session		= usbg_shutdown_session,
 	.close_session			= usbg_close_session,
@@ -1902,8 +1889,6 @@ static struct target_core_fabric_ops usbg_ops = {
 	.queue_data_in			= usbg_send_read_response,
 	.queue_status			= usbg_send_status_response,
 	.queue_tm_rsp			= usbg_queue_tm_rsp,
-	.get_fabric_sense_len		= usbg_get_fabric_sense_len,
-	.set_fabric_sense_len		= usbg_set_fabric_sense_len,
 	.check_stop_free		= usbg_check_stop_free,
 
 	.fabric_make_wwn		= usbg_make_tport,
@@ -1963,13 +1948,11 @@ static void usbg_deregister_configfs(void)
 static struct usb_interface_descriptor bot_intf_desc = {
 	.bLength =              sizeof(bot_intf_desc),
 	.bDescriptorType =      USB_DT_INTERFACE,
-	.bAlternateSetting =	0,
 	.bNumEndpoints =        2,
 	.bAlternateSetting =	USB_G_ALT_INT_BBB,
 	.bInterfaceClass =      USB_CLASS_MASS_STORAGE,
 	.bInterfaceSubClass =   USB_SC_SCSI,
 	.bInterfaceProtocol =   USB_PR_BULK,
-	/* .iInterface =           DYNAMIC */
 };
 
 static struct usb_interface_descriptor uasp_intf_desc = {
@@ -1980,7 +1963,6 @@ static struct usb_interface_descriptor uasp_intf_desc = {
 	.bInterfaceClass =	USB_CLASS_MASS_STORAGE,
 	.bInterfaceSubClass =	USB_SC_SCSI,
 	.bInterfaceProtocol =	USB_PR_UAS,
-	/* .iInterface =           DYNAMIC */
 };
 
 static struct usb_endpoint_descriptor uasp_bi_desc = {
@@ -2149,6 +2131,7 @@ static struct usb_descriptor_header *uasp_fs_function_desc[] = {
 	(struct usb_descriptor_header *) &uasp_status_pipe_desc,
 	(struct usb_descriptor_header *) &uasp_fs_cmd_desc,
 	(struct usb_descriptor_header *) &uasp_cmd_pipe_desc,
+	NULL,
 };
 
 static struct usb_descriptor_header *uasp_hs_function_desc[] = {
@@ -2192,9 +2175,9 @@ static struct usb_descriptor_header *uasp_ss_function_desc[] = {
 };
 
 static struct usb_string tcm_us_strings[] = {
-	[0].s = "Bulk Only Transport",
-	[1].s = "USB Attached SCSI",
-	{  } /* end of list */
+	[0].s		= "Bulk Only Transport",
+	[1].s		= "USB Attached SCSI",
+	{ }, /* end of list */
 };
 
 static struct usb_gadget_strings tcm_stringtab = {
@@ -2221,6 +2204,7 @@ static int usbg_bind(struct usb_configuration *c, struct usb_function *f)
 	struct usb_gadget	*gadget = c->cdev->gadget;
 	struct usb_ep		*ep;
 	int			iface;
+	int			ret;
 
 	iface = usb_interface_id(c, f);
 	if (iface < 0)
@@ -2271,6 +2255,11 @@ static int usbg_bind(struct usb_configuration *c, struct usb_function *f)
 		uasp_ss_status_desc.bEndpointAddress;
 	uasp_fs_cmd_desc.bEndpointAddress = uasp_ss_cmd_desc.bEndpointAddress;
 
+	ret = usb_assign_descriptors(f, uasp_fs_function_desc,
+			uasp_hs_function_desc, uasp_ss_function_desc);
+	if (ret)
+		goto ep_fail;
+
 	return 0;
 ep_fail:
 	pr_err("Can't claim all required eps\n");
@@ -2286,6 +2275,7 @@ static void usbg_unbind(struct usb_configuration *c, struct usb_function *f)
 {
 	struct f_uas *fu = to_f_uas(f);
 
+	usb_free_all_descriptors(f);
 	kfree(fu);
 }
 
@@ -2366,9 +2356,6 @@ static int tcm_bind_config(struct usb_configuration *c)
 	if (!fu)
 		return -ENOMEM;
 	fu->function.name = "Target Function";
-	fu->function.descriptors = uasp_fs_function_desc;
-	fu->function.hs_descriptors = uasp_hs_function_desc;
-	fu->function.ss_descriptors = uasp_ss_function_desc;
 	fu->function.strings = tcm_strings;
 	fu->function.bind = usbg_bind;
 	fu->function.unbind = usbg_unbind;

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2013, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2011-2012, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -19,8 +19,8 @@
 #define KRAIT_EVT_PREFIX 1
 #define KRAIT_VENUMEVT_PREFIX 2
 /*
-   event encoding:                nrccg
-   n  = prefix (1 for Krait L1) (2 for Krait VeNum events)
+   event encoding:                prccg
+   p  = prefix (1 for Krait L1) (2 for Krait VeNum events)
    r  = register
    cc = code
    g  = group
@@ -28,6 +28,9 @@
 
 #define KRAIT_L1_ICACHE_ACCESS 0x10011
 #define KRAIT_L1_ICACHE_MISS 0x10010
+
+#define KRAIT_P1_L1_ITLB_ACCESS 0x121b2
+#define KRAIT_P1_L1_DTLB_ACCESS 0x121c0
 
 #define KRAIT_P2_L1_ITLB_ACCESS 0x12222
 #define KRAIT_P2_L1_DTLB_ACCESS 0x12210
@@ -37,15 +40,24 @@
 
 #define COUNT_MASK	0xffffffff
 
-u32 evt_type_base[4] = {0xcc, 0xd0, 0xd4, 0xd8};
+u32 evt_type_base[][4] = {
+	{0x4c, 0x50, 0x54},		/* Pass 1 */
+	{0xcc, 0xd0, 0xd4, 0xd8},	/* Pass 2 */
+};
+
+#define KRAIT_MIDR_PASS1 0x510F04D0
+#define KRAIT_MIDR_MASK 0xfffffff0
 
 /*
  * This offset is used to calculate the index
- * into evt_type_base[] and krait_functions[]
+ * into evt_type_base[][] and krait_functions[]
  */
 #define VENUM_BASE_OFFSET 3
 
-#define KRAIT_MAX_L1_REG 3
+/* Krait Pass 1 has 3 groups, Pass 2 has 4 */
+static u32 krait_ver, evt_index;
+static u32 krait_max_l1_reg;
+
 
 /*
  * Every 4 bytes represents a prefix.
@@ -207,14 +219,14 @@ static unsigned int get_krait_evtinfo(unsigned int krait_evt_type,
 	code = (krait_evt_type & 0x00FF0) >> 4;
 	group = krait_evt_type & 0x0000F;
 
-	if ((group > 3) || (reg > KRAIT_MAX_L1_REG))
+	if ((group > 3) || (reg > krait_max_l1_reg))
 		return -EINVAL;
 
 	if (prefix != KRAIT_EVT_PREFIX && prefix != KRAIT_VENUMEVT_PREFIX)
 		return -EINVAL;
 
 	if (prefix == KRAIT_VENUMEVT_PREFIX) {
-		if (code & 0xe0)
+		if ((code & 0xe0) || krait_ver != 2)
 			return -EINVAL;
 		else
 			reg += VENUM_BASE_OFFSET;
@@ -222,7 +234,7 @@ static unsigned int get_krait_evtinfo(unsigned int krait_evt_type,
 
 	evtinfo->group_setval = 0x80000000 | (code << (group * 8));
 	evtinfo->groupcode = reg;
-	evtinfo->armv7_evt_type = evt_type_base[reg] | group;
+	evtinfo->armv7_evt_type = evt_type_base[evt_index][reg] | group;
 
 	return evtinfo->armv7_evt_type;
 }
@@ -564,32 +576,20 @@ static int msm_clear_ev_constraint(struct perf_event *event)
 	return 1;
 }
 
-static DEFINE_PER_CPU(u32, krait_pm_pmactlr);
-
-static void krait_save_pm_registers(void *hcpu)
-{
-	u32 val;
-	u32 cpu = (int)hcpu;
-
-	/* Read PMACTLR */
-	asm volatile("mrc p15, 0, %0, c9, c15, 5" : "=r" (val));
-	per_cpu(krait_pm_pmactlr, cpu) = val;
-
-	armv7pmu_save_pm_registers(hcpu);
-}
-
-static void krait_restore_pm_registers(void *hcpu)
-{
-	u32 val;
-	u32 cpu = (int)hcpu;
-
-	val = per_cpu(krait_pm_pmactlr, cpu);
-	if (val != 0)
-		/* Restore PMACTLR */
-		asm volatile("mcr p15, 0, %0, c9, c15, 5" : : "r" (val));
-
-	armv7pmu_restore_pm_registers(hcpu);
-}
+static struct arm_pmu krait_pmu = {
+	.handle_irq		= armv7pmu_handle_irq,
+	.enable			= krait_pmu_enable_event,
+	.disable		= krait_pmu_disable_event,
+	.read_counter		= armv7pmu_read_counter,
+	.write_counter		= armv7pmu_write_counter,
+	.get_event_idx		= armv7pmu_get_event_idx,
+	.start			= armv7pmu_start,
+	.stop			= armv7pmu_stop,
+	.reset			= krait_pmu_reset,
+	.test_set_event_constraints	= msm_test_set_ev_constraint,
+	.clear_event_constraints	= msm_clear_ev_constraint,
+	.max_period		= (1LLU << 32) - 1,
+};
 
 /* NRCCG format for perf RAW codes. */
 PMU_FORMAT_ATTR(prefix,	"config:16-19");
@@ -619,49 +619,71 @@ static const struct attribute_group *msm_l1_pmu_attr_grps[] = {
 	NULL,
 };
 
-static int armv7_krait_pmu_init(struct arm_pmu *cpu_pmu)
+int get_krait_ver(void)
 {
-	cpu_pmu->handle_irq		= armv7pmu_handle_irq;
-	cpu_pmu->enable			= krait_pmu_enable_event;
-	cpu_pmu->disable		= krait_pmu_disable_event;
-	cpu_pmu->read_counter		= armv7pmu_read_counter;
-	cpu_pmu->write_counter		= armv7pmu_write_counter;
-	cpu_pmu->get_event_idx		= armv7pmu_get_event_idx;
-	cpu_pmu->start			= armv7pmu_start;
-	cpu_pmu->stop			= armv7pmu_stop;
-	cpu_pmu->reset			= krait_pmu_reset;
-	cpu_pmu->test_set_event_constraints	= msm_test_set_ev_constraint;
-	cpu_pmu->clear_event_constraints	= msm_clear_ev_constraint;
-	cpu_pmu->save_pm_registers	= krait_save_pm_registers;
-	cpu_pmu->restore_pm_registers	= krait_restore_pm_registers;
-	cpu_pmu->max_period		= (1LLU << 32) - 1;
-	cpu_pmu->name			= "cpu";
-	cpu_pmu->map_event		= krait_8960_map_event;
-	cpu_pmu->num_events		= armv7_read_num_pmnc_events();
-	cpu_pmu->pmu.attr_groups	= msm_l1_pmu_attr_grps;
+	int ver = 0;
+	int midr = read_cpuid_id();
+
+	if ((midr & KRAIT_MIDR_MASK) != KRAIT_MIDR_PASS1)
+		ver = 2;
+
+	pr_debug("krait_ver: %d, midr: %x\n", ver, midr);
+
+	return ver;
+}
+
+static struct arm_pmu *__init armv7_krait_pmu_init(void)
+{
+	krait_pmu.id		= ARM_PERF_PMU_ID_KRAIT;
+	krait_pmu.name	        = "ARMv7 Krait";
+	krait_pmu.map_event	= krait_8960_map_event;
+	krait_pmu.num_events	= armv7_read_num_pmnc_events();
+	krait_pmu.pmu.attr_groups	= msm_l1_pmu_attr_grps;
 	krait_clear_pmuregs();
 
-	cpu_pmu->set_event_filter = armv7pmu_set_event_filter,
+	krait_ver = get_krait_ver();
 
-	armv7_krait_perf_cache_map[C(ITLB)]
-		[C(OP_READ)]
-		[C(RESULT_ACCESS)] = KRAIT_P2_L1_ITLB_ACCESS;
-	armv7_krait_perf_cache_map[C(ITLB)]
-		[C(OP_WRITE)]
-		[C(RESULT_ACCESS)] = KRAIT_P2_L1_ITLB_ACCESS;
-	armv7_krait_perf_cache_map[C(DTLB)]
-		[C(OP_READ)]
-		[C(RESULT_ACCESS)] = KRAIT_P2_L1_DTLB_ACCESS;
-	armv7_krait_perf_cache_map[C(DTLB)]
-		[C(OP_WRITE)]
-		[C(RESULT_ACCESS)] = KRAIT_P2_L1_DTLB_ACCESS;
+	if (krait_ver > 0) {
+		evt_index = 1;
+		krait_max_l1_reg = 3;
 
-	return 0;
+		krait_pmu.set_event_filter = armv7pmu_set_event_filter,
+
+		armv7_krait_perf_cache_map[C(ITLB)]
+			[C(OP_READ)]
+			[C(RESULT_ACCESS)] = KRAIT_P2_L1_ITLB_ACCESS;
+		armv7_krait_perf_cache_map[C(ITLB)]
+			[C(OP_WRITE)]
+			[C(RESULT_ACCESS)] = KRAIT_P2_L1_ITLB_ACCESS;
+		armv7_krait_perf_cache_map[C(DTLB)]
+			[C(OP_READ)]
+			[C(RESULT_ACCESS)] = KRAIT_P2_L1_DTLB_ACCESS;
+		armv7_krait_perf_cache_map[C(DTLB)]
+			[C(OP_WRITE)]
+			[C(RESULT_ACCESS)] = KRAIT_P2_L1_DTLB_ACCESS;
+	} else {
+		evt_index = 0;
+		krait_max_l1_reg = 2;
+		armv7_krait_perf_cache_map[C(ITLB)]
+			[C(OP_READ)]
+			[C(RESULT_ACCESS)] = KRAIT_P1_L1_ITLB_ACCESS;
+		armv7_krait_perf_cache_map[C(ITLB)]
+			[C(OP_WRITE)]
+			[C(RESULT_ACCESS)] = KRAIT_P1_L1_ITLB_ACCESS;
+		armv7_krait_perf_cache_map[C(DTLB)]
+			[C(OP_READ)]
+			[C(RESULT_ACCESS)] = KRAIT_P1_L1_DTLB_ACCESS;
+		armv7_krait_perf_cache_map[C(DTLB)]
+			[C(OP_WRITE)]
+			[C(RESULT_ACCESS)] = KRAIT_P1_L1_DTLB_ACCESS;
+	}
+
+	return &krait_pmu;
 }
 
 #else
-static inline int armv7_krait_pmu_init(struct arm_pmu *cpu_pmu)
+static const struct arm_pmu *__init armv7_krait_pmu_init(void)
 {
-	return -ENODEV;
+	return NULL;
 }
 #endif	/* CONFIG_CPU_V7 */

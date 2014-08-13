@@ -269,12 +269,6 @@ config REGULATOR_MAX77686
 	  via I2C bus. The provided regulator is suitable for
 	  Exynos-4 chips to control VARM and VINT voltages.
 
-config REGULATOR_MAX77836
-    tristate "Maxim 77836 regulator"
-    depends on MFD_MAX77836
-    help
-      This driver controls a Maxim 77836 regulator.
-
 config REGULATOR_ONSEMI_NCP6335D
 	tristate "OnSemi NCP6335D regulator support"
 	depends on I2C
@@ -548,6 +542,47 @@ config REGULATOR_AS3711
 	  This driver provides support for the voltage regulators on the
 	  AS3711 PMIC
 
+config REGULATOR_PMIC8058
+        tristate "PMIC8058 regulator driver"
+        depends on PMIC8058 && (ARCH_MSM8X60 || ARCH_FSM9XXX)
+        default y if PMIC8058 && (ARCH_MSM8X60 || ARCH_FSM9XXX)
+        help
+         Say Y here to support the voltage regulators on PMIC8058
+
+config REGULATOR_PMIC8901
+        tristate "PMIC8901 regulator driver"
+        depends on PMIC8901 && ARCH_MSM8X60
+        default y if PMIC8901 && ARCH_MSM8X60
+        help
+         Say Y here to support the voltage regulators on PMIC8901
+
+config REGULATOR_PM8XXX
+	tristate "Qualcomm PM8XXX PMIC Voltage regulators"
+	depends on MFD_PM8XXX
+	help
+	  This driver supports voltage regulators in Qualcomm PM8XXX PMIC chips.
+	  PM8XXX chips provide several different varieties of LDO and switching
+	  regulators.  They also provide negative charge pumps and voltage
+	  switches.
+
+config REGULATOR_MSM_GPIO
+	tristate "MSM GPIO regulator"
+	depends on GPIOLIB
+	help
+	  This driver provides a regulator wrapper around a GPIO pin that is set
+	  to output.  It is intended to be used for GPIO pins that provide the
+	  enable signal to a physical regulator.  The GPIO enable signal can
+	  be configured to be active high (default) or active low.
+
+config REGULATOR_PM8058_XO
+	tristate "PM8058 XO Buffer driver"
+	depends on PMIC8058
+	default n
+	help
+	  This driver supports xo buffer control in the Qualcomm PM8058 PMIC
+	  chip. It is only supposed to be used when Linux on application
+	  processor is the master in control of XO buffers.
+
 config REGULATOR_STUB
 	tristate "Stub Regulator"
 	help
@@ -559,17 +594,6 @@ config REGULATOR_STUB
 	  Clients can use the real regulator device names with proper
 	  constraint checking while the real driver is being developed.
 
-config REGULATOR_RPM_SMD
-	bool "RPM SMD regulator driver"
-	depends on OF
-	depends on MSM_RPM_SMD
-	help
-	  Compile in support for the RPM SMD regulator driver which is used for
-	  setting voltages and other parameters of the various power rails
-	  supplied by some Qualcomm PMICs. The RPM SMD regulator driver should
-	  be used on systems which contain an RPM which communicates with the
-	  application processor over SMD.
-
 config REGULATOR_QPNP
 	depends on SPMI
 	depends on OF_SPMI
@@ -580,24 +604,5 @@ config REGULATOR_QPNP
 	  chips provide several different varieties of LDO and switching
 	  regulators.  They also provide voltage switches and boost regulators.
 
-config REGULATOR_SPM
-	bool "SPM regulator driver"
-	depends on SPMI && OF_SPMI
-	help
-	  Enable support for the SPM regulator driver which is used for
-	  setting voltages of processor supply regulators via the SPM module
-	  found inside of Qualcomm Technologies (QTI) chips.  The SPM regulator
-	  driver can be used on QTI SoCs where the APSS processor cores are
-	  supplied by their own PMIC regulator.
-
-config REGULATOR_CPR
-	bool "RBCPR regulator driver for APC"
-	depends on OF
-	help
-	  Compile in RBCPR (RapidBridge Core Power Reduction) driver to support
-	  corner vote for APC power rail. The driver takes PTE process voltage
-	  suggestions in efuse as initial settings. It converts corner vote
-	  to voltage value before writing to a voltage regulator API, such as
-	  that provided by spm-regulator driver.
 endif
 

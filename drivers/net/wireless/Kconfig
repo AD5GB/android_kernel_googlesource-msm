@@ -275,13 +275,13 @@ config LIBRA_SDIOIF
 	select WEXT_PRIV
 	select WEXT_CORE
 	select WEXT_SPY
-	depends on MMC_SDHCI_MSM
+	depends on MMC_MSM
 	---help---
 	  A driver for Qualcomm WLAN SDIO Libra chipset.
 
 config ATH6K_LEGACY_EXT
 	tristate "QCA AR6003 wlan SDIO driver - External"
-	depends on MMC_SDHCI_MSM && WLAN
+	depends on MMC_MSM && WLAN
 	select WIRELESS_EXT
 	select WEXT_PRIV
 	---help---
@@ -298,21 +298,6 @@ config WCNSS_CORE
 	---help---
 	  Core driver for the Qualcomm WCNSS triple play connectivity subsystem
 
-config CNSS
-	tristate "CNSS driver for PCIe wifi module"
-	depends on MIGHT_HAVE_PCI
-	depends on PCI
-	depends on PCI_MSI
-	depends on MSM_PCIE
-	select CRYPTO
-	select CRYPTO_HASH
-	select CRYPTO_BLKCIPHER
-	---help---
-	  This module adds support for the CNSS connectivity subsystem used
-	  for wifi devices based on the QCA AR6320 chipset running over PCIe.
-	  This driver also adds support to integrate PCIe WLAN module to subsystem
-	  restart framework.
-
 config WCNSS_CORE_PRONTO
 	tristate "Qualcomm WCNSS Pronto Support"
 	depends on WCNSS_CORE
@@ -324,28 +309,6 @@ config WCNSS_MEM_PRE_ALLOC
 	depends on WCNSS_CORE
 	---help---
 	  Pre-allocate memory for the WLAN driver module
-
-config WCNSS_REGISTER_DUMP_ON_BITE
-	bool "Enable/disable WCNSS register dump when there is a WCNSS bite"
-	depends on WCNSS_CORE_PRONTO
-	help
-	 When Apps recieves a WDOG bite from WCNSS, collecting a register dump
-	 of WCNSS is helpful to root cause the failure. WCNSS may not be
-	 properly clocked in some WCNSS bite cases, and that may cause unclocked
-	 register access failures. So this feature is to enable/disable the
-	 register dump on WCNSS WDOG bite.
-
-config CLD_LL_CORE
-	tristate "Qualcomm CORE driver for QCA6174"
-	select WIRELESS_EXT
-	select WEXT_PRIV
-	select WEXT_CORE
-	select WEXT_SPY
-	select NL80211_TESTMODE
-	depends on PCI
-	depends on PCI_MSI
-	---help---
-	  Core driver for the Qualcomm QCA6174 Chipset
 
 source "drivers/net/wireless/ath/Kconfig"
 source "drivers/net/wireless/b43/Kconfig"

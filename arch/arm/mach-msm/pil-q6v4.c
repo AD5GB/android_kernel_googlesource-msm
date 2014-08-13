@@ -130,7 +130,7 @@ int pil_q6v4_boot(struct pil_desc *pil)
 {
 	u32 reg, err;
 	const struct q6v4_data *drv = pil_to_q6v4_data(pil);
-	phys_addr_t start_addr = pil_get_entry_addr(pil);
+	unsigned long start_addr = pil_get_entry_addr(pil);
 
 	/* Enable Q6 ACLK */
 	writel_relaxed(0x10, drv->aclk_reg);
@@ -260,7 +260,7 @@ int pil_q6v4_shutdown_trusted(struct pil_desc *pil)
 }
 EXPORT_SYMBOL(pil_q6v4_shutdown_trusted);
 
-void __devinit
+void 
 pil_q6v4_init(struct q6v4_data *drv, const struct pil_q6v4_pdata *pdata)
 {
 	drv->strap_tcm_base	= pdata->strap_tcm_base;

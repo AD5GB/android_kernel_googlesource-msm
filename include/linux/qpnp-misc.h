@@ -25,12 +25,12 @@
  * based on a check in the MISC peripheral revision registers.
  *
  * Any consumer of this function needs to reference a MISC device phandle
- * using the "qcom,misc-ref" property in their device tree node.
+ * using the qcom,misc-ref in their device tree node.
  */
 
 int qpnp_misc_irqs_available(struct device *consumer_dev);
 #else
-static int qpnp_misc_irqs_available(struct device *consumer_dev)
+static int qpnp_misc_irq_available(struct device *consumer_dev)
 {
 	return 0;
 }

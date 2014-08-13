@@ -39,13 +39,6 @@ enum usb_pipe_mem_type {
 	SPS_PIPE_MEM = 0,	/* Default, SPS dedicated pipe memory */
 	USB_PRIVATE_MEM,	/* USB's private memory */
 	SYSTEM_MEM,		/* System RAM, requires allocation */
-	OCI_MEM,		/* Shared memory among peripherals */
-};
-
-enum usb_bam_event_type {
-	USB_BAM_EVENT_WAKEUP_PIPE = 0,	/* Wake a pipe */
-	USB_BAM_EVENT_WAKEUP,		/* Wake a bam (first pipe waked) */
-	USB_BAM_EVENT_INACTIVITY,	/* Inactivity on all pipes */
 };
 
 struct usb_bam_connect_ipa_params {
@@ -63,20 +56,16 @@ struct usb_bam_connect_ipa_params {
 	void *priv;
 	void (*notify)(void *priv, enum ipa_dp_evt_type evt,
 			unsigned long data);
-	int (*activity_notify)(void *priv);
-	int (*inactivity_notify)(void *priv);
 };
 
 /**
 * struct usb_bam_event_info: suspend/resume event information.
-* @type: usb bam event type.
 * @event: holds event data.
 * @callback: suspend/resume callback.
 * @param: port num (for suspend) or NULL (for resume).
 * @event_w: holds work queue parameters.
 */
 struct usb_bam_event_info {
-	enum usb_bam_event_type type;
 	struct sps_register_event event;
 	int (*callback)(void *);
 	void *param;
@@ -99,13 +88,8 @@ struct usb_bam_event_info {
 * @desc_fifo_size: descriptor fifo size.
 * @data_mem_buf: data fifo buffer.
 * @desc_mem_buf: descriptor fifo buffer.
-* @event: event for wakeup.
+* @wake_event: event for wakeup.
 * @enabled: true if pipe is enabled.
-* @ipa_clnt_hdl : pipe handle to ipa api.
-* @priv: private data to return upon activity_notify
-*	or inactivity_notify callbacks.
-* @activity_notify: callback to invoke on activity on one of the in pipes.
-* @inactivity_notify: callback to invoke on inactivity on all pipes.
 */
 struct usb_bam_pipe_connect {
 	const char *name;
@@ -124,13 +108,8 @@ struct usb_bam_pipe_connect {
 	u32 desc_fifo_size;
 	struct sps_mem_buffer data_mem_buf;
 	struct sps_mem_buffer desc_mem_buf;
-	struct usb_bam_event_info event;
+	struct usb_bam_event_info wake_event;
 	bool enabled;
-	bool suspended;
-	int ipa_clnt_hdl;
-	void *priv;
-	int (*activity_notify)(void *priv);
-	int (*inactivity_notify)(void *priv);
 };
 
 /**
@@ -140,9 +119,7 @@ struct usb_bam_pipe_connect {
  * @connections: holds all pipe connections data.
  * @usb_bam_num_pipes: max number of pipes to use.
  * @active_conn_num: number of active pipe connections.
- * @usb_bam_fifo_baseaddr: base address for bam pipe's data and descriptor
- *                         fifos. This can be on chip memory (ocimem) or usb
- *                         private memory.
+ * @usb_base_address: BAM physical address.
  * @ignore_core_reset_ack: BAM can ignore ACK from USB core during PIPE RESET
  * @disable_clk_gating: Disable clock gating
  */
@@ -150,7 +127,7 @@ struct msm_usb_bam_platform_data {
 	struct usb_bam_pipe_connect *connections;
 	u8 max_connections;
 	int usb_bam_num_pipes;
-	phys_addr_t usb_bam_fifo_baseaddr;
+	u32 usb_base_address;
 	bool ignore_core_reset_ack;
 	bool reset_on_connect[MAX_BAMS];
 	bool disable_clk_gating;
@@ -174,10 +151,7 @@ int usb_bam_connect(u8 idx, u32 *bam_pipe_idx);
 /**
  * Connect USB-to-IPA SPS connection.
  *
- * This function returns the allocated pipes number and clnt
- * handles. Assumes that the user first connects producer pipes
- * and only after that consumer pipes, since that's the correct
- * sequence for the handshake with the IPA.
+ * This function returns the allocated pipes number and clnt handles.
  *
  * @ipa_params - in/out parameters
  *
@@ -223,39 +197,6 @@ int usb_bam_register_wake_cb(u8 idx,
  */
 int usb_bam_register_peer_reset_cb(int (*callback)(void *), void *param);
 
-/**
- * Register callbacks for start/stop of transfers.
- *
- * @start - the callback function that will be called in USB
- *				driver to start transfers
- * @stop - the callback function that will be called in USB
- *				driver to stop transfers
- *
- * @param - context that the caller can supply
- *
- * @return 0 on success, negative value on error
- *
- */
-int usb_bam_register_start_stop_cbs(
-	void (*start)(void *, enum usb_bam_pipe_dir),
-	void (*stop)(void *, enum usb_bam_pipe_dir),
-	void *param);
-
-/**
- * Start usb suspend sequence
- *
- * @ipa_params -  in/out parameters
- *
- */
-void usb_bam_suspend(struct usb_bam_connect_ipa_params *ipa_params);
-
-/**
- * Start usb resume sequence
- *
- * @ipa_params -  in/out parameters
- *
- */
-void usb_bam_resume(struct usb_bam_connect_ipa_params *ipa_params);
 /**
  * Disconnect USB-to-Periperal SPS connection.
  *
@@ -351,12 +292,6 @@ static inline int usb_bam_disconnect_ipa(
 	return -ENODEV;
 }
 
-static inline void usb_bam_wait_for_cons_granted(
-			struct usb_bam_connect_ipa_params *ipa_params)
-{
-	return;
-}
-
 static inline int usb_bam_register_wake_cb(u8 idx,
 	int (*callback)(void *), void* param)
 {
@@ -368,20 +303,6 @@ static inline int usb_bam_register_peer_reset_cb(
 {
 	return -ENODEV;
 }
-
-static inline int usb_bam_register_start_stop_cbs(
-	void (*start)(void *, enum usb_bam_pipe_dir),
-	void (*stop)(void *, enum usb_bam_pipe_dir),
-	void *param)
-{
-	return -ENODEV;
-}
-
-static inline void usb_bam_suspend(
-	struct usb_bam_connect_ipa_params *ipa_params){}
-
-static inline void usb_bam_resume(
-	struct usb_bam_connect_ipa_params *ipa_params) {}
 
 static inline int usb_bam_disconnect_pipe(u8 idx)
 {

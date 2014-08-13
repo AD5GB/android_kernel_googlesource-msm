@@ -29,11 +29,10 @@
 
 #include <mach/subsystem_restart.h>
 #include <mach/msm_smsm.h>
-#include <mach/ramdump.h>
-#include <mach/msm_smem.h>
 
 #include "peripheral-loader.h"
 #include "scm-pas.h"
+#include "ramdump.h"
 
 #define PRONTO_PMU_COMMON_GDSCR				0x24
 #define PRONTO_PMU_COMMON_GDSCR_SW_COLLAPSE		BIT(0)
@@ -124,7 +123,7 @@ static int pil_pronto_reset(struct pil_desc *pil)
 	int rc;
 	struct pronto_data *drv = dev_get_drvdata(pil->dev);
 	void __iomem *base = drv->base;
-	phys_addr_t start_addr = pil_get_entry_addr(pil);
+	unsigned long start_addr = pil_get_entry_addr(pil);
 
 	/* Deassert reset to subsystem and wait for propagation */
 	reg = readl_relaxed(drv->reset_base);
@@ -330,13 +329,12 @@ static irqreturn_t wcnss_wdog_bite_irq_hdlr(int irq, void *dev_id)
 
 	drv->crash = true;
 
-	disable_irq_nosync(drv->irq);
-
 	if (drv->restart_inprogress) {
 		pr_err("Ignoring wcnss bite irq, restart in progress\n");
 		return IRQ_HANDLED;
 	}
 
+	disable_irq_nosync(drv->irq);
 	drv->restart_inprogress = true;
 	restart_wcnss(drv);
 
@@ -404,22 +402,13 @@ static int wcnss_ramdump(int enable, const struct subsys_desc *subsys)
 	return pil_do_ramdump(&drv->desc, drv->ramdump_dev);
 }
 
-static int __devinit pil_pronto_probe(struct platform_device *pdev)
+static int pil_pronto_probe(struct platform_device *pdev)
 {
 	struct pronto_data *drv;
 	struct resource *res;
 	struct pil_desc *desc;
 	int ret, err_fatal_gpio, irq;
 	uint32_t regval;
-
-	int clk_ready = of_get_named_gpio(pdev->dev.of_node,
-			"qcom,gpio-proxy-unvote", 0);
-	if (clk_ready < 0)
-		return clk_ready;
-
-	clk_ready = gpio_to_irq(clk_ready);
-	if (clk_ready < 0)
-		return clk_ready;
 
 	drv = devm_kzalloc(&pdev->dev, sizeof(*drv), GFP_KERNEL);
 	if (!drv)
@@ -471,7 +460,6 @@ static int __devinit pil_pronto_probe(struct platform_device *pdev)
 	desc->dev = &pdev->dev;
 	desc->owner = THIS_MODULE;
 	desc->proxy_timeout = 10000;
-	desc->proxy_unvote_irq = clk_ready;
 
 	if (pas_supported(PAS_WCNSS) > 0) {
 		desc->ops = &pil_pronto_ops_trusted;
@@ -517,17 +505,6 @@ static int __devinit pil_pronto_probe(struct platform_device *pdev)
 	drv->subsys_desc.start = pronto_start;
 	drv->subsys_desc.stop = pronto_stop;
 
-	ret = of_get_named_gpio(pdev->dev.of_node,
-			"qcom,gpio-err-ready", 0);
-	if (ret < 0)
-		return ret;
-
-	ret = gpio_to_irq(ret);
-	if (ret < 0)
-		return ret;
-
-	drv->subsys_desc.err_ready_irq = ret;
-
 	INIT_DELAYED_WORK(&drv->cancel_vote_work, wcnss_post_bootup);
 
 	drv->subsys = subsys_register(&drv->subsys_desc);
@@ -571,7 +548,7 @@ err_subsys:
 	return ret;
 }
 
-static int __devexit pil_pronto_remove(struct platform_device *pdev)
+static int pil_pronto_remove(struct platform_device *pdev)
 {
 	struct pronto_data *drv = platform_get_drvdata(pdev);
 	subsys_unregister(drv->subsys);
@@ -587,7 +564,7 @@ static struct of_device_id msm_pil_pronto_match[] = {
 
 static struct platform_driver pil_pronto_driver = {
 	.probe = pil_pronto_probe,
-	.remove = __devexit_p(pil_pronto_remove),
+	.remove = pil_pronto_remove,
 	.driver = {
 		.name = "pil_pronto",
 		.owner = THIS_MODULE,

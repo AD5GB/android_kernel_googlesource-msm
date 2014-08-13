@@ -330,7 +330,7 @@ static void isa1200_close(struct input_dev *dev)
 		haptic->pdata->power_on(0);
 }
 
-static int __devinit isa1200_probe(struct i2c_client *client,
+static int isa1200_probe(struct i2c_client *client,
 			const struct i2c_device_id *id)
 {
 	struct isa1200_chip *haptic;
@@ -400,7 +400,7 @@ err_mem_alloc:
 	return rc;
 }
 
-static int __devexit isa1200_remove(struct i2c_client *client)
+static int isa1200_remove(struct i2c_client *client)
 {
 	struct isa1200_chip *haptic = i2c_get_clientdata(client);
 
@@ -428,7 +428,7 @@ static struct i2c_driver isa1200_driver = {
 		.pm = &isa1200_pm_ops,
 	},
 	.probe = isa1200_probe,
-	.remove = __devexit_p(isa1200_remove),
+	.remove = isa1200_remove,
 	.id_table = isa1200_id_table,
 };
 

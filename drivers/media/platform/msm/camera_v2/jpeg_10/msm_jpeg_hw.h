@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2013, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -16,7 +16,7 @@
 #include <media/msm_jpeg.h>
 #include "msm_jpeg_hw_reg.h"
 #include <linux/ion.h>
-#include <linux/msm_iommu_domains.h>
+#include <mach/iommu_domains.h>
 
 struct msm_jpeg_hw_buf {
 	struct msm_jpeg_buf vbuf;
@@ -96,7 +96,7 @@ uint32_t msm_jpeg_hw_read(struct msm_jpeg_hw_cmd *, void *);
 void msm_jpeg_hw_write(struct msm_jpeg_hw_cmd *, void *);
 int msm_jpeg_hw_wait(struct msm_jpeg_hw_cmd *, int, void *);
 void msm_jpeg_hw_delay(struct msm_jpeg_hw_cmd *, int);
-int msm_jpeg_hw_exec_cmds(struct msm_jpeg_hw_cmd *, uint32_t ,
+int msm_jpeg_hw_exec_cmds(struct msm_jpeg_hw_cmd *, int ,
 	uint32_t , void *);
 void msm_jpeg_hw_region_dump(int size);
 void msm_jpeg_io_dump(void *base, int size);

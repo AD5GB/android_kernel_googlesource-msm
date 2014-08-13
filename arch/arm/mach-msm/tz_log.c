@@ -22,7 +22,7 @@
 #include <linux/string.h>
 #include <linux/types.h>
 #include <linux/uaccess.h>
-#include <soc/qcom/scm.h>
+#include <mach/scm.h>
 #include <mach/qseecomi.h>
 
 #define DEBUG_MAX_RW_BUF 4096
@@ -555,7 +555,7 @@ static void tzdbg_register_qsee_log_buf(void)
 	struct qseecom_reg_log_buf_ireq req;
 
 	/* scm response */
-	struct qseecom_command_scm_resp resp = {};
+	struct qseecom_command_scm_resp resp;
 	ion_phys_addr_t pa = 0;
 	uint32_t len;
 	int ret = 0;
@@ -677,7 +677,7 @@ static int tz_log_probe(struct platform_device *pdev)
 {
 	struct resource *resource;
 	void __iomem *virt_iobase;
-	phys_addr_t tzdiag_phy_iobase;
+	uint32_t tzdiag_phy_iobase;
 	uint32_t *ptr = NULL;
 
 	/*
@@ -698,9 +698,9 @@ static int tz_log_probe(struct platform_device *pdev)
 				resource->end - resource->start + 1);
 	if (!virt_iobase) {
 		dev_err(&pdev->dev,
-			"%s: ERROR could not ioremap: start=%pr, len=%u\n",
-			__func__, &resource->start,
-			(unsigned int)(resource->end - resource->start + 1));
+			"%s: ERROR could not ioremap: start=%p, len=%u\n",
+			__func__, (void *) resource->start,
+			(resource->end - resource->start + 1));
 		return -ENXIO;
 	}
 	/*
@@ -716,8 +716,8 @@ static int tz_log_probe(struct platform_device *pdev)
 
 	if (!tzdbg.virt_iobase) {
 		dev_err(&pdev->dev,
-			"%s: ERROR could not ioremap: start=%pr, len=%u\n",
-			__func__, &tzdiag_phy_iobase,
+			"%s: ERROR could not ioremap: start=%p, len=%u\n",
+			__func__, (void *) tzdiag_phy_iobase,
 			DEBUG_MAX_RW_BUF);
 		return -ENXIO;
 	}

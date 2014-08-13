@@ -21,7 +21,6 @@
 #include <linux/of_platform.h>
 #include <linux/of_irq.h>
 #include <linux/memory.h>
-#include <linux/msm_tsens.h>
 #include <asm/mach/map.h>
 #include <asm/hardware/gic.h>
 #include <asm/mach/arch.h>
@@ -238,7 +237,6 @@ void __init msm9625_add_drivers(void)
 	msm_spm_device_init();
 	msm_clock_init(&msm9625_clock_init_data);
 	msm9625_init_buses();
-	tsens_tm_init_driver();
 }
 
 void __init msm9625_init(void)
@@ -247,7 +245,8 @@ void __init msm9625_init(void)
 		pr_err("%s: socinfo_init() failed\n", __func__);
 
 	msm9625_init_gpiomux();
-	board_dt_populate(msm9625_auxdata_lookup);
+	of_platform_populate(NULL, of_default_bus_match_table,
+			msm9625_auxdata_lookup, NULL);
 	msm9625_add_drivers();
 }
 
@@ -255,7 +254,6 @@ DT_MACHINE_START(MSM9625_DT, "Qualcomm MSM 9625 (Flattened Device Tree)")
 	.map_io = msm_map_msm9625_io,
 	.init_irq = msm_dt_init_irq_l2x0,
 	.init_machine = msm9625_init,
-	.handle_irq = gic_handle_irq,
 	.timer = &msm_dt_timer,
 	.dt_compat = msm9625_dt_match,
 	.reserve = msm9625_reserve,

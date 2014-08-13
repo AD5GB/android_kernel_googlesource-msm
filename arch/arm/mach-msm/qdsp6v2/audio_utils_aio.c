@@ -24,7 +24,6 @@
 #include <linux/atomic.h>
 #include <asm/ioctls.h>
 #include <linux/debugfs.h>
-#include <linux/msm_audio_ion.h>
 #include "audio_utils_aio.h"
 #ifdef CONFIG_USE_DEV_CTRL_VOLUME
 #include <mach/qdsp6v2/audio_dev_ctl.h>
@@ -250,11 +249,7 @@ void audio_aio_async_write_ack(struct q6audio_aio *audio, uint32_t token,
 		return;
 
 	spin_lock_irqsave(&audio->dsp_lock, flags);
-	if (list_empty(&audio->out_queue)) {
-		pr_warning("%s: ingore unexpected event from dsp\n", __func__);
-		spin_unlock_irqrestore(&audio->dsp_lock, flags);
-		return;
-	}
+	BUG_ON(list_empty(&audio->out_queue));
 	used_buf = list_first_entry(&audio->out_queue,
 					struct audio_aio_buffer_node, list);
 	if (token == used_buf->token) {
@@ -379,7 +374,8 @@ void audio_aio_reset_ion_region(struct q6audio_aio *audio)
 	list_for_each_safe(ptr, next, &audio->ion_region_queue) {
 		region = list_entry(ptr, struct audio_aio_ion_region, list);
 		list_del(&region->list);
-		msm_audio_ion_free_legacy(audio->client, region->handle);
+		ion_unmap_kernel(audio->client, region->handle);
+		ion_free(audio->client, region->handle);
 		kfree(region);
 	}
 
@@ -561,7 +557,7 @@ int audio_aio_release(struct inode *inode, struct file *file)
 	audio_aio_disable(audio);
 	audio_aio_unmap_ion_region(audio);
 	audio_aio_reset_ion_region(audio);
-	msm_audio_ion_client_destroy(audio->client);
+	ion_client_destroy(audio->client);
 	audio->event_abort = 1;
 	wake_up(&audio->event_wait);
 	audio_aio_reset_event_queue(audio);
@@ -773,13 +769,14 @@ static int audio_aio_ion_check(struct q6audio_aio *audio,
 static int audio_aio_ion_add(struct q6audio_aio *audio,
 				struct msm_audio_ion_info *info)
 {
-	ion_phys_addr_t paddr = 0;
-	size_t len = 0;
+	ion_phys_addr_t paddr;
+	size_t len;
+	unsigned long kvaddr;
 	struct audio_aio_ion_region *region;
 	int rc = -EINVAL;
-	struct ion_handle *handle = NULL;
+	struct ion_handle *handle;
 	unsigned long ionflag;
-	void *kvaddr = NULL;
+	void *temp_ptr;
 
 	pr_debug("%s[%p]:\n", __func__, audio);
 	region = kmalloc(sizeof(*region), GFP_KERNEL);
@@ -789,12 +786,29 @@ static int audio_aio_ion_add(struct q6audio_aio *audio,
 		goto end;
 	}
 
-	rc = msm_audio_ion_import_legacy("Audio_Dec_Client", audio->client,
-				&handle, info->fd, &ionflag,
-				0, &paddr, &len, &kvaddr);
-	if (rc) {
-		pr_err("%s: msm audio ion alloc failed\n", __func__);
+	handle = ion_import_dma_buf(audio->client, info->fd);
+	if (IS_ERR_OR_NULL(handle)) {
+		pr_err("%s: could not get handle of the given fd\n", __func__);
 		goto import_error;
+	}
+
+	rc = ion_handle_get_flags(audio->client, handle, &ionflag);
+	if (rc) {
+		pr_err("%s: could not get flags for the handle\n", __func__);
+		goto flag_error;
+	}
+
+	temp_ptr = ion_map_kernel(audio->client, handle);
+	if (IS_ERR_OR_NULL(temp_ptr)) {
+		pr_err("%s: could not get virtual address\n", __func__);
+		goto map_error;
+	}
+	kvaddr = (unsigned long)temp_ptr;
+
+	rc = ion_phys(audio->client, handle, &paddr, &len);
+	if (rc) {
+		pr_err("%s: could not get physical address\n", __func__);
+		goto ion_error;
 	}
 
 	rc = audio_aio_ion_check(audio, info->vaddr, len);
@@ -807,7 +821,7 @@ static int audio_aio_ion_add(struct q6audio_aio *audio,
 	region->vaddr = info->vaddr;
 	region->fd = info->fd;
 	region->paddr = paddr;
-	region->kvaddr = (unsigned long)kvaddr;
+	region->kvaddr = kvaddr;
 	region->len = len;
 	region->ref_cnt = 0;
 	pr_debug("%s[%p]:add region paddr %lx vaddr %p, len %lu kvaddr %lx\n",
@@ -825,7 +839,10 @@ static int audio_aio_ion_add(struct q6audio_aio *audio,
 mmap_error:
 	list_del(&region->list);
 ion_error:
-	msm_audio_ion_free_legacy(audio->client, handle);
+	ion_unmap_kernel(audio->client, handle);
+map_error:
+flag_error:
+	ion_free(audio->client, handle);
 import_error:
 	kfree(region);
 end:
@@ -862,8 +879,8 @@ static int audio_aio_ion_remove(struct q6audio_aio *audio,
 					__func__, audio);
 
 			list_del(&region->list);
-			msm_audio_ion_free_legacy(audio->client,
-						 region->handle);
+			ion_unmap_kernel(audio->client, region->handle);
+			ion_free(audio->client, region->handle);
 			kfree(region);
 			rc = 0;
 			break;
@@ -1150,8 +1167,7 @@ int audio_aio_open(struct q6audio_aio *audio, struct file *file)
 			break;
 		}
 	}
-	audio->client = msm_audio_ion_client_create(UINT_MAX,
-						    "Audio_Dec_Client");
+	audio->client = msm_ion_client_create(UINT_MAX, "Audio_Dec_Client");
 	if (IS_ERR_OR_NULL(audio->client)) {
 		pr_err("Unable to create ION client\n");
 		rc = -EACCES;
@@ -1166,6 +1182,9 @@ int audio_aio_open(struct q6audio_aio *audio, struct file *file)
 	return 0;
 
 fail:
+	q6asm_audio_client_free(audio->ac);
+	kfree(audio->codec_cfg);
+	kfree(audio);
 	return rc;
 }
 

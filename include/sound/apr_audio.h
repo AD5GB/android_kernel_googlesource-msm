@@ -17,7 +17,7 @@
 #define _APR_AUDIO_H_
 
 /* ASM opcodes without APR payloads*/
-#include <linux/qdsp6v2/apr.h>
+#include <mach/qdsp6v2/apr.h>
 
 /*
  * Audio Front End (AFE)
@@ -1262,7 +1262,7 @@ struct asm_stream_cmd_open_read_v2_1 {
 #define MPEG4_MULTI_AAC 0x00010D86
 #define US_POINT_EPOS_FORMAT 0x00012310
 #define US_RAW_FORMAT        0x0001127C
-#define US_PROX_FORMAT       0x0001272B
+#define US_PROX_FORMAT       0x00012721
 #define MULTI_CHANNEL_PCM    0x00010C66
 
 #define ASM_ENCDEC_SBCRATE         0x00010C13
@@ -1452,23 +1452,6 @@ struct asm_stream_cmd_open_read_write {
 	u32                write_format;
 	u32                read_format;
 } __attribute__((packed));
-
-#define ASM_STREAM_CMD_OPEN_LOOPBACK	0x00010D6E
-struct asm_stream_cmd_open_loopback {
-	struct apr_hdr         hdr;
-	u32                    mode_flags;
-/* Mode flags.
- * Bit 0-31: reserved; client should set these bits to 0
- */
-	u16                    src_endpointype;
-	/* Endpoint type. 0 = Tx Matrix */
-	u16                    sink_endpointype;
-	/* Endpoint type. 0 = Rx Matrix */
-	u32                    postprocopo_id;
-/* Postprocessor topology ID. Specifies the topology of
- * postprocessing algorithms.
- */
-} __packed;
 
 #define ADM_CMD_CONNECT_AFE_PORT 0x00010320
 #define ADM_CMD_DISCONNECT_AFE_PORT 0x00010321
@@ -1926,4 +1909,5 @@ struct srs_SS3D_params {
 
 int srs_ss3d_open(int port_id, int srs_tech_id, void *srs_params);
 /* SRS Studio Sound 3D end */
+
 #endif /*_APR_AUDIO_H_*/

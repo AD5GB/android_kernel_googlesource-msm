@@ -115,6 +115,27 @@ static void rfcomm_schedule(void)
 	wake_up_process(rfcomm_thread);
 }
 
+static void rfcomm_session_put(struct rfcomm_session *s)
+{
+	bool match = false;
+	struct rfcomm_session *sess;
+	struct list_head *p, *n;
+	list_for_each_safe(p, n, &session_list) {
+		sess = list_entry(p, struct rfcomm_session, list);
+		if (s == sess) {
+			match = true;
+			break;
+		}
+	}
+	if (!match) {
+		BT_ERR("session already freed previously");
+		dump_stack();
+		return;
+	}
+	if (atomic_dec_and_test(&s->refcnt))
+		rfcomm_session_del(s);
+}
+
 /* ---- RFCOMM FCS computation ---- */
 
 /* reversed, 8-bit, poly=0x07 */

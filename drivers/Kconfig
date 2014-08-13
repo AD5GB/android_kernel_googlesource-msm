@@ -56,7 +56,7 @@ source "drivers/spi/Kconfig"
 
 source "drivers/spmi/Kconfig"
 
-source "drivers/ssbi/Kconfig"
+source "drivers/slimbus/Kconfig"
 
 source "drivers/hsi/Kconfig"
 
@@ -174,19 +174,8 @@ source "drivers/ipack/Kconfig"
 
 source "drivers/gud/Kconfig"
 
-source "drivers/reset/Kconfig"
-
 source "drivers/coresight/Kconfig"
 
 source "drivers/bif/Kconfig"
 
-source "drivers/sensors/Kconfig"
-
-source "drivers/sensorhub/Kconfig"
-
-source "drivers/phy/Kconfig"
-
-source "drivers/soc/Kconfig"
-
-source "drivers/motor/Kconfig"
 endmenu

@@ -358,7 +358,7 @@ err_alloc_failed:
 	return ret;
 }
 
-static int __devexit CPLD_LED_remove(struct platform_device *pdev)
+static int CPLD_LED_remove(struct platform_device *pdev)
 {
 	struct CPLD_LED_data *CPLD_LED;
 	int i;
@@ -380,7 +380,7 @@ static int __devexit CPLD_LED_remove(struct platform_device *pdev)
 
 static struct platform_driver CPLD_LED_driver = {
 	.probe = CPLD_LED_probe,
-	.remove = __devexit_p(CPLD_LED_remove),
+	.remove = CPLD_LED_remove,
 	.driver = {
 		   .name = "leds-cpld",
 		   .owner = THIS_MODULE,

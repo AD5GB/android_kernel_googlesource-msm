@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2007 Google, Inc.
- * Copyright (c) 2009-2014, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2009-2013, The Linux Foundation. All rights reserved.
  *
  * This software is licensed under the terms of the GNU General Public
  * License version 2, as published by the Free Software Foundation, and
@@ -24,19 +24,18 @@
 #include <linux/io.h>
 #include <linux/percpu.h>
 #include <linux/mm.h>
-#include <linux/sched_clock.h>
 
 #include <asm/localtimer.h>
 #include <asm/mach/time.h>
+#include <asm/sched_clock.h>
 #include <asm/smp_plat.h>
 #include <asm/user_accessible_timer.h>
 #include <mach/msm_iomap.h>
 #include <mach/irqs.h>
-#include <soc/qcom/socinfo.h>
+#include <mach/socinfo.h>
 
-#include <soc/qcom/smem.h>
 #if defined(CONFIG_MSM_SMD)
-#include <soc/qcom/smsm.h>
+#include "smd_private.h"
 #endif
 #include "timer.h"
 
@@ -292,6 +291,8 @@ static int msm_timer_set_next_event(unsigned long cycles,
 
 	clock = clockevent_to_clock(evt);
 	clock_state = &__get_cpu_var(msm_clocks_percpu)[clock->index];
+	if (clock_state->stopped)
+		return 0;
 	now = msm_read_timer_count(clock, LOCAL_TIMER);
 	alarm = now + (cycles << clock->shift);
 	if (clock->flags & MSM_CLOCK_FLAGS_ODD_MATCH_WRITE)
@@ -459,7 +460,7 @@ static uint32_t msm_timer_do_sync_to_sclk(
 		update(data, t1, sclk_hz);
 	return t1;
 }
-#else
+#elif defined(CONFIG_MSM_N_WAY_SMSM)
 
 /* Time Master State Bits */
 #define MASTER_BITS_PER_CPU        1
@@ -481,8 +482,7 @@ static uint32_t msm_timer_do_sync_to_sclk(
 	uint32_t smem_clock_val;
 	uint32_t state;
 
-	smem_clock = smem_find(SMEM_SMEM_SLOW_CLOCK_VALUE,
-				sizeof(uint32_t), 0, SMEM_ANY_HOST_FLAG);
+	smem_clock = smem_alloc(SMEM_SMEM_SLOW_CLOCK_VALUE, sizeof(uint32_t));
 	if (smem_clock == NULL) {
 		printk(KERN_ERR "no smem clock\n");
 		return 0;
@@ -545,7 +545,75 @@ static uint32_t msm_timer_do_sync_to_sclk(
 		SLAVE_TIME_INIT);
 	return smem_clock_val;
 }
-#endif /* CONFIG_MSM_DIRECT_SCLK_ACCESS */
+#else /* CONFIG_MSM_N_WAY_SMSM */
+static uint32_t msm_timer_do_sync_to_sclk(
+	void (*time_start)(struct msm_timer_sync_data_t *data),
+	bool (*time_expired)(struct msm_timer_sync_data_t *data),
+	void (*update)(struct msm_timer_sync_data_t *, uint32_t, uint32_t),
+	struct msm_timer_sync_data_t *data)
+{
+	uint32_t *smem_clock;
+	uint32_t smem_clock_val;
+	uint32_t last_state;
+	uint32_t state;
+
+	smem_clock = smem_alloc(SMEM_SMEM_SLOW_CLOCK_VALUE,
+				sizeof(uint32_t));
+
+	if (smem_clock == NULL) {
+		printk(KERN_ERR "no smem clock\n");
+		return 0;
+	}
+
+	last_state = state = smsm_get_state(SMSM_MODEM_STATE);
+	smem_clock_val = *smem_clock;
+	if (smem_clock_val) {
+		printk(KERN_INFO "get_smem_clock: invalid start state %x "
+			"clock %u\n", state, smem_clock_val);
+		smsm_change_state(SMSM_APPS_STATE,
+				  SMSM_TIMEWAIT, SMSM_TIMEINIT);
+
+		time_start(data);
+		while (*smem_clock != 0 && !time_expired(data))
+			;
+
+		smem_clock_val = *smem_clock;
+		if (smem_clock_val) {
+			printk(KERN_EMERG "get_smem_clock: timeout still "
+				"invalid state %x clock %u\n",
+				state, smem_clock_val);
+			msm_timer_sync_timeout();
+		}
+	}
+
+	time_start(data);
+	smsm_change_state(SMSM_APPS_STATE, SMSM_TIMEINIT, SMSM_TIMEWAIT);
+	do {
+		smem_clock_val = *smem_clock;
+		state = smsm_get_state(SMSM_MODEM_STATE);
+		if (state != last_state) {
+			last_state = state;
+			if (msm_timer_debug_mask & MSM_TIMER_DEBUG_SYNC)
+				printk(KERN_INFO
+					"get_smem_clock: state %x clock %u\n",
+					state, smem_clock_val);
+		}
+	} while (smem_clock_val == 0 && !time_expired(data));
+
+	if (smem_clock_val) {
+		if (update != NULL)
+			update(data, smem_clock_val, sclk_hz);
+	} else {
+		printk(KERN_EMERG
+			"get_smem_clock: timeout state %x clock %u\n",
+			state, smem_clock_val);
+		msm_timer_sync_timeout();
+	}
+
+	smsm_change_state(SMSM_APPS_STATE, SMSM_TIMEWAIT, SMSM_TIMEINIT);
+	return smem_clock_val;
+}
+#endif /* CONFIG_MSM_N_WAY_SMSM */
 
 /*
  * Callback function that initializes the timeout value.
@@ -845,7 +913,7 @@ int64_t msm_timer_get_sclk_time(int64_t *period)
 
 int __init msm_timer_init_time_sync(void (*timeout)(void))
 {
-#if !defined(CONFIG_MSM_DIRECT_SCLK_ACCESS)
+#if defined(CONFIG_MSM_N_WAY_SMSM) && !defined(CONFIG_MSM_DIRECT_SCLK_ACCESS)
 	int ret = smsm_change_intr_mask(SMSM_TIME_MASTER_DEM, 0xFFFFFFFF, 0);
 
 	if (ret) {
@@ -920,7 +988,7 @@ int __cpuinit local_timer_setup(struct clock_event_device *evt)
 	evt->set_next_event = msm_timer_set_next_event;
 
 	*__this_cpu_ptr(clock->percpu_evt) = evt;
-	clockevents_config_and_register(evt, gpt_hz, 4, 0xf0000000);
+	clockevents_config_and_register(evt, GPT_HZ, 4, 0xf0000000);
 	enable_percpu_irq(evt->irq, IRQ_TYPE_EDGE_RISING);
 
 	return 0;
@@ -951,7 +1019,7 @@ static void fixup_msm8625_timer(void)
 static inline void fixup_msm8625_timer(void) { };
 #endif
 
-void __init msm_timer_init(void)
+static void __init msm_timer_init(void)
 {
 	int i;
 	int res;
@@ -1026,6 +1094,104 @@ void __init msm_timer_init(void)
 		msm_global_timer = MSM_CLOCK_GPT;
 	else
 		msm_global_timer = MSM_CLOCK_DGT;
+
+	for (i = 0; i < ARRAY_SIZE(msm_clocks); i++) {
+		struct msm_clock *clock = &msm_clocks[i];
+		struct clock_event_device *ce = &clock->clockevent;
+		struct clocksource *cs = &clock->clocksource;
+		__raw_writel(0, clock->regbase + TIMER_ENABLE);
+		__raw_writel(0, clock->regbase + TIMER_CLEAR);
+		__raw_writel(~0, clock->regbase + TIMER_MATCH_VAL);
+
+		if ((clock->freq << clock->shift) == gpt_hz) {
+			clock->rollover_offset = 0;
+		} else {
+			uint64_t temp;
+
+			temp = clock->freq << clock->shift;
+			temp <<= 32;
+			do_div(temp, gpt_hz);
+
+			clock->rollover_offset = (uint32_t) temp;
+		}
+
+		ce->mult = div_sc(clock->freq, NSEC_PER_SEC, ce->shift);
+		/* allow at least 10 seconds to notice that the timer wrapped */
+		ce->max_delta_ns =
+			clockevent_delta2ns(0xf0000000 >> clock->shift, ce);
+		/* ticks gets rounded down by one */
+		ce->min_delta_ns =
+			clockevent_delta2ns(clock->write_delay + 4, ce);
+		ce->cpumask = cpumask_of(0);
+
+		res = clocksource_register_hz(cs, clock->freq);
+		if (res)
+			printk(KERN_ERR "msm_timer_init: clocksource_register "
+			       "failed for %s\n", cs->name);
+
+		ce->irq = clock->irq;
+		if (cpu_is_msm8x60() || cpu_is_msm9615() || cpu_is_msm8625() ||
+		    cpu_is_msm8625q() || soc_class_is_msm8960() ||
+		    soc_class_is_apq8064() || soc_class_is_msm8930()) {
+			clock->percpu_evt = alloc_percpu(struct clock_event_device *);
+			if (!clock->percpu_evt) {
+				pr_err("msm_timer_init: memory allocation "
+				       "failed for %s\n", ce->name);
+				continue;
+			}
+
+			*__this_cpu_ptr(clock->percpu_evt) = ce;
+			res = request_percpu_irq(ce->irq, msm_timer_interrupt,
+						 ce->name, clock->percpu_evt);
+			if (!res)
+				enable_percpu_irq(ce->irq,
+						 IRQ_TYPE_EDGE_RISING);
+		} else {
+			clock->evt = ce;
+			res = request_irq(ce->irq, msm_timer_interrupt,
+					  IRQF_TIMER | IRQF_NOBALANCING | IRQF_TRIGGER_RISING,
+					  ce->name, &clock->evt);
+		}
+
+		if (res)
+			pr_err("msm_timer_init: request_irq failed for %s\n",
+			       ce->name);
+
+		chip = irq_get_chip(clock->irq);
+		if (chip && chip->irq_mask)
+			chip->irq_mask(irq_get_irq_data(clock->irq));
+
+		if (clock->status_mask)
+			while (__raw_readl(MSM_TMR_BASE + TIMER_STATUS) &
+			       clock->status_mask)
+				;
+
+		clockevents_register_device(ce);
+	}
+	msm_sched_clock_init();
+
+	if (use_user_accessible_timers()) {
+		if (cpu_is_msm8960() || cpu_is_msm8930() || cpu_is_apq8064()) {
+			struct msm_clock *gtclock = &msm_clocks[MSM_CLOCK_GPT];
+			void __iomem *addr = gtclock->regbase +
+				TIMER_COUNT_VAL + global_timer_offset;
+			setup_user_timer_offset(virt_to_phys(addr)&0xfff);
+			set_user_accessible_timer_flag(true);
+		}
+	}
+
+	if (is_smp()) {
+		__raw_writel(1,
+			msm_clocks[MSM_CLOCK_DGT].regbase + TIMER_ENABLE);
+		msm_delay_timer.freq = dgt->freq;
+		msm_delay_timer.read_current_timer = &msm_read_current_timer;
+		register_current_timer_delay(&msm_delay_timer);
+	}
+
+#ifdef CONFIG_LOCAL_TIMERS
+	local_timer_register(&msm_lt_ops);
+#endif
+}
 
 	for (i = 0; i < ARRAY_SIZE(msm_clocks); i++) {
 		struct msm_clock *clock = &msm_clocks[i];

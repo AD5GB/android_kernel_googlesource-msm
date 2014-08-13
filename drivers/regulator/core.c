@@ -4095,8 +4095,6 @@ add_dev:
 
 	mutex_unlock(&regulator_list_mutex);
 	rdev_init_debugfs(rdev);
-	rdev->proxy_consumer = regulator_proxy_consumer_register(dev,
-							config->of_node);
 	return rdev;
 
 out:

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012-2013, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -29,12 +29,11 @@
 #include <mach/msm_bus_board.h>
 #include <mach/msm_bus.h>
 #include <mach/subsystem_restart.h>
-#include <mach/ramdump.h>
-#include <mach/msm_smem.h>
 
 #include "peripheral-loader.h"
 #include "scm-pas.h"
 #include "smd_private.h"
+#include "ramdump.h"
 
 #define GSS_CSR_AHB_CLK_SEL	0x0
 #define GSS_CSR_RESET		0x4
@@ -204,7 +203,7 @@ static int pil_gss_reset(struct pil_desc *pil)
 {
 	struct gss_data *drv = dev_get_drvdata(pil->dev);
 	void __iomem *base = drv->base;
-	phys_addr_t start_addr = pil_get_entry_addr(pil);
+	unsigned long start_addr = pil_get_entry_addr(pil);
 	void __iomem *cbase = drv->cbase;
 	int ret;
 
@@ -474,7 +473,7 @@ const struct file_operations gss_file_ops = {
 	.owner = THIS_MODULE,
 };
 
-static int __devinit pil_gss_probe(struct platform_device *pdev)
+static int pil_gss_probe(struct platform_device *pdev)
 {
 	struct gss_data *drv;
 	struct resource *res;
@@ -589,7 +588,7 @@ err_subsys:
 	return ret;
 }
 
-static int __devexit pil_gss_remove(struct platform_device *pdev)
+static int pil_gss_remove(struct platform_device *pdev)
 {
 	struct gss_data *drv = platform_get_drvdata(pdev);
 
@@ -604,7 +603,7 @@ static int __devexit pil_gss_remove(struct platform_device *pdev)
 
 static struct platform_driver pil_gss_driver = {
 	.probe = pil_gss_probe,
-	.remove = __devexit_p(pil_gss_remove),
+	.remove = pil_gss_remove,
 	.driver = {
 		.name = "pil_gss",
 		.owner = THIS_MODULE,

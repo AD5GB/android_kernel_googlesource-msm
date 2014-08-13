@@ -86,7 +86,7 @@ static int tps65023_probe(struct i2c_client *client,
 	return 0;
 }
 
-static int __devexit tps65023_remove(struct i2c_client *client)
+static int tps65023_remove(struct i2c_client *client)
 {
 	tpsclient = NULL;
 	return 0;
@@ -104,7 +104,7 @@ static struct i2c_driver tps65023_driver = {
 		.owner  = THIS_MODULE,
 	},
 	.probe  = tps65023_probe,
-	.remove = __devexit_p(tps65023_remove),
+	.remove = tps65023_remove,
 	.id_table = tps65023_id,
 };
 

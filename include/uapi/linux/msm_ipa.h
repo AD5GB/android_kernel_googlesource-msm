@@ -1,13 +1,9 @@
 #ifndef _UAPI_MSM_IPA_H_
 #define _UAPI_MSM_IPA_H_
 
-#ifndef __KERNEL__
-#include <stdint.h>
-#include <stddef.h>
-#include <sys/stat.h>
-#endif
-#include <linux/ioctl.h>
 #include <linux/types.h>
+#include <linux/stddef.h>
+#include <linux/ioctl.h>
 
 /**
  * unique magic number of the IPA device
@@ -52,12 +48,7 @@
 #define IPA_IOCTL_GET_NAT_OFFSET 28
 #define IPA_IOCTL_RM_ADD_DEPENDENCY 29
 #define IPA_IOCTL_RM_DEL_DEPENDENCY 30
-#define IPA_IOCTL_GENERATE_FLT_EQ 31
-#define IPA_IOCTL_QUERY_INTF_EXT_PROPS 32
-#define IPA_IOCTL_QUERY_EP_MAPPING 33
-#define IPA_IOCTL_QUERY_RT_TBL_INDEX 34
-#define IPA_IOCTL_WRITE_QMAPID 35
-#define IPA_IOCTL_MAX            36
+#define IPA_IOCTL_MAX            31
 
 /**
  * max size of the header to be inserted
@@ -70,19 +61,9 @@
 #define IPA_RESOURCE_NAME_MAX 20
 
 /**
- * max number of interface properties
- */
-#define IPA_NUM_PROPS_MAX 20
-
-/**
  * size of the mac address
  */
 #define IPA_MAC_ADDR_SIZE  6
-
-/**
- * max number of mbim streams
- */
-#define IPA_MBIM_MAX_STREAM_NUM 8
 
 /**
  * the attributes of the rule (routing or filtering)
@@ -103,7 +84,6 @@
 #define IPA_FLT_NEXT_HDR       (1ul << 13)
 #define IPA_FLT_META_DATA      (1ul << 14)
 #define IPA_FLT_FRAGMENT       (1ul << 15)
-#define IPA_FLT_TOS_MASKED     (1ul << 16)
 
 /**
  * enum ipa_client_type - names for the various IPA "clients"
@@ -114,54 +94,32 @@
 enum ipa_client_type {
 	IPA_CLIENT_PROD,
 	IPA_CLIENT_HSIC1_PROD = IPA_CLIENT_PROD,
-	IPA_CLIENT_WLAN1_PROD,
 	IPA_CLIENT_HSIC2_PROD,
-	IPA_CLIENT_USB2_PROD,
 	IPA_CLIENT_HSIC3_PROD,
-	IPA_CLIENT_USB3_PROD,
 	IPA_CLIENT_HSIC4_PROD,
-	IPA_CLIENT_USB4_PROD,
 	IPA_CLIENT_HSIC5_PROD,
 	IPA_CLIENT_USB_PROD,
 	IPA_CLIENT_A5_WLAN_AMPDU_PROD,
 	IPA_CLIENT_A2_EMBEDDED_PROD,
 	IPA_CLIENT_A2_TETHERED_PROD,
-	IPA_CLIENT_APPS_LAN_WAN_PROD,
-	IPA_CLIENT_APPS_CMD_PROD,
+	IPA_CLIENT_A5_LAN_WAN_PROD,
+	IPA_CLIENT_A5_CMD_PROD,
 	IPA_CLIENT_Q6_LAN_PROD,
-	IPA_CLIENT_Q6_CMD_PROD,
 
 	IPA_CLIENT_CONS,
 	IPA_CLIENT_HSIC1_CONS = IPA_CLIENT_CONS,
-	IPA_CLIENT_WLAN1_CONS,
 	IPA_CLIENT_HSIC2_CONS,
-	IPA_CLIENT_USB2_CONS,
-	IPA_CLIENT_WLAN2_CONS,
 	IPA_CLIENT_HSIC3_CONS,
-	IPA_CLIENT_USB3_CONS,
-	IPA_CLIENT_WLAN3_CONS,
 	IPA_CLIENT_HSIC4_CONS,
-	IPA_CLIENT_USB4_CONS,
-	IPA_CLIENT_WLAN4_CONS,
 	IPA_CLIENT_HSIC5_CONS,
 	IPA_CLIENT_USB_CONS,
 	IPA_CLIENT_A2_EMBEDDED_CONS,
 	IPA_CLIENT_A2_TETHERED_CONS,
 	IPA_CLIENT_A5_LAN_WAN_CONS,
-	IPA_CLIENT_APPS_LAN_CONS,
-	IPA_CLIENT_APPS_WAN_CONS,
 	IPA_CLIENT_Q6_LAN_CONS,
-	IPA_CLIENT_Q6_WAN_CONS,
-	IPA_CLIENT_Q6_DUN_CONS,
 
 	IPA_CLIENT_MAX,
 };
-
-#define IPA_CLIENT_IS_USB_CONS(client) \
-	((client) == IPA_CLIENT_USB_CONS || \
-	(client) == IPA_CLIENT_USB2_CONS || \
-	(client) == IPA_CLIENT_USB3_CONS || \
-	(client) == IPA_CLIENT_USB4_CONS)
 
 /**
  * enum ipa_ip_type - Address family: IPv4 or IPv6
@@ -178,7 +136,7 @@ enum ipa_ip_type {
  * Pass to routing: 5'd0
  * Pass to source NAT: 5'd1
  * Pass to destination NAT: 5'd2
- * Pass to default output pipe (e.g., Apps or Modem): 5'd3
+ * Pass to default output pipe (e.g., A5): 5'd3
  */
 enum ipa_flt_action {
 	IPA_PASS_TO_ROUTING,
@@ -212,17 +170,8 @@ enum ipa_wlan_event {
 	WLAN_AP_DISCONNECT,
 	WLAN_STA_CONNECT,
 	WLAN_STA_DISCONNECT,
-	WLAN_CLIENT_CONNECT_EX,
-	IPA_WLAN_EVENT_MAX
+	IPA_EVENT_MAX
 };
-
-enum ipa_ecm_event {
-	ECM_CONNECT = IPA_WLAN_EVENT_MAX,
-	ECM_DISCONNECT,
-	IPA_EVENT_MAX_NUM
-};
-
-#define IPA_EVENT_MAX ((int)IPA_EVENT_MAX_NUM)
 
 /**
  * enum ipa_rm_resource_name - IPA RM clients identification names
@@ -232,22 +181,25 @@ enum ipa_ecm_event {
  */
 enum ipa_rm_resource_name {
 	IPA_RM_RESOURCE_PROD = 0,
-	IPA_RM_RESOURCE_Q6_PROD = IPA_RM_RESOURCE_PROD,
+	IPA_RM_RESOURCE_BRIDGE_PROD = IPA_RM_RESOURCE_PROD,
+	IPA_RM_RESOURCE_A2_PROD,
 	IPA_RM_RESOURCE_USB_PROD,
 	IPA_RM_RESOURCE_HSIC_PROD,
 	IPA_RM_RESOURCE_STD_ECM_PROD,
-	IPA_RM_RESOURCE_RNDIS_PROD,
 	IPA_RM_RESOURCE_WWAN_0_PROD,
-	IPA_RM_RESOURCE_ODU_PROD,
-	IPA_RM_RESOURCE_ODU_BRIDGE_PROD,
+	IPA_RM_RESOURCE_WWAN_1_PROD,
+	IPA_RM_RESOURCE_WWAN_2_PROD,
+	IPA_RM_RESOURCE_WWAN_3_PROD,
+	IPA_RM_RESOURCE_WWAN_4_PROD,
+	IPA_RM_RESOURCE_WWAN_5_PROD,
+	IPA_RM_RESOURCE_WWAN_6_PROD,
+	IPA_RM_RESOURCE_WWAN_7_PROD,
 	IPA_RM_RESOURCE_WLAN_PROD,
 	IPA_RM_RESOURCE_PROD_MAX,
 
-	IPA_RM_RESOURCE_Q6_CONS = IPA_RM_RESOURCE_PROD_MAX,
+	IPA_RM_RESOURCE_A2_CONS = IPA_RM_RESOURCE_PROD_MAX,
 	IPA_RM_RESOURCE_USB_CONS,
 	IPA_RM_RESOURCE_HSIC_CONS,
-	IPA_RM_RESOURCE_WLAN_CONS,
-	IPA_RM_RESOURCE_APPS_CONS,
 	IPA_RM_RESOURCE_MAX
 };
 
@@ -288,8 +240,6 @@ struct ipa_rule_attrib {
 	uint16_t dst_port_hi;
 	uint8_t type;
 	uint8_t code;
-	uint8_t tos_value;
-	uint8_t tos_mask;
 	uint32_t spi;
 	uint16_t src_port;
 	uint16_t dst_port;
@@ -316,137 +266,16 @@ struct ipa_rule_attrib {
 	} u;
 };
 
-/*! @brief The maximum number of Mask Equal 32 Eqns */
-#define IPA_IPFLTR_NUM_MEQ_32_EQNS 2
-
-/*! @brief The maximum number of IHL offset Mask Equal 32 Eqns */
-#define IPA_IPFLTR_NUM_IHL_MEQ_32_EQNS 2
-
-/*! @brief The maximum number of Mask Equal 128 Eqns */
-#define IPA_IPFLTR_NUM_MEQ_128_EQNS 2
-
-/*! @brief The maximum number of IHL offset Range Check 16 Eqns */
-#define IPA_IPFLTR_NUM_IHL_RANGE_16_EQNS 2
-
-/*! @brief Offset and 16 bit comparison equation */
-struct ipa_ipfltr_eq_16 {
-	uint8_t offset;
-	uint16_t value;
-};
-
-/*! @brief Offset and 32 bit comparison equation */
-struct ipa_ipfltr_eq_32 {
-	uint8_t offset;
-	uint32_t value;
-};
-
-/*! @brief Offset and 128 bit masked comparison equation */
-struct ipa_ipfltr_mask_eq_128 {
-	uint8_t offset;
-	uint8_t mask[16];
-	uint8_t value[16];
-};
-
-/*! @brief Offset and 32 bit masked comparison equation */
-struct ipa_ipfltr_mask_eq_32 {
-	uint8_t offset;
-	uint32_t mask;
-	uint32_t value;
-};
-
-/*! @brief Equation for identifying a range. Ranges are inclusive */
-struct ipa_ipfltr_range_eq_16 {
-	uint8_t offset;
-	uint16_t range_low;
-	uint16_t range_high;
-};
-
-/*! @brief Rule equations which are set according to DS filter installation */
-struct ipa_ipfltri_rule_eq {
-	/*! 16-bit Bitmask to indicate how many eqs are valid in this rule  */
-	uint16_t rule_eq_bitmap;
-	/*! Specifies if a type of service check rule is present */
-	uint8_t tos_eq_present;
-	/*! The value to check against the type of service (ipv4) field */
-	uint8_t tos_eq;
-	/*! Specifies if a protocol check rule is present */
-	uint8_t protocol_eq_present;
-	/*! The value to check against the protocol (ipv6) field */
-	uint8_t protocol_eq;
-	/*! The number of ip header length offset 16 bit range check
-	 * rules in this rule */
-	uint8_t num_ihl_offset_range_16;
-	/*! An array of the registered ip header length offset 16 bit
-	 * range check rules */
-	struct ipa_ipfltr_range_eq_16
-		ihl_offset_range_16[IPA_IPFLTR_NUM_IHL_RANGE_16_EQNS];
-	/*! The number of mask equal 32 rules present in this rule */
-	uint8_t num_offset_meq_32;
-	/*! An array of all the possible mask equal 32 rules in this rule */
-	struct ipa_ipfltr_mask_eq_32
-		offset_meq_32[IPA_IPFLTR_NUM_MEQ_32_EQNS];
-	/*! Specifies if the traffic class rule is present in this rule */
-	uint8_t tc_eq_present;
-	/*! The value to check the traffic class (ipv4) field against */
-	uint8_t tc_eq;
-	/*! Specifies if the flow equals rule is present in this rule */
-	uint8_t fl_eq_present;
-	/*! The value to check the flow (ipv6) field against */
-	uint32_t fl_eq;
-	/*! The number of ip header length offset 16 bit equations in this
-	 * rule */
-	uint8_t ihl_offset_eq_16_present;
-	/*! The ip header length offset 16 bit equation */
-	struct ipa_ipfltr_eq_16 ihl_offset_eq_16;
-	/*! The number of ip header length offset 32 bit equations in this
-	 * rule */
-	uint8_t ihl_offset_eq_32_present;
-	/*! The ip header length offset 32 bit equation */
-	struct ipa_ipfltr_eq_32 ihl_offset_eq_32;
-	/*! The number of ip header length offset 32 bit mask equations in
-	 * this rule */
-	uint8_t num_ihl_offset_meq_32;
-	/*! The ip header length offset 32 bit mask equation */
-	struct ipa_ipfltr_mask_eq_32
-		ihl_offset_meq_32[IPA_IPFLTR_NUM_IHL_MEQ_32_EQNS];
-	/*! The number of ip header length offset 128 bit equations in this
-	 * rule */
-	uint8_t num_offset_meq_128;
-	/*! The ip header length offset 128 bit equation */
-	struct ipa_ipfltr_mask_eq_128
-		offset_meq_128[IPA_IPFLTR_NUM_MEQ_128_EQNS];
-	/*! The metadata 32 bit masked comparison equation present or not */
-	/* Metadata based rules are added internally by IPA driver */
-	uint8_t metadata_meq32_present;
-	/*! The metadata 32 bit masked comparison equation */
-	struct ipa_ipfltr_mask_eq_32 metadata_meq32;
-	/*! Specifies if the IPv4 Fragment equation is present in this rule */
-	uint8_t ipv4_frag_eq_present;
-};
-
 /**
  * struct ipa_flt_rule - attributes of a filtering rule
- * @retain_hdr: bool switch to instruct IPA core to add back to the packet
- *  the header removed as part of header removal
- * @to_uc: bool switch to pass packet to micro-controller
  * @action: action field
  * @rt_tbl_hdl: handle of table from "get"
  * @attrib: attributes of the rule
- * @eq_attrib: attributes of the rule in equation form (valid when
- * eq_attrib_type is true)
- * @rt_tbl_idx: index of RT table referred to by filter rule (valid when
- * eq_attrib_type is true and non-exception action)
- * @eq_attrib_type: true if equation level form used to specify attributes
  */
 struct ipa_flt_rule {
-	uint8_t retain_hdr;
-	uint8_t to_uc;
 	enum ipa_flt_action action;
 	uint32_t rt_tbl_hdl;
 	struct ipa_rule_attrib attrib;
-	struct ipa_ipfltri_rule_eq eq_attrib;
-	uint32_t rt_tbl_idx;
-	uint8_t eq_attrib_type;
 };
 
 /**
@@ -620,19 +449,6 @@ struct ipa_ioc_del_rt_rule {
 };
 
 /**
- * struct ipa_ioc_get_rt_tbl_indx - routing table index lookup parameters
- * @ip: IP family of table
- * @name: name of routing table resource
- * @index:	output parameter, routing table index, valid only when ioctl
- *		return val is non-negative
- */
-struct ipa_ioc_get_rt_tbl_indx {
-	enum ipa_ip_type ip;
-	char name[IPA_RESOURCE_NAME_MAX];
-	uint32_t idx;
-};
-
-/**
  * struct ipa_flt_rule_add - filtering rule descriptor includes
  * in and out parameters
  * @rule: actual rule to be added
@@ -723,17 +539,11 @@ struct ipa_ioc_get_rt_tbl {
  *			valid only when ioctl return val is non-negative
  * @num_rx_props:	output parameter, number of rx properties
  *			valid only when ioctl return val is non-negative
- * @num_ext_props:	output parameter, number of ext properties
- *			valid only when ioctl return val is non-negative
- * @excp_pipe:		exception packets of this interface should be
- *			routed to this pipe
  */
 struct ipa_ioc_query_intf {
 	char name[IPA_RESOURCE_NAME_MAX];
 	uint32_t num_tx_props;
 	uint32_t num_rx_props;
-	uint32_t num_ext_props;
-	enum ipa_client_type excp_pipe;
 };
 
 /**
@@ -760,36 +570,6 @@ struct ipa_ioc_query_intf_tx_props {
 	char name[IPA_RESOURCE_NAME_MAX];
 	uint32_t num_tx_props;
 	struct ipa_ioc_tx_intf_prop tx[0];
-};
-
-/**
- * struct ipa_ioc_ext_intf_prop - interface extended property
- * @ip: IP family of routing rule
- * @eq_attrib: attributes of the rule in equation form
- * @action: action field
- * @rt_tbl_idx: index of RT table referred to by filter rule
- * @mux_id: MUX_ID
- * @filter_hdl: handle of filter (as specified by provider of filter rule)
- */
-struct ipa_ioc_ext_intf_prop {
-	enum ipa_ip_type ip;
-	struct ipa_ipfltri_rule_eq eq_attrib;
-	enum ipa_flt_action action;
-	uint32_t rt_tbl_idx;
-	uint8_t mux_id;
-	uint32_t filter_hdl;
-};
-
-/**
- * struct ipa_ioc_query_intf_ext_props - interface ext propertie
- * @name: name of interface
- * @num_ext_props: number of EXT properties
- * @ext[0]: output parameter, the ext properties go here back to back
- */
-struct ipa_ioc_query_intf_ext_props {
-	char name[IPA_RESOURCE_NAME_MAX];
-	uint32_t num_ext_props;
-	struct ipa_ioc_ext_intf_prop ext[0];
 };
 
 /**
@@ -932,56 +712,6 @@ struct ipa_wlan_msg {
 };
 
 /**
- * enum ipa_wlan_hdr_attrib_type - attribute type
- * in wlan client header
- *
- * WLAN_HDR_ATTRIB_MAC_ADDR: attrib type mac address
- * WLAN_HDR_ATTRIB_STA_ID: attrib type station id
- */
-enum ipa_wlan_hdr_attrib_type {
-	WLAN_HDR_ATTRIB_MAC_ADDR,
-	WLAN_HDR_ATTRIB_STA_ID
-};
-
-/**
- * struct ipa_wlan_hdr_attrib_val - header attribute value
- * @attrib_type: type of attribute
- * @offset: offset of attribute within header
- * @u.mac_addr: mac address
- * @u.sta_id: station id
- */
-struct ipa_wlan_hdr_attrib_val {
-	enum ipa_wlan_hdr_attrib_type attrib_type;
-	uint8_t offset;
-	union {
-		uint8_t mac_addr[IPA_MAC_ADDR_SIZE];
-		uint8_t sta_id;
-	} u;
-};
-
-/**
- * struct ipa_wlan_msg_ex - To hold information about wlan client
- * @name: name of the wlan interface
- * @num_of_attribs: number of attributes
- * @attrib_val: holds attribute values
- *
- * wlan drivers need to pass name of wlan iface and mac address
- * of wlan client or station id along with ipa_wlan_event,
- * whenever a wlan client is connected/disconnected/moved to
- * power save/come out of power save
- */
-struct ipa_wlan_msg_ex {
-	char name[IPA_RESOURCE_NAME_MAX];
-	uint8_t num_of_attribs;
-	struct ipa_wlan_hdr_attrib_val attribs[0];
-};
-
-struct ipa_ecm_msg {
-	char name[IPA_RESOURCE_NAME_MAX];
-	int ifindex;
-};
-
-/**
  * struct ipa_ioc_rm_dependency - parameters for add/delete dependency
  * @resource_name: name of dependent resource
  * @depends_on_name: name of its dependency
@@ -989,21 +719,6 @@ struct ipa_ecm_msg {
 struct ipa_ioc_rm_dependency {
 	enum ipa_rm_resource_name resource_name;
 	enum ipa_rm_resource_name depends_on_name;
-};
-
-struct ipa_ioc_generate_flt_eq {
-	enum ipa_ip_type ip;
-	struct ipa_rule_attrib attrib;
-	struct ipa_ipfltri_rule_eq eq_attrib;
-};
-
-/**
- * struct ipa_ioc_write_qmapid - to write mux id to endpoint meta register
- * @mux_id: mux id of wan
- */
-struct ipa_ioc_write_qmapid {
-	enum ipa_client_type client;
-	uint8_t qmap_id;
 };
 
 
@@ -1064,9 +779,6 @@ struct ipa_ioc_write_qmapid {
 #define IPA_IOC_QUERY_INTF_RX_PROPS _IOWR(IPA_IOC_MAGIC, \
 					IPA_IOCTL_QUERY_INTF_RX_PROPS, \
 					struct ipa_ioc_query_intf_rx_props *)
-#define IPA_IOC_QUERY_INTF_EXT_PROPS _IOWR(IPA_IOC_MAGIC, \
-					IPA_IOCTL_QUERY_INTF_EXT_PROPS, \
-					struct ipa_ioc_query_intf_ext_props *)
 #define IPA_IOC_GET_HDR _IOWR(IPA_IOC_MAGIC, \
 				IPA_IOCTL_GET_HDR, \
 				struct ipa_ioc_get_hdr *)
@@ -1100,18 +812,6 @@ struct ipa_ioc_write_qmapid {
 #define IPA_IOC_RM_DEL_DEPENDENCY _IOWR(IPA_IOC_MAGIC, \
 				IPA_IOCTL_RM_DEL_DEPENDENCY, \
 				struct ipa_ioc_rm_dependency *)
-#define IPA_IOC_GENERATE_FLT_EQ _IOWR(IPA_IOC_MAGIC, \
-				IPA_IOCTL_GENERATE_FLT_EQ, \
-				struct ipa_ioc_generate_flt_eq *)
-#define IPA_IOC_QUERY_EP_MAPPING _IOR(IPA_IOC_MAGIC, \
-				IPA_IOCTL_QUERY_EP_MAPPING, \
-				uint32_t)
-#define IPA_IOC_QUERY_RT_TBL_INDEX _IOWR(IPA_IOC_MAGIC, \
-				IPA_IOCTL_QUERY_RT_TBL_INDEX, \
-				struct ipa_ioc_get_rt_tbl_indx *)
-#define IPA_IOC_WRITE_QMAPID  _IOWR(IPA_IOC_MAGIC, \
-				IPA_IOCTL_WRITE_QMAPID, \
-				struct ipa_ioc_write_qmapid *)
 
 /*
  * unique magic number of the Tethering bridge ioctls
@@ -1182,36 +882,16 @@ struct teth_aggr_capabilities {
 	struct teth_aggr_params_link prot_caps[0];
 };
 
-/**
- * struct teth_ioc_set_bridge_mode
- * @link_protocol: link protocol (IP / Ethernet)
- * @lcid: logical channel number
- */
-struct teth_ioc_set_bridge_mode {
-	enum teth_link_protocol_type link_protocol;
-	uint16_t lcid;
-};
-
-/**
- * struct teth_ioc_set_aggr_params
- * @aggr_params: Aggregation parmeters
- * @lcid: logical channel number
- */
-struct teth_ioc_aggr_params {
-	struct teth_aggr_params aggr_params;
-	uint16_t lcid;
-};
-
 
 #define TETH_BRIDGE_IOC_SET_BRIDGE_MODE _IOW(TETH_BRIDGE_IOC_MAGIC, \
 				TETH_BRIDGE_IOCTL_SET_BRIDGE_MODE, \
-				struct teth_ioc_set_bridge_mode *)
+				enum teth_link_protocol_type)
 #define TETH_BRIDGE_IOC_SET_AGGR_PARAMS _IOW(TETH_BRIDGE_IOC_MAGIC, \
 				TETH_BRIDGE_IOCTL_SET_AGGR_PARAMS, \
-				struct teth_ioc_aggr_params *)
+				struct teth_aggr_params *)
 #define TETH_BRIDGE_IOC_GET_AGGR_PARAMS _IOR(TETH_BRIDGE_IOC_MAGIC, \
 				TETH_BRIDGE_IOCTL_GET_AGGR_PARAMS, \
-				struct teth_ioc_aggr_params *)
+				struct teth_aggr_params *)
 #define TETH_BRIDGE_IOC_GET_AGGR_CAPABILITIES _IOWR(TETH_BRIDGE_IOC_MAGIC, \
 				TETH_BRIDGE_IOCTL_GET_AGGR_CAPABILITIES, \
 				struct teth_aggr_capabilities *)

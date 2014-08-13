@@ -46,18 +46,7 @@ struct grmnet {
 	void (*connect)(struct grmnet *g);
 };
 
-#define NR_QTI_PORTS	4
-#define NR_RMNET_PORTS	4
-
-enum ctrl_client {
-	FRMNET_CTRL_CLIENT,
-	GPS_CTRL_CLIENT,
-
-	NR_CTRL_CLIENTS
-};
-
 int gbam_setup(unsigned int no_bam_port, unsigned int no_bam2bam_port);
-void gbam_cleanup(void);
 int gbam_connect(struct grmnet *gr, u8 port_num,
 	enum transport_type trans, u8 src_connection_idx,
 	u8 dst_connection_idx);
@@ -67,11 +56,8 @@ void gbam_suspend(struct grmnet *gr, u8 port_num, enum transport_type trans);
 void gbam_resume(struct grmnet *gr, u8 port_num, enum transport_type trans);
 int gsmd_ctrl_connect(struct grmnet *gr, int port_num);
 void gsmd_ctrl_disconnect(struct grmnet *gr, u8 port_num);
-int gsmd_ctrl_setup(enum ctrl_client client_num, unsigned int count,
-					u8 *first_port_idx);
-int gqti_ctrl_connect(struct grmnet *gr, u8 port_num, unsigned intf);
-void gqti_ctrl_disconnect(struct grmnet *gr, u8 port_num);
-void gqti_ctrl_update_ipa_pipes(struct grmnet *gr, u8 port_num,
-					u32 ipa_prod, u32 ipa_cons);
+int gsmd_ctrl_setup(unsigned int count);
+int gqti_ctrl_connect(struct grmnet *gr);
+void gqti_ctrl_disconnect(struct grmnet *gr);
 
 #endif /* __U_RMNET_H*/

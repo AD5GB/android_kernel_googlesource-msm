@@ -1324,7 +1324,7 @@ static int msm_batt_cb_func(struct msm_rpc_client *client,
 }
 #endif  /* CONFIG_BATTERY_MSM_FAKE */
 
-static int __devinit msm_batt_probe(struct platform_device *pdev)
+static int msm_batt_probe(struct platform_device *pdev)
 {
 	int rc;
 	struct msm_psy_batt_pdata *pdata = pdev->dev.platform_data;
@@ -1441,7 +1441,7 @@ static int __devinit msm_batt_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static int __devexit msm_batt_remove(struct platform_device *pdev)
+static int msm_batt_remove(struct platform_device *pdev)
 {
 	int rc;
 	rc = msm_batt_cleanup();
@@ -1456,14 +1456,14 @@ static int __devexit msm_batt_remove(struct platform_device *pdev)
 
 static struct platform_driver msm_batt_driver = {
 	.probe = msm_batt_probe,
-	.remove = __devexit_p(msm_batt_remove),
+	.remove = msm_batt_remove,
 	.driver = {
 		   .name = "msm-battery",
 		   .owner = THIS_MODULE,
 		   },
 };
 
-static int __devinit msm_batt_init_rpc(void)
+static int msm_batt_init_rpc(void)
 {
 	int rc;
 

@@ -610,6 +610,7 @@ static int rndis_init_response(int configNr, rndis_init_msg_type *buf)
 		(params->dev->mtu
 		+ sizeof(struct ethhdr)
 		+ sizeof(struct rndis_packet_msg_type)
+
 		+ 22));
 	resp->PacketAlignmentFactor = cpu_to_le32(params->pkt_alignment_factor);
 	resp->AFListOffset = cpu_to_le32(0);

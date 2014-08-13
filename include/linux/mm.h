@@ -1779,8 +1779,6 @@ static inline int get_user_timer_page(struct vm_area_struct *vma,
 }
 #endif
 
-#ifdef CONFIG_SYSCTL
-extern int sysctl_drop_caches;
 int drop_caches_sysctl_handler(struct ctl_table *, int,
 					void __user *, size_t *, loff_t *);
 #endif

@@ -309,18 +309,18 @@ static int mdm9625_mi2s_startup(struct snd_pcm_substream *substream)
 			pr_err("set format for codec dai failed\n");
 			return ret;
 		}
-		/* This sets the CONFIG PARAMETER WS_SRC.
-		 * 1 means internal clock master mode.
-		 * 0 means external clock slave mode.
-		 */
-		ret = snd_soc_dai_set_fmt(cpu_dai, SND_SOC_DAIFMT_CBS_CFS);
-		if (ret < 0)
-			pr_err("set fmt cpu dai failed\n");
-
-		ret = snd_soc_dai_set_fmt(codec_dai, SND_SOC_DAIFMT_CBS_CFS);
-		if (ret < 0)
-			pr_err("set fmt for codec dai failed\n");
 	}
+	/* This sets the CONFIG PARAMETER WS_SRC.
+	 * 1 means internal clock master mode.
+	 * 0 means external clock slave mode.
+	 */
+	ret = snd_soc_dai_set_fmt(cpu_dai, SND_SOC_DAIFMT_CBS_CFS);
+	if (ret < 0)
+		pr_err("set fmt cpu dai failed\n");
+
+	ret = snd_soc_dai_set_fmt(codec_dai, SND_SOC_DAIFMT_CBS_CFS);
+	if (ret < 0)
+		pr_err("set fmt for codec dai failed\n");
 
 	return ret;
 }
@@ -761,21 +761,6 @@ static struct snd_soc_dai_link mdm9625_dai[] = {
 		.be_id = MSM_FRONTEND_DAI_MULTIMEDIA1
 	},
 	{
-		.name = "MDM9625 Media2",
-		.stream_name = "MultiMedia2",
-		.cpu_dai_name   = "MultiMedia2",
-		.platform_name  = "msm-pcm-dsp.0",
-		.dynamic = 1,
-		.codec_dai_name = "snd-soc-dummy-dai",
-		.codec_name = "snd-soc-dummy",
-		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
-			    SND_SOC_DPCM_TRIGGER_POST},
-		.ignore_suspend = 1,
-		/* this dainlink has playback support */
-		.ignore_pmdown_time = 1,
-		.be_id = MSM_FRONTEND_DAI_MULTIMEDIA2,
-	},
-	{
 		.name = "MSM VoIP",
 		.stream_name = "VoIP",
 		.cpu_dai_name = "VoIP",
@@ -928,7 +913,7 @@ static struct snd_soc_dai_link mdm9625_dai[] = {
 	{
 		.name = LPASS_BE_AUXPCM_RX,
 		.stream_name = "AUX PCM Playback",
-		.cpu_dai_name = "msm-dai-q6-auxpcm.1",
+		.cpu_dai_name = "msm-dai-q6.4106",
 		.platform_name = "msm-pcm-routing",
 		.codec_name = "msm-stub-codec.1",
 		.codec_dai_name = "msm-stub-rx",
@@ -942,7 +927,7 @@ static struct snd_soc_dai_link mdm9625_dai[] = {
 	{
 		.name = LPASS_BE_AUXPCM_TX,
 		.stream_name = "AUX PCM Capture",
-		.cpu_dai_name = "msm-dai-q6-auxpcm.1",
+		.cpu_dai_name = "msm-dai-q6.4107",
 		.platform_name = "msm-pcm-routing",
 		.codec_name = "msm-stub-codec.1",
 		.codec_dai_name = "msm-stub-tx",
@@ -1047,7 +1032,7 @@ err:
 	return ret;
 }
 
-static __devinit int mdm9625_asoc_machine_probe(struct platform_device *pdev)
+static int mdm9625_asoc_machine_probe(struct platform_device *pdev)
 {
 	int ret;
 	struct snd_soc_card *card = &snd_soc_card_mdm9625;
@@ -1126,7 +1111,7 @@ err:
 	return ret;
 }
 
-static int __devexit mdm9625_asoc_machine_remove(struct platform_device *pdev)
+static int mdm9625_asoc_machine_remove(struct platform_device *pdev)
 {
 	struct snd_soc_card *card = platform_get_drvdata(pdev);
 	struct mdm9625_machine_data *pdata = snd_soc_card_get_drvdata(card);
@@ -1148,7 +1133,7 @@ static struct platform_driver msm9625_asoc_machine_driver = {
 		.of_match_table = msm9625_asoc_machine_of_match,
 	},
 	.probe = mdm9625_asoc_machine_probe,
-	.remove = __devexit_p(mdm9625_asoc_machine_remove),
+	.remove = mdm9625_asoc_machine_remove,
 };
 
 

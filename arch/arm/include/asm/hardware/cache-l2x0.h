@@ -109,11 +109,11 @@
 
 #define L2X0_WAY_SIZE_SHIFT		3
 
+#define REV_PL310_R2P0				4
+
 #define L2X0_PREFETCH_CTRL_OFFSET_SHIFT		0
 #define L2X0_PREFETCH_CTRL_WRAP8_INC_SHIFT	23
 #define L2X0_PREFETCH_CTRL_WRAP8_SHIFT		30
-
-#define REV_PL310_R2P0				4
 
 #ifndef __ASSEMBLY__
 extern void __iomem *l2x0_base;

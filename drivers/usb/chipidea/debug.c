@@ -97,13 +97,62 @@ void dbg_usb_op_fail(u8 addr, const char *name,
  */
 static int ci_port_test_show(struct seq_file *s, void *data)
 {
-	struct ci13xxx *ci = s->private;
+	*idx = (*idx + 1) & (DBG_DATA_MAX-1);
+}
+
+static unsigned int ep_addr_txdbg_mask;
+module_param(ep_addr_txdbg_mask, uint, S_IRUGO | S_IWUSR);
+static unsigned int ep_addr_rxdbg_mask;
+module_param(ep_addr_rxdbg_mask, uint, S_IRUGO | S_IWUSR);
+
+static int allow_dbg_print(u8 addr)
+{
+	int dir, num;
+
+	/* allow bus wide events */
+	if (addr == 0xff)
+		return 1;
+
+	dir = addr & USB_ENDPOINT_DIR_MASK ? TX : RX;
+	num = addr & ~USB_ENDPOINT_DIR_MASK;
+	num = 1 << num;
+
+	if ((dir == TX) && (num & ep_addr_txdbg_mask))
+		return 1;
+	if ((dir == RX) && (num & ep_addr_rxdbg_mask))
+		return 1;
+
+	return 0;
+}
+
+/**
+ * dbg_print:  prints the common part of the event
+ * @addr:   endpoint address
+ * @name:   event name
+ * @status: status
+ * @extra:  extra information
+ */
+static void dbg_print(u8 addr, const char *name, int status, const char *extra)
+{
+	struct timeval tval;
+	unsigned int stamp;
 	unsigned long flags;
 	unsigned mode;
 
-	spin_lock_irqsave(&ci->lock, flags);
-	mode = hw_port_test_get(ci);
-	spin_unlock_irqrestore(&ci->lock, flags);
+	if (!allow_dbg_print(addr))
+		return;
+
+	write_lock_irqsave(&dbg_data.lck, flags);
+
+	do_gettimeofday(&tval);
+	stamp = tval.tv_sec & 0xFFFF;	/* 2^32 = 4294967296. Limit to 4096s */
+	stamp = stamp * 1000000 + tval.tv_usec;
+
+	scnprintf(dbg_data.buf[dbg_data.idx], DBG_DATA_MSG,
+		  "%04X\t? %02X %-7.7s %4i ?\t%s\n",
+		  stamp, addr, name, status, extra);
+
+	dbg_inc(&dbg_data.idx);
 
 	seq_printf(s, "mode = %u\n", mode);
 
@@ -150,7 +199,48 @@ static const struct file_operations ci_port_test_fops = {
 };
 
 /**
- * ci_qheads_show: DMA contents of all queue heads
+ * dbg_usb_op_fail: prints USB Operation FAIL event
+ * @addr: endpoint address
+ * @mEp:  endpoint structure
+ */
+void dbg_usb_op_fail(u8 addr, const char *name,
+				const struct ci13xxx_ep *mEp)
+{
+	char msg[DBG_DATA_MSG];
+	struct ci13xxx_req *req;
+	struct list_head *ptr = NULL;
+
+	if (mEp != NULL) {
+		scnprintf(msg, sizeof(msg),
+			"%s Fail EP%d%s QH:%08X",
+			name, mEp->num,
+			mEp->dir ? "IN" : "OUT", mEp->qh.ptr->cap);
+		dbg_print(addr, name, 0, msg);
+		scnprintf(msg, sizeof(msg),
+				"cap:%08X %08X %08X\n",
+				mEp->qh.ptr->curr, mEp->qh.ptr->td.next,
+				mEp->qh.ptr->td.token);
+		dbg_print(addr, "QHEAD", 0, msg);
+
+		list_for_each(ptr, &mEp->qh.queue) {
+			req = list_entry(ptr, struct ci13xxx_req, queue);
+			scnprintf(msg, sizeof(msg),
+					"%08X:%08X:%08X\n",
+					req->dma, req->ptr->next,
+					req->ptr->token);
+			dbg_print(addr, "REQ", 0, msg);
+			scnprintf(msg, sizeof(msg), "%08X:%d\n",
+					req->ptr->page[0],
+					req->req.status);
+			dbg_print(addr, "REQPAGE", 0, msg);
+		}
+	}
+}
+
+/**
+ * show_events: displays the event buffer
+ *
+ * Check "device.h" for details
  */
 static int ci_qheads_show(struct seq_file *s, void *data)
 {
@@ -402,6 +492,110 @@ static const struct file_operations ci_wakeup_fops = {
 	.write		= ci_role_write,
 };
 
+/* EP# and Direction */
+static ssize_t prime_ept(struct device *dev,
+			       struct device_attribute *attr,
+			       const char *buf, size_t count)
+{
+	struct ci13xxx *ci = container_of(dev, struct ci13xxx, gadget.dev);
+	struct ci13xxx_ep *mEp;
+	unsigned int ep_num, dir;
+	int n;
+	struct ci13xxx_req *mReq = NULL;
+
+	if (sscanf(buf, "%u %u", &ep_num, &dir) != 2) {
+		dev_err(dev, "<ep_num> <dir>: prime the ep");
+		goto done;
+	}
+
+	if (dir)
+		mEp = &ci->ci13xxx_ep[ep_num + hw_ep_max/2];
+	else
+		mEp = &ci->ci13xxx_ep[ep_num];
+
+	n = hw_ep_bit(mEp->num, mEp->dir);
+	mReq =  list_entry(mEp->qh.queue.next, struct ci13xxx_req, queue);
+	mEp->qh.ptr->td.next   = mReq->dma;
+	mEp->qh.ptr->td.token &= ~TD_STATUS;
+
+	wmb();
+
+	hw_cwrite(CAP_ENDPTPRIME, BIT(n), BIT(n));
+	while (hw_cread(CAP_ENDPTPRIME, BIT(n)))
+		cpu_relax();
+
+	pr_info("%s: prime:%08x stat:%08x ep#%d dir:%s\n", __func__,
+			hw_cread(CAP_ENDPTPRIME, ~0),
+			hw_cread(CAP_ENDPTSTAT, ~0),
+			mEp->num, mEp->dir ? "IN" : "OUT");
+done:
+	return count;
+
+}
+static DEVICE_ATTR(prime, S_IWUSR, NULL, prime_ept);
+
+/* EP# and Direction */
+static ssize_t print_dtds(struct device *dev,
+			       struct device_attribute *attr,
+			       const char *buf, size_t count)
+{
+	struct ci13xxx *ci = container_of(dev, struct ci13xxx, gadget.dev);
+	struct ci13xxx_ep *mEp;
+	unsigned int ep_num, dir;
+	int n;
+	struct list_head   *ptr = NULL;
+	struct ci13xxx_req *req = NULL;
+
+	if (sscanf(buf, "%u %u", &ep_num, &dir) != 2) {
+		dev_err(dev, "<ep_num> <dir>: to print dtds");
+		goto done;
+	}
+
+	if (dir)
+		mEp = &ci->ci13xxx_ep[ep_num + hw_ep_max/2];
+	else
+		mEp = &ci->ci13xxx_ep[ep_num];
+
+	n = hw_ep_bit(mEp->num, mEp->dir);
+	pr_info("%s: prime:%08x stat:%08x ep#%d dir:%s"
+			"dTD_update_fail_count: %lu "
+			"mEp->dTD_update_fail_count: %lu"
+			"mEp->prime_fail_count: %lu\n", __func__,
+			hw_read(ci, OP_ENDPTPRIME, ~0),
+			hw_read(ci, OP_ENDPTSTAT, ~0),
+			mEp->num, mEp->dir ? "IN" : "OUT",
+			udc->dTD_update_fail_count,
+			mEp->dTD_update_fail_count,
+			mEp->prime_fail_count);
+
+	pr_info("QH: cap:%08x cur:%08x next:%08x token:%08x\n",
+			mEp->qh.ptr->cap, mEp->qh.ptr->curr,
+			mEp->qh.ptr->td.next, mEp->qh.ptr->td.token);
+
+	list_for_each(ptr, &mEp->qh.queue) {
+		req = list_entry(ptr, struct ci13xxx_req, queue);
+
+		pr_info("\treq:%08x next:%08x token:%08x page0:%08x status:%d\n",
+				req->dma, req->ptr->next, req->ptr->token,
+				req->ptr->page[0], req->req.status);
+	}
+done:
+	return count;
+
+}
+static DEVICE_ATTR(dtds, S_IWUSR, NULL, print_dtds);
+
+static ssize_t usb_remote_wakeup(struct device *dev,
+		struct device_attribute *attr, const char *buf, size_t count)
+{
+	struct ci13xxx *ci = container_of(dev, struct ci13xxx, gadget.dev);
+
+	ci13xxx_wakeup(&ci->gadget);
+
+	return count;
+}
+static DEVICE_ATTR(wakeup, S_IWUSR, 0, usb_remote_wakeup);
+
 /**
  * dbg_create_files: initializes the attribute interface
  * @ci: device
@@ -449,15 +643,40 @@ int dbg_create_files(struct ci13xxx *ci)
 	retval = debugfs_create_file("dtds", S_IWUSR, ci->debugfs, ci,
 				   &ci_dtds_fops);
 	if (retval)
-		goto err;
+		goto rm_registers;
+	retval = device_create_file(dev, &dev_attr_wakeup);
+	if (retval)
+		goto rm_requests;
+	retval = device_create_file(dev, &dev_attr_prime);
+	if (retval)
+		goto rm_wakeup;
+	retval = device_create_file(dev, &dev_attr_dtds);
+	if (retval)
+		goto rm_prime;
+	return 0;
 
-	dent = debugfs_create_file("role", S_IRUGO | S_IWUSR, ci->debugfs, ci,
-				   &ci_role_fops);
-	if (dent)
-		return 0;
-err:
-	debugfs_remove_recursive(ci->debugfs);
-	return -ENOMEM;
+ rm_prime:
+	device_remove_file(dev, &dev_attr_prime);
+ rm_wakeup:
+	device_remove_file(dev, &dev_attr_wakeup);
+ rm_requests:
+	device_remove_file(dev, &dev_attr_requests);
+ rm_registers:
+	device_remove_file(dev, &dev_attr_registers);
+ rm_qheads:
+	device_remove_file(dev, &dev_attr_qheads);
+ rm_port_test:
+	device_remove_file(dev, &dev_attr_port_test);
+ rm_inters:
+	device_remove_file(dev, &dev_attr_inters);
+ rm_events:
+	device_remove_file(dev, &dev_attr_events);
+ rm_driver:
+	device_remove_file(dev, &dev_attr_driver);
+ rm_device:
+	device_remove_file(dev, &dev_attr_device);
+ done:
+	return retval;
 }
 
 /**
@@ -466,5 +685,16 @@ err:
  */
 void dbg_remove_files(struct ci13xxx *ci)
 {
-	debugfs_remove_recursive(ci->debugfs);
+	if (dev == NULL)
+		return -EINVAL;
+	device_remove_file(dev, &dev_attr_wakeup);
+	device_remove_file(dev, &dev_attr_requests);
+	device_remove_file(dev, &dev_attr_registers);
+	device_remove_file(dev, &dev_attr_qheads);
+	device_remove_file(dev, &dev_attr_port_test);
+	device_remove_file(dev, &dev_attr_inters);
+	device_remove_file(dev, &dev_attr_events);
+	device_remove_file(dev, &dev_attr_driver);
+	device_remove_file(dev, &dev_attr_device);
+	return 0;
 }

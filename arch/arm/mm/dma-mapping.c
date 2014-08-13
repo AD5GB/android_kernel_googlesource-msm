@@ -649,7 +649,7 @@ static void *__alloc_from_contiguous(struct device *dev, size_t size,
 			ptr = __dma_alloc_remap(page, size, GFP_KERNEL, prot,
 						caller);
 			if (!ptr) {
-				dma_release_from_contiguous(dev, pfn, count);
+				dma_release_from_contiguous(dev, page, count);
 				return NULL;
 			}
 		}
@@ -668,7 +668,7 @@ static void __free_from_contiguous(struct device *dev, struct page *page,
 		__dma_free_remap(cpu_addr, size, true);
 	else
 		__dma_remap(page, size, pgprot_kernel, false);
-	dma_release_from_contiguous(dev, page_to_pfn(page), size >> PAGE_SHIFT);
+	dma_release_from_contiguous(dev, page, size >> PAGE_SHIFT);
 }
 
 static inline pgprot_t __get_dma_pgprot(struct dma_attrs *attrs, pgprot_t prot)

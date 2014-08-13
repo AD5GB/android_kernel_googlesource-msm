@@ -228,7 +228,7 @@ struct cpufreq_governor cpufreq_gov_msm = {
 	.owner = THIS_MODULE,
 };
 
-static int __devinit msm_gov_probe(struct platform_device *pdev)
+static int msm_gov_probe(struct platform_device *pdev)
 {
 	int cpu;
 	struct msm_dcvs_core_info *core = NULL;
@@ -268,7 +268,7 @@ static int __devinit msm_gov_probe(struct platform_device *pdev)
 	return cpufreq_register_governor(&cpufreq_gov_msm);
 }
 
-static int __devexit msm_gov_remove(struct platform_device *pdev)
+static int msm_gov_remove(struct platform_device *pdev)
 {
 	platform_set_drvdata(pdev, NULL);
 	return 0;
@@ -276,7 +276,7 @@ static int __devexit msm_gov_remove(struct platform_device *pdev)
 
 static struct platform_driver msm_gov_driver = {
 	.probe = msm_gov_probe,
-	.remove = __devexit_p(msm_gov_remove),
+	.remove = msm_gov_remove,
 	.driver = {
 		.name = "msm_dcvs_gov",
 		.owner = THIS_MODULE,

@@ -166,7 +166,7 @@ out:
 	return IRQ_HANDLED;
 }
 
-static int __devinit ts_probe(struct platform_device *pdev)
+static int ts_probe(struct platform_device *pdev)
 {
 	int result;
 	struct input_dev *input_dev;
@@ -273,7 +273,7 @@ fail_alloc_mem:
 	return result;
 }
 
-static int __devexit ts_remove(struct platform_device *pdev)
+static int ts_remove(struct platform_device *pdev)
 {
 	struct resource *res;
 	struct ts *ts = platform_get_drvdata(pdev);
@@ -293,7 +293,7 @@ static int __devexit ts_remove(struct platform_device *pdev)
 
 static struct platform_driver ts_driver = {
 	.probe		= ts_probe,
-	.remove		= __devexit_p(ts_remove),
+	.remove		= ts_remove,
 	.driver		= {
 		.name = TS_DRIVER_NAME,
 		.owner = THIS_MODULE,

@@ -140,8 +140,6 @@ static struct portmaster {
 
 static struct workqueue_struct *gserial_wq;
 
-static struct workqueue_struct *gserial_wq;
-
 #define GS_CLOSE_TIMEOUT		15		/* seconds */
 
 
@@ -480,17 +478,9 @@ __releases(&port->port_lock)
 __acquires(&port->port_lock)
 */
 {
-	struct list_head	*pool;
-	struct usb_ep		*out;
+	struct list_head	*pool = &port->read_pool;
+	struct usb_ep		*out = port->port_usb->out;
 	unsigned		started = 0;
-
-	if (!port || !port->port_usb) {
-		pr_err("Error - port or port->usb is NULL.");
-		return -EIO;
-	}
-
-	pool = &port->read_pool;
-	out  = port->port_usb->out;
 
 	while (!list_empty(pool)) {
 		struct usb_request	*req;
@@ -707,20 +697,18 @@ static void gs_free_requests(struct usb_ep *ep, struct list_head *head,
 }
 
 static int gs_alloc_requests(struct usb_ep *ep, struct list_head *head,
-		int queue_size, int req_size,
-		void (*fn)(struct usb_ep *, struct usb_request *),
+		int num, int size, void (*fn)(struct usb_ep *, struct usb_request *),
 		int *allocated)
 {
 	int			i;
 	struct usb_request	*req;
-	int n = allocated ? queue_size - *allocated : queue_size;
 
 	/* Pre-allocate up to QUEUE_SIZE transfers, but if we can't
 	 * do quite that many this time, don't fail ... we just won't
 	 * be as speedy as we might otherwise be.
 	 */
-	for (i = 0; i < n; i++) {
-		req = gs_alloc_req(ep, req_size, GFP_ATOMIC);
+	for (i = 0; i < num; i++) {
+		req = gs_alloc_req(ep, size, GFP_ATOMIC);
 		if (!req)
 			return list_empty(head) ? -ENOMEM : 0;
 		req->complete = fn;
@@ -969,6 +957,22 @@ static void gs_close(struct tty_struct *tty, struct file *file)
 			port->port_num, tty, file);
 
 	wake_up(&port->port.close_wait);
+
+	/*
+	 * Freeing the previously queued requests as they are
+	 * allocated again as a part of gs_open()
+	 */
+	if (port->port_usb) {
+		spin_unlock_irq(&port->port_lock);
+		usb_ep_fifo_flush(gser->out);
+		usb_ep_fifo_flush(gser->in);
+		spin_lock_irq(&port->port_lock);
+		gs_free_requests(gser->out, &port->read_queue, NULL);
+		gs_free_requests(gser->out, &port->read_pool, NULL);
+		gs_free_requests(gser->in, &port->write_pool, NULL);
+	}
+	port->read_allocated = port->read_started =
+		port->write_allocated = port->write_started = 0;
 exit:
 	spin_unlock_irq(&port->port_lock);
 }
@@ -1317,29 +1321,22 @@ const struct file_operations debug_adb_ops = {
 	.read = debug_read_status,
 };
 
-struct dentry *gs_dent;
 static void usb_debugfs_init(struct gs_port *ui_dev, int port_num)
 {
+	struct dentry *dent;
 	char buf[48];
 
 	snprintf(buf, 48, "usb_serial%d", port_num);
-	gs_dent = debugfs_create_dir(buf, 0);
-	if (!gs_dent || IS_ERR(gs_dent))
+	dent = debugfs_create_dir(buf, 0);
+	if (IS_ERR(dent))
 		return;
 
-	debugfs_create_file("readstatus", 0444, gs_dent, ui_dev,
-			&debug_adb_ops);
+	debugfs_create_file("readstatus", 0444, dent, ui_dev, &debug_adb_ops);
 	debugfs_create_file("reset", S_IRUGO | S_IWUSR,
-			gs_dent, ui_dev, &debug_rst_ops);
-}
-
-static void usb_debugfs_remove(void)
-{
-	debugfs_remove_recursive(gs_dent);
+			dent, ui_dev, &debug_rst_ops);
 }
 #else
-static inline void usb_debugfs_init(struct gs_port *ui_dev, int port_num) {}
-static inline void usb_debugfs_remove(void) {}
+static void usb_debugfs_init(struct gs_port *ui_dev) {}
 #endif
 
 static int gs_closed(struct gs_port *port)
@@ -1405,9 +1402,7 @@ int gserial_alloc_line(unsigned char *line_num)
 
 	/* ... and sysfs class devices, so mdev/udev make /dev/ttyGS* */
 
-	tty_dev = tty_port_register_device(&ports[port_num].port->port,
-			gs_tty_driver, port_num, NULL);
-
+	tty_dev = tty_register_device(gs_tty_driver, port_num, NULL);
 	if (IS_ERR(tty_dev)) {
 		struct gs_port	*port;
 		pr_err("%s: failed to register tty for port %d, err %ld\n",
@@ -1635,7 +1630,6 @@ module_init(userial_init);
 
 static void userial_cleanup(void)
 {
-	usb_debugfs_remove();
 	destroy_workqueue(gserial_wq);
 	tty_unregister_driver(gs_tty_driver);
 	put_tty_driver(gs_tty_driver);

@@ -186,16 +186,6 @@ struct ipa_ep_cfg_route {
 };
 
 /**
- * struct ipa_ep_cfg_holb - head of line blocking configuration in IPA end-point
- * @en: enable(1 => ok to drop pkt)/disable(0 => never drop pkt)
- * @tmr_val: duration in units of 128 IPA clk clock cyles [0,511], 1 clk=1.28us
- */
-struct ipa_ep_cfg_holb {
-	u16 en;
-	u16 tmr_val;
-};
-
-/**
  * struct ipa_ep_cfg - configuration of IPA end-point
  * @nat:	NAT parmeters
  * @hdr:	Header parameters
@@ -474,13 +464,6 @@ int ipa_connect(const struct ipa_connect_params *in, struct ipa_sps_params *sps,
 int ipa_disconnect(u32 clnt_hdl);
 
 /*
- * Resume / Suspend
- */
-int ipa_resume(u32 clnt_hdl);
-
-int ipa_suspend(u32 clnt_hdl);
-
-/*
  * Configuration
  */
 int ipa_cfg_ep(u32 clnt_hdl, const struct ipa_ep_cfg *ipa_ep_cfg);
@@ -494,11 +477,6 @@ int ipa_cfg_ep_mode(u32 clnt_hdl, const struct ipa_ep_cfg_mode *ipa_ep_cfg);
 int ipa_cfg_ep_aggr(u32 clnt_hdl, const struct ipa_ep_cfg_aggr *ipa_ep_cfg);
 
 int ipa_cfg_ep_route(u32 clnt_hdl, const struct ipa_ep_cfg_route *ipa_ep_cfg);
-
-int ipa_cfg_ep_holb(u32 clnt_hdl, const struct ipa_ep_cfg_holb *ipa_ep_cfg);
-
-int ipa_cfg_ep_holb_by_client(enum ipa_client_type client,
-				const struct ipa_ep_cfg_holb *ipa_ep_cfg);
 
 /*
  * Header removal / addition
@@ -579,6 +557,17 @@ int ipa_set_qcncm_ndp_sig(char sig[3]);
 int ipa_set_single_ndp_per_mbim(bool enable);
 
 /*
+ * rmnet bridge
+ */
+int rmnet_bridge_init(void);
+
+int rmnet_bridge_disconnect(void);
+
+int rmnet_bridge_connect(u32 producer_hdl,
+			 u32 consumer_hdl,
+			 int wwan_logical_channel_id);
+
+/*
  * SW bridge (between IPA and A2)
  */
 int ipa_bridge_setup(enum ipa_bridge_dir dir, enum ipa_bridge_type type,
@@ -604,8 +593,6 @@ int ipa_teardown_sys_pipe(u32 clnt_hdl);
  * Resource manager
  */
 int ipa_rm_create_resource(struct ipa_rm_create_params *create_params);
-
-int ipa_rm_delete_resource(enum ipa_rm_resource_name resource_name);
 
 int ipa_rm_register(enum ipa_rm_resource_name resource_name,
 			struct ipa_rm_register_params *reg_params);
@@ -648,8 +635,6 @@ int a2_mux_close_channel(enum a2_mux_logical_channel_id lcid);
 
 int a2_mux_write(enum a2_mux_logical_channel_id lcid, struct sk_buff *skb);
 
-int a2_mux_is_ch_empty(enum a2_mux_logical_channel_id lcid);
-
 int a2_mux_is_ch_low(enum a2_mux_logical_channel_id lcid);
 
 int a2_mux_is_ch_full(enum a2_mux_logical_channel_id lcid);
@@ -688,11 +673,6 @@ static inline int a2_mux_write(enum a2_mux_logical_channel_id lcid,
 	return -EPERM;
 }
 
-static inline int a2_mux_is_ch_empty(enum a2_mux_logical_channel_id lcid)
-{
-	return -EPERM;
-}
-
 static inline int a2_mux_is_ch_low(enum a2_mux_logical_channel_id lcid)
 {
 	return -EPERM;
@@ -720,19 +700,6 @@ static inline int ipa_connect(const struct ipa_connect_params *in,
 }
 
 static inline int ipa_disconnect(u32 clnt_hdl)
-{
-	return -EPERM;
-}
-
-/*
- * Resume / Suspend
- */
-static inline int ipa_resume(u32 clnt_hdl)
-{
-	return -EPERM;
-}
-
-static inline int ipa_suspend(u32 clnt_hdl)
 {
 	return -EPERM;
 }
@@ -772,12 +739,6 @@ static inline int ipa_cfg_ep_aggr(u32 clnt_hdl,
 
 static inline int ipa_cfg_ep_route(u32 clnt_hdl,
 		const struct ipa_ep_cfg_route *ipa_ep_cfg)
-{
-	return -EPERM;
-}
-
-static inline int ipa_cfg_ep_holb(u32 clnt_hdl,
-		const struct ipa_ep_cfg_holb *ipa_ep_cfg)
 {
 	return -EPERM;
 }
@@ -956,6 +917,26 @@ static inline int ipa_set_single_ndp_per_mbim(bool enable)
 }
 
 /*
+ * rmnet bridge
+ */
+static inline int rmnet_bridge_init(void)
+{
+	return -EPERM;
+}
+
+static inline int rmnet_bridge_disconnect(void)
+{
+	return -EPERM;
+}
+
+static inline int rmnet_bridge_connect(u32 producer_hdl,
+			 u32 consumer_hdl,
+			 int wwan_logical_channel_id)
+{
+	return -EPERM;
+}
+
+/*
  * SW bridge (between IPA and A2)
  */
 static inline int ipa_bridge_setup(enum ipa_bridge_dir dir,
@@ -1001,12 +982,6 @@ static inline int ipa_teardown_sys_pipe(u32 clnt_hdl)
  */
 static inline int ipa_rm_create_resource(
 		struct ipa_rm_create_params *create_params)
-{
-	return -EPERM;
-}
-
-static inline int ipa_rm_delete_resource(
-		enum ipa_rm_resource_name resource_name)
 {
 	return -EPERM;
 }

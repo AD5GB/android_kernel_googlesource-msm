@@ -1,4 +1,4 @@
-/* Copyright (c) 2011-2014, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2011-2013, The Linux Foundation. All rights reserved.
 *
 * This program is free software; you can redistribute it and/or modify
 * it under the terms of the GNU General Public License version 2 and
@@ -11,8 +11,8 @@
 *
 */
 #include <linux/msm_mdp.h>
-#include <linux/slab.h>
-#include <linux/msm_iommu_domains.h>
+#include <linux/switch.h>
+#include <mach/iommu_domains.h>
 #include <media/videobuf2-core.h>
 #include "enc-subdev.h"
 #include "mdp-subdev.h"
@@ -23,9 +23,8 @@ struct mdp_instance {
 	u32 height;
 	u32 width;
 	bool secure;
+	struct switch_dev sdev;
 };
-
-static int mdp_secure(struct v4l2_subdev *sd, void *arg);
 
 int mdp_init(struct v4l2_subdev *sd, u32 val)
 {
@@ -48,6 +47,10 @@ int mdp_open(struct v4l2_subdev *sd, void *arg)
 		WFD_MSG_ERR("Invalid arguments\n");
 		rc = -EINVAL;
 		goto mdp_open_fail;
+	} else if (mops->secure) {
+		/* Deprecated API; use MDP_SECURE ioctl */
+		WFD_MSG_ERR("Deprecated API for securing subdevice\n");
+		return -ENOTSUPP;
 	}
 
 	fbi = msm_fb_get_writeback_fb();
@@ -56,24 +59,19 @@ int mdp_open(struct v4l2_subdev *sd, void *arg)
 		rc = -ENODEV;
 		goto mdp_open_fail;
 	}
-
+	inst->sdev.name = "wfd";
+	/* Register wfd node to switch driver */
+	rc = switch_dev_register(&inst->sdev);
+	if (rc) {
+		WFD_MSG_ERR("WFD switch registration failed\n");
+		goto mdp_open_fail;
+	}
 	msm_fb_writeback_init(fbi);
-
 	inst->mdp = fbi;
 	inst->secure = mops->secure;
-	if (mops->secure) {
-		rc = mdp_secure(sd, inst);
-		if (rc) {
-			WFD_MSG_ERR("Couldn't secure MDP\n");
-			goto mdp_secure_fail;
-		}
-	}
-
 
 	mops->cookie = inst;
-	return 0;
-mdp_secure_fail:
-	msm_fb_writeback_terminate(fbi);
+	return rc;
 mdp_open_fail:
 	kfree(inst);
 	return rc;
@@ -83,12 +81,21 @@ int mdp_start(struct v4l2_subdev *sd, void *arg)
 {
 	struct mdp_instance *inst = arg;
 	int rc = 0;
+	struct fb_info *fbi = NULL;
 	if (inst) {
 		rc = msm_fb_writeback_start(inst->mdp);
 		if (rc) {
 			WFD_MSG_ERR("Failed to start MDP mode\n");
 			goto exit;
 		}
+		fbi = msm_fb_get_writeback_fb();
+		if (!fbi) {
+			WFD_MSG_ERR("Failed to acquire mdp instance\n");
+			rc = -ENODEV;
+			goto exit;
+		}
+		switch_set_state(&inst->sdev, true);
+		WFD_MSG_DBG("wfd state switched to %d\n", inst->sdev.state);
 	}
 exit:
 	return rc;
@@ -98,30 +105,35 @@ int mdp_stop(struct v4l2_subdev *sd, void *arg)
 {
 	struct mdp_instance *inst = arg;
 	int rc = 0;
+	struct fb_info *fbi = NULL;
 	if (inst) {
 		rc = msm_fb_writeback_stop(inst->mdp);
 		if (rc) {
 			WFD_MSG_ERR("Failed to stop writeback mode\n");
 			return rc;
 		}
-
+		fbi = (struct fb_info *)inst->mdp;
+		switch_set_state(&inst->sdev, false);
+		WFD_MSG_DBG("wfd state switched to %d\n", inst->sdev.state);
 	}
 	return 0;
 }
-
-static int mdp_close(struct v4l2_subdev *sd, void *arg)
+int mdp_close(struct v4l2_subdev *sd, void *arg)
 {
 	struct mdp_instance *inst = arg;
+	struct fb_info *fbi = NULL;
 	if (inst) {
+		fbi = (struct fb_info *)inst->mdp;
 		if (inst->secure)
 			msm_fb_writeback_set_secure(inst->mdp, false);
-		msm_fb_writeback_terminate(inst->mdp);
+		msm_fb_writeback_terminate(fbi);
 		kfree(inst);
+		/* Unregister wfd node from switch driver */
+		switch_dev_unregister(&inst->sdev);
 	}
 	return 0;
 }
-
-static int mdp_q_buffer(struct v4l2_subdev *sd, void *arg)
+int mdp_q_buffer(struct v4l2_subdev *sd, void *arg)
 {
 	int rc = 0;
 	struct mdp_buf_info *binfo = arg;
@@ -149,8 +161,7 @@ static int mdp_q_buffer(struct v4l2_subdev *sd, void *arg)
 		WFD_MSG_ERR("Failed to queue buffer\n");
 	return rc;
 }
-
-static int mdp_dq_buffer(struct v4l2_subdev *sd, void *arg)
+int mdp_dq_buffer(struct v4l2_subdev *sd, void *arg)
 {
 	int rc = 0;
 	struct mdp_buf_info *obuf = arg;
@@ -173,8 +184,7 @@ static int mdp_dq_buffer(struct v4l2_subdev *sd, void *arg)
 	obuf->cookie = (void *)fbdata.priv;
 	return rc;
 }
-
-static int mdp_set_prop(struct v4l2_subdev *sd, void *arg)
+int mdp_set_prop(struct v4l2_subdev *sd, void *arg)
 {
 	struct mdp_prop *prop = (struct mdp_prop *)arg;
 	struct mdp_instance *inst = prop->inst;
@@ -187,13 +197,12 @@ static int mdp_set_prop(struct v4l2_subdev *sd, void *arg)
 	return 0;
 }
 
-static int mdp_mmap(struct v4l2_subdev *sd, void *arg)
+int mdp_mmap(struct v4l2_subdev *sd, void *arg)
 {
 	int rc = 0, align = 0;
 	struct mem_region_map *mmap = arg;
 	struct mem_region *mregion;
 	int domain = -1;
-	dma_addr_t paddr;
 	struct mdp_instance *inst = NULL;
 
 	if (!mmap || !mmap->mregion || !mmap->cookie) {
@@ -209,7 +218,6 @@ static int mdp_mmap(struct v4l2_subdev *sd, void *arg)
 		return -EINVAL;
 	}
 
-	msm_fb_writeback_iommu_ref(inst->mdp, true);
 	if (inst->secure) {
 		rc = msm_ion_secure_buffer(mmap->ion_client,
 			mregion->ion_handle, VIDEO_PIXEL, 0);
@@ -224,7 +232,8 @@ static int mdp_mmap(struct v4l2_subdev *sd, void *arg)
 					MDP_IOMMU_DOMAIN_NS);
 
 	rc = ion_map_iommu(mmap->ion_client, mregion->ion_handle,
-			domain, 0, align, 0, &paddr,
+			domain, 0, align, 0,
+			(unsigned long *)&mregion->paddr,
 			(unsigned long *)&mregion->size,
 			0, 0);
 	if (rc) {
@@ -232,20 +241,16 @@ static int mdp_mmap(struct v4l2_subdev *sd, void *arg)
 				!inst->secure ? "non" : "", rc);
 		goto iommu_fail;
 	}
-	mregion->paddr = dma_addr_to_void_ptr(paddr);
-	msm_fb_writeback_iommu_ref(inst->mdp, false);
 
 	return 0;
 iommu_fail:
 	if (inst->secure)
 		msm_ion_unsecure_buffer(mmap->ion_client, mregion->ion_handle);
 secure_fail:
-	msm_fb_writeback_iommu_ref(inst->mdp, false);
-
 	return rc;
 }
 
-static int mdp_munmap(struct v4l2_subdev *sd, void *arg)
+int mdp_munmap(struct v4l2_subdev *sd, void *arg)
 {
 	struct mem_region_map *mmap = arg;
 	struct mem_region *mregion;
@@ -256,10 +261,10 @@ static int mdp_munmap(struct v4l2_subdev *sd, void *arg)
 		WFD_MSG_ERR("Invalid argument\n");
 		return -EINVAL;
 	}
+
 	inst = mmap->cookie;
 	mregion = mmap->mregion;
 
-	msm_fb_writeback_iommu_ref(inst->mdp, true);
 	domain = msm_fb_get_iommu_domain(inst->mdp,
 			inst->secure ? MDP_IOMMU_DOMAIN_CP :
 					MDP_IOMMU_DOMAIN_NS);
@@ -269,12 +274,11 @@ static int mdp_munmap(struct v4l2_subdev *sd, void *arg)
 
 	if (inst->secure)
 		msm_ion_unsecure_buffer(mmap->ion_client, mregion->ion_handle);
-	msm_fb_writeback_iommu_ref(inst->mdp, false);
 
 	return 0;
 }
 
-static int mdp_secure(struct v4l2_subdev *sd, void *arg)
+int mdp_secure(struct v4l2_subdev *sd, void *arg)
 {
 	struct mdp_instance *inst = NULL;
 	int rc = 0;
@@ -326,6 +330,9 @@ long mdp_ioctl(struct v4l2_subdev *sd, unsigned int cmd, void *arg)
 		break;
 	case MDP_MUNMAP:
 		rc = mdp_munmap(sd, arg);
+		break;
+	case MDP_SECURE:
+		rc = mdp_secure(sd, arg);
 		break;
 	default:
 		WFD_MSG_ERR("IOCTL: %u not supported\n", cmd);

@@ -159,23 +159,17 @@ static ssize_t ramoops_pstore_read(u64 *id, enum pstore_type_id *type,
 	time->tv_nsec = 0;
 
 	size = persistent_ram_old_size(prz);
-	if (!size)
-		return 0;
 
 	/* ECC correction notice */
 	ecc_notice_size = persistent_ram_ecc_string(prz, NULL, 0);
-
-	*buf = kmalloc(size + ecc_notice_size + bootinfo_size + 1, GFP_KERNEL);
+	*buf = kmalloc(size + ecc_notice_size + 1, GFP_KERNEL);
 	if (*buf == NULL)
 		return -ENOMEM;
 
 	memcpy(*buf, persistent_ram_old(prz), size);
 	persistent_ram_ecc_string(prz, *buf + size, ecc_notice_size + 1);
 
-	/* Boot info passed through pdata */
-	memcpy(*buf + size, bootinfo, bootinfo_size);
-
-	return size + ecc_notice_size + bootinfo_size;
+	return size + ecc_notice_size;
 }
 
 static size_t ramoops_write_kmsg_hdr(struct persistent_ram_zone *prz)
@@ -481,10 +475,6 @@ static int ramoops_probe(struct platform_device *pdev)
 	mem_address = pdata->mem_address;
 	record_size = pdata->record_size;
 	dump_oops = pdata->dump_oops;
-
-	bootinfo = kstrdup(pdata->bootinfo, GFP_KERNEL);
-	if (bootinfo)
-		bootinfo_size = strlen(bootinfo);
 
 	pr_info("attached 0x%lx@0x%llx, ecc: %d/%d\n",
 		cxt->size, (unsigned long long)cxt->phys_addr,

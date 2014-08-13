@@ -1,6 +1,6 @@
 /* Qualcomm Crypto Engine driver API
  *
- * Copyright (c) 2010-2014, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2010-2012, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -31,8 +31,6 @@
 /* SHA digest size  in bytes */
 #define SHA256_DIGESTSIZE		32
 #define SHA1_DIGESTSIZE			20
-
-#define AES_CE_BLOCK_SIZE		16
 
 /* key size in bytes */
 #define HMAC_KEY_SIZE			(SHA1_DIGESTSIZE)    /* hmac-sha1 */
@@ -73,6 +71,7 @@ enum qce_hash_alg_enum {
 	QCE_HASH_SHA1_HMAC   = 2,
 	QCE_HASH_SHA256_HMAC = 3,
 	QCE_HASH_AES_CMAC = 4,
+	QCE_AEAD_SHA1_HMAC = 5,
 	QCE_HASH_LAST
 };
 
@@ -115,15 +114,6 @@ struct ce_hw_support {
 	bool aligned_only;
 	bool bam;
 	bool is_shared;
-	bool hw_key;
-	bool use_sw_aes_cbc_ecb_ctr_algo;
-	bool use_sw_aead_algo;
-	bool use_sw_aes_xts_algo;
-	bool use_sw_ahash_algo;
-	bool use_sw_hmac_algo;
-	bool use_sw_aes_ccm_algo;
-	bool clk_mgmt_sus_res;
-	unsigned int ce_device;
 };
 
 /* Sha operation parameters */
@@ -139,7 +129,6 @@ struct qce_sha_req {
 	bool last_blk;			/* last block indicator */
 	unsigned int size;		/* data length in bytes */
 	void *areq;
-	unsigned int  flags;
 };
 
 struct qce_req {
@@ -163,7 +152,6 @@ struct qce_req {
 	unsigned int cryptlen;		/* data length */
 	unsigned int use_pmem;		/* is source of data PMEM allocated? */
 	struct qcedev_pmem_info *pmem;	/* pointer to pmem_info structure*/
-	unsigned int  flags;
 };
 
 void *qce_open(struct platform_device *pdev, int *rc);
@@ -172,7 +160,5 @@ int qce_aead_req(void *handle, struct qce_req *req);
 int qce_ablk_cipher_req(void *handle, struct qce_req *req);
 int qce_hw_support(void *handle, struct ce_hw_support *support);
 int qce_process_sha_req(void *handle, struct qce_sha_req *s_req);
-int qce_enable_clk(void *handle);
-int qce_disable_clk(void *handle);
 
 #endif /* __CRYPTO_MSM_QCE_H */

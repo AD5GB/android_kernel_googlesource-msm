@@ -573,10 +573,6 @@ const char * const *v4l2_ctrl_get_menu(u32 id)
 		return dv_rgb_range;
 	case V4L2_CID_MPEG_VIDC_VIDEO_INTRA_REFRESH_MODE:
 		return mpeg_video_intra_refresh_mode;
-	case V4L2_CID_MPEG_VIDC_VIDEO_MPEG2_LEVEL:
-		return mpeg_mpeg2_level;
-	case V4L2_CID_MPEG_VIDC_VIDEO_MPEG2_PROFILE:
-		return mpeg2_profile;
 	default:
 		return NULL;
 	}
@@ -735,7 +731,6 @@ const char *v4l2_ctrl_get_name(u32 id)
 	case V4L2_CID_MPEG_VIDEO_DEC_PTS:			return "Video Decoder PTS";
 	case V4L2_CID_MPEG_VIDEO_DEC_FRAME:			return "Video Decoder Frame Count";
 	case V4L2_CID_MPEG_VIDEO_VBV_DELAY:			return "Initial Delay for VBV Control";
-	case V4L2_CID_MPEG_VIDEO_REPEAT_SEQ_HEADER:		return "Repeat Sequence Header";
 	case V4L2_CID_MPEG_VIDC_VIDEO_ROTATION: return "Rotation";
 	case V4L2_CID_MPEG_VIDC_VIDEO_RATE_CONTROL: return "Rate Control";
 	case V4L2_CID_MPEG_VIDC_VIDEO_H264_CABAC_MODEL: return "CABAC Model";
@@ -744,12 +739,6 @@ const char *v4l2_ctrl_get_name(u32 id)
 	case V4L2_CID_MPEG_VIDC_VIDEO_AIR_MBS: return "Intra Refresh AIR MBS";
 	case V4L2_CID_MPEG_VIDC_VIDEO_AIR_REF: return "Intra Refresh AIR REF";
 	case V4L2_CID_MPEG_VIDC_VIDEO_CIR_MBS: return "Intra Refresh CIR MBS";
-	case V4L2_CID_MPEG_VIDC_VIDEO_VP8_PROFILE_LEVEL:
-		return "VP8 Profile Level";
-	case V4L2_CID_MPEG_VIDC_VIDEO_DEINTERLACE:
-		return "Deinterlace for encoder";
-	case V4L2_CID_MPEG_VIDC_VIDEO_MPEG4_TIME_RESOLUTION:
-		return "Vop time increment resolution";
 
 	/* CAMERA controls */
 	/* Keep the order of the 'case's the same as in videodev2.h! */
@@ -966,7 +955,6 @@ void v4l2_ctrl_fill(u32 id, const char **name, enum v4l2_ctrl_type *type,
 	case V4L2_CID_DV_TX_RGB_RANGE:
 	case V4L2_CID_DV_RX_RGB_RANGE:
 	case V4L2_CID_TEST_PATTERN:
-	case V4L2_CID_TUNE_DEEMPHASIS:
 	case V4L2_CID_MPEG_VIDC_VIDEO_ROTATION:
 	case V4L2_CID_MPEG_VIDC_VIDEO_RATE_CONTROL:
 	case V4L2_CID_MPEG_VIDC_VIDEO_H264_CABAC_MODEL:
@@ -1033,21 +1021,6 @@ void v4l2_ctrl_fill(u32 id, const char **name, enum v4l2_ctrl_type *type,
 		*type = V4L2_CTRL_TYPE_INTEGER64;
 		*flags |= V4L2_CTRL_FLAG_READ_ONLY;
 		*min = *max = *step = *def = 0;
-		break;
-	case V4L2_CID_QCOM_VIDEO_SYNC_FRAME_SEQ_HDR:
-		*type = V4L2_CTRL_TYPE_BOOLEAN;
-		*min = 0;
-		*max = *step = 1;
-		break;
-	case V4L2_CID_MPEG_VIDC_VIDEO_DEINTERLACE:
-		*type = V4L2_CTRL_TYPE_BOOLEAN;
-		*min = 0;
-		*max = *step = 1;
-		break;
-	case V4L2_CID_MPEG_VIDC_VIDEO_STREAM_OUTPUT_MODE:
-		*type = V4L2_CTRL_TYPE_BOOLEAN;
-		*min = 0;
-		*max = *step = 1;
 		break;
 	case V4L2_CID_QCOM_VIDEO_SYNC_FRAME_SEQ_HDR:
 		*type = V4L2_CTRL_TYPE_BOOLEAN;

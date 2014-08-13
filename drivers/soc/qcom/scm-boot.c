@@ -1,4 +1,4 @@
-/* Copyright (c) 2010, 2014, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2010, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -12,8 +12,9 @@
 
 #include <linux/module.h>
 #include <linux/slab.h>
-#include <soc/qcom/scm.h>
-#include <soc/qcom/scm-boot.h>
+
+#include <mach/scm.h>
+#include "scm-boot.h"
 
 /*
  * Set the cold/warm boot address for one of the CPU cores.
@@ -21,8 +22,8 @@
 int scm_set_boot_addr(phys_addr_t addr, unsigned int flags)
 {
 	struct {
-		u32 flags;
-		u32 addr;
+		unsigned int flags;
+		unsigned long addr;
 	} cmd;
 
 	cmd.addr = addr;

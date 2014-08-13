@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2014, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2013, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -16,6 +16,7 @@
 
 #include <linux/types.h>
 #include <linux/platform_device.h>
+#include <mach/board.h>
 #include <linux/mhl_devcap.h>
 #include <linux/power_supply.h>
 #include <linux/mhl_defs.h>
@@ -98,7 +99,7 @@ struct mhl_msm_state_t {
 	int mhl_mode;
 	struct completion rgnd_done;
 	struct completion msc_cmd_done;
-	uint16_t devcap_state;
+	uint8_t devcap_state;
 	uint8_t path_en_state;
 	struct work_struct mhl_msc_send_work;
 	struct list_head list_cmd;
@@ -136,8 +137,7 @@ struct mhl_tx_ctrl {
 	uint8_t chip_rev_id;
 	int mhl_mode;
 	struct completion rgnd_done;
-	void (*notify_usb_online)(void *ctx, int online);
-	void *notify_ctx;
+	void (*notify_usb_online)(int online);
 	struct usb_ext_notification *mhl_info;
 	bool disc_enabled;
 	struct power_supply mhl_psy;
@@ -145,28 +145,19 @@ struct mhl_tx_ctrl {
 	int current_val;
 	struct completion msc_cmd_done;
 	uint8_t devcap[16];
-	uint16_t devcap_state;
-	uint8_t status[2];
+	uint8_t devcap_state;
 	uint8_t path_en_state;
-	uint8_t tmds_en_state;
 	void *hdmi_mhl_ops;
 	struct work_struct mhl_msc_send_work;
 	struct list_head list_cmd;
 	struct input_dev *input;
 	struct workqueue_struct *msc_send_workqueue;
-	struct workqueue_struct *mhl_workq;
-	struct work_struct mhl_intr_work;
 	u16 *rcp_key_code_tbl;
 	size_t rcp_key_code_tbl_len;
 	struct scrpd_struct scrpd;
 	int scrpd_busy;
 	int wr_burst_pending;
 	struct completion req_write_done;
-	spinlock_t lock;
-	bool tx_powered_off;
-	uint8_t dwnstream_hpd;
-	bool mhl_det_discon;
-	bool irq_req_done;
 };
 
 int mhl_i2c_reg_read(struct i2c_client *client,

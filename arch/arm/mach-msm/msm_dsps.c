@@ -1,4 +1,4 @@
-/* Copyright (c) 2011-2013, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2011-2012, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -36,8 +36,8 @@
 #include <mach/msm_smsm.h>
 #include <mach/msm_dsps.h>
 #include <mach/subsystem_restart.h>
-#include <mach/ramdump.h>
 
+#include "ramdump.h"
 #include "timer.h"
 
 #define DRV_NAME	"msm_dsps"
@@ -619,7 +619,7 @@ const struct file_operations dsps_fops = {
  * platform driver
  *
  */
-static int __devinit dsps_probe(struct platform_device *pdev)
+static int dsps_probe(struct platform_device *pdev)
 {
 	int ret;
 
@@ -694,7 +694,7 @@ alloc_err:
 	return -ENODEV;
 }
 
-static int __devexit dsps_remove(struct platform_device *pdev)
+static int dsps_remove(struct platform_device *pdev)
 {
 	pr_debug("%s.\n", __func__);
 

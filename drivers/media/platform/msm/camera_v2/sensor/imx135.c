@@ -36,12 +36,6 @@ static struct msm_sensor_power_setting imx135_power_setting[] = {
 		.delay = 0,
 	},
 	{
-		.seq_type = SENSOR_VREG,
-		.seq_val = CAM_VAF,
-		.config_val = 0,
-		.delay = 0,
-	},
-	{
 		.seq_type = SENSOR_GPIO,
 		.seq_val = SENSOR_GPIO_RESET,
 		.config_val = GPIO_OUT_LOW,
@@ -50,25 +44,13 @@ static struct msm_sensor_power_setting imx135_power_setting[] = {
 	{
 		.seq_type = SENSOR_GPIO,
 		.seq_val = SENSOR_GPIO_RESET,
-		.config_val = GPIO_OUT_HIGH,
-		.delay = 30,
-	},
-	{
-		.seq_type = SENSOR_GPIO,
-		.seq_val = SENSOR_GPIO_STANDBY,
-		.config_val = GPIO_OUT_LOW,
-		.delay = 1,
-	},
-	{
-		.seq_type = SENSOR_GPIO,
-		.seq_val = SENSOR_GPIO_STANDBY,
 		.config_val = GPIO_OUT_HIGH,
 		.delay = 30,
 	},
 	{
 		.seq_type = SENSOR_CLK,
 		.seq_val = SENSOR_CAM_MCLK,
-		.config_val = 24000000,
+		.config_val = 0,
 		.delay = 1,
 	},
 	{
@@ -93,15 +75,9 @@ static const struct i2c_device_id imx135_i2c_id[] = {
 	{ }
 };
 
-static int32_t msm_imx135_i2c_probe(struct i2c_client *client,
-	const struct i2c_device_id *id)
-{
-	return msm_sensor_i2c_probe(client, id, &imx135_s_ctrl);
-}
-
 static struct i2c_driver imx135_i2c_driver = {
 	.id_table = imx135_i2c_id,
-	.probe  = msm_imx135_i2c_probe,
+	.probe  = msm_sensor_i2c_probe,
 	.driver = {
 		.name = IMX135_SENSOR_NAME,
 	},

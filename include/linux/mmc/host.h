@@ -151,9 +151,6 @@ struct mmc_host_ops {
 	void	(*card_event)(struct mmc_host *host);
 	unsigned long (*get_max_frequency)(struct mmc_host *host);
 	unsigned long (*get_min_frequency)(struct mmc_host *host);
-	int	(*notify_load)(struct mmc_host *, enum mmc_load);
-	int	(*stop_request)(struct mmc_host *host);
-	unsigned int	(*get_xfer_remain)(struct mmc_host *host);
 };
 
 struct mmc_card;
@@ -313,22 +310,11 @@ struct mmc_host {
 #define MMC_CAP2_PACKED_WR	(1 << 13)	/* Allow packed write */
 #define MMC_CAP2_PACKED_CMD	(MMC_CAP2_PACKED_RD | \
 				 MMC_CAP2_PACKED_WR)
-#define MMC_CAP2_NO_PRESCAN_POWERUP (1 << 14)	/* Don't power up before scan */
-#define MMC_CAP2_INIT_BKOPS	    (1 << 15)	/* Need to set BKOPS_EN */
-#define MMC_CAP2_PACKED_WR_CONTROL (1 << 16) /* Allow write packing control */
+#define MMC_CAP2_PACKED_WR_CONTROL (1 << 15) /* Allow write packing control */
+#define MMC_CAP2_INIT_BKOPS	    (1 << 16)	/* Need to set BKOPS_EN */
 #define MMC_CAP2_CLK_SCALE	(1 << 17)	/* Allow dynamic clk scaling */
-#define MMC_CAP2_STOP_REQUEST	(1 << 18)	/* Allow stop ongoing request */
 /* Use runtime PM framework provided by MMC core */
 #define MMC_CAP2_CORE_RUNTIME_PM (1 << 19)
-#define MMC_CAP2_SANITIZE	(1 << 20)		/* Support Sanitize */
-/* Allows Asynchronous SDIO irq while card is in 4-bit mode */
-#define MMC_CAP2_ASYNC_SDIO_IRQ_4BIT_MODE (1 << 21)
-
-#define MMC_CAP2_HS400_1_8V	(1 << 22)        /* can support */
-#define MMC_CAP2_HS400_1_2V	(1 << 23)        /* can support */
-#define MMC_CAP2_CORE_PM       (1 << 24)       /* use PM framework */
-#define MMC_CAP2_HS400		(MMC_CAP2_HS400_1_8V | \
-				 MMC_CAP2_HS400_1_2V)
 	mmc_pm_flag_t		pm_caps;	/* supported pm features */
 
 	int			clk_requests;	/* internal reference counter */
@@ -412,8 +398,6 @@ struct mmc_host {
 
 	unsigned int		actual_clock;	/* Actual HC clock rate */
 
-	unsigned int		slotno;	/* used for sdio acpi binding */
-
 #ifdef CONFIG_MMC_EMBEDDED_SDIO
 	struct {
 		struct sdio_cis			*cis;
@@ -446,14 +430,7 @@ struct mmc_host {
 		bool		initialized;
 		bool		in_progress;
 		struct delayed_work work;
-		enum mmc_load	state;
 	} clk_scaling;
-	enum dev_state dev_status;
-	/*
-	 * Set to 1 to just stop the SDCLK to the card without
-	 * actually disabling the clock from it's source.
-	 */
-	bool			card_clock_off;
 	unsigned long		private[0] ____cacheline_aligned;
 };
 
@@ -463,14 +440,6 @@ int mmc_add_host(struct mmc_host *);
 void mmc_remove_host(struct mmc_host *);
 void mmc_free_host(struct mmc_host *);
 void mmc_of_parse(struct mmc_host *host);
-
-#ifdef CONFIG_MMC_EMBEDDED_SDIO
-extern void mmc_set_embedded_sdio_data(struct mmc_host *host,
-				       struct sdio_cis *cis,
-				       struct sdio_cccr *cccr,
-				       struct sdio_embedded_func *funcs,
-				       int num_funcs);
-#endif
 
 #ifdef CONFIG_MMC_EMBEDDED_SDIO
 extern void mmc_set_embedded_sdio_data(struct mmc_host *host,
@@ -622,11 +591,6 @@ static inline unsigned int mmc_host_clk_rate(struct mmc_host *host)
 static inline int mmc_use_core_runtime_pm(struct mmc_host *host)
 {
 	return host->caps2 & MMC_CAP2_CORE_RUNTIME_PM;
-}
-
-static inline int mmc_use_core_pm(struct mmc_host *host)
-{
-	return host->caps2 & MMC_CAP2_CORE_PM;
 }
 
 #endif /* LINUX_MMC_HOST_H */

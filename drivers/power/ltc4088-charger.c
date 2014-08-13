@@ -224,7 +224,7 @@ static int pm_power_set_property(struct power_supply *psy,
 	return 0;
 }
 
-static int __devinit ltc4088_charger_probe(struct platform_device *pdev)
+static int ltc4088_charger_probe(struct platform_device *pdev)
 {
 	int rc;
 	struct ltc4088_chg_chip *chip;
@@ -293,7 +293,7 @@ free_chip:
 	return rc;
 }
 
-static int __devexit ltc4088_charger_remove(struct platform_device *pdev)
+static int ltc4088_charger_remove(struct platform_device *pdev)
 {
 	struct ltc4088_chg_chip *chip = platform_get_drvdata(pdev);
 
@@ -314,7 +314,7 @@ static int __devexit ltc4088_charger_remove(struct platform_device *pdev)
 
 static struct platform_driver ltc4088_charger_driver = {
 	.probe	= ltc4088_charger_probe,
-	.remove	= __devexit_p(ltc4088_charger_remove),
+	.remove	= ltc4088_charger_remove,
 	.driver	= {
 		.name	= LTC4088_CHARGER_DEV_NAME,
 		.owner	= THIS_MODULE,

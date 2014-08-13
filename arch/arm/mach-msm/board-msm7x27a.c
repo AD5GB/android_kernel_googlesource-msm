@@ -1173,7 +1173,6 @@ MACHINE_START(MSM8625_RUMI3, "QCT MSM8625 RUMI3")
 	.init_irq       = msm8625_init_irq,
 	.init_machine   = msm8625_rumi3_init,
 	.timer          = &msm_timer,
-	.handle_irq	= gic_handle_irq,
 	.smp		= &msm8625_smp_ops,
 MACHINE_END
 MACHINE_START(MSM8625_SURF, "QCT MSM8625 SURF")
@@ -1184,7 +1183,6 @@ MACHINE_START(MSM8625_SURF, "QCT MSM8625 SURF")
 	.init_machine   = msm7x2x_init,
 	.timer          = &msm_timer,
 	.init_early     = msm7x2x_init_early,
-	.handle_irq	= gic_handle_irq,
 	.smp		= &msm8625_smp_ops,
 MACHINE_END
 MACHINE_START(MSM8625_FFA, "QCT MSM8625 FFA")
@@ -1195,6 +1193,5 @@ MACHINE_START(MSM8625_FFA, "QCT MSM8625 FFA")
 	.init_machine   = msm7x2x_init,
 	.timer          = &msm_timer,
 	.init_early     = msm7x2x_init_early,
-	.handle_irq	= gic_handle_irq,
 	.smp		= &msm8625_smp_ops,
 MACHINE_END

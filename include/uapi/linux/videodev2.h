@@ -403,7 +403,6 @@ struct v4l2_pix_format {
 #define V4L2_PIX_FMT_DIVX      v4l2_fourcc('D', 'I', 'V', 'X') /* DIVX        */
 #define V4L2_PIX_FMT_VP8      v4l2_fourcc('V', 'P', '8', '0') /* VP8 */
 #define V4L2_PIX_FMT_HEVC v4l2_fourcc('H', 'E', 'V', 'C') /* for HEVC stream */
-#define V4L2_PIX_FMT_HEVC_HYBRID v4l2_fourcc('H', 'V', 'C', 'H')
 
 /*  Vendor-specific formats   */
 #define V4L2_PIX_FMT_CPIA1    v4l2_fourcc('C', 'P', 'I', 'A') /* cpia1 YUV */
@@ -695,6 +694,10 @@ struct v4l2_buffer {
 /* Cache handling flags */
 #define V4L2_BUF_FLAG_NO_CACHE_INVALIDATE	0x0800
 #define V4L2_BUF_FLAG_NO_CACHE_CLEAN		0x1000
+#define V4L2_BUF_FLAG_EOS			0x2000
+#define V4L2_QCOM_BUF_FLAG_CODECCONFIG		0x4000
+#define V4L2_QCOM_BUF_FLAG_EOSEQ		0x8000
+#define V4L2_QCOM_BUF_TIMESTAMP_INVALID		0x10000
 /* Timestamp type */
 #define V4L2_BUF_FLAG_TIMESTAMP_MASK		0xe000
 #define V4L2_BUF_FLAG_TIMESTAMP_UNKNOWN		0x0000
@@ -806,8 +809,7 @@ struct v4l2_captureparm {
 #define V4L2_CAP_QCOM_FRAMESKIP	0x2000	/*  frame skipping is supported */
 
 struct v4l2_qcom_frameskip {
-	__u64		   maxframeinterval;
-	__u8		   fpsvariance;
+	__u64		maxframeinterval;
 };
 
 struct v4l2_outputparm {
@@ -1777,12 +1779,6 @@ struct v4l2_streamparm {
 		(V4L2_EVENT_MSM_VIDC_START + 3)
 #define V4L2_EVENT_MSM_VIDC_CLOSE_DONE	(V4L2_EVENT_MSM_VIDC_START + 4)
 #define V4L2_EVENT_MSM_VIDC_SYS_ERROR	(V4L2_EVENT_MSM_VIDC_START + 5)
-#define V4L2_EVENT_MSM_VIDC_RELEASE_BUFFER_REFERENCE \
-		(V4L2_EVENT_MSM_VIDC_START + 6)
-#define V4L2_EVENT_MSM_VIDC_RELEASE_UNQUEUED_BUFFER \
-		(V4L2_EVENT_MSM_VIDC_START + 7)
-#define V4L2_EVENT_MSM_VIDC_HW_OVERLOAD (V4L2_EVENT_MSM_VIDC_START + 8)
-#define V4L2_EVENT_MSM_VIDC_MAX_CLIENTS (V4L2_EVENT_MSM_VIDC_START + 9)
 
 /* Payload for V4L2_EVENT_VSYNC */
 struct v4l2_event_vsync {

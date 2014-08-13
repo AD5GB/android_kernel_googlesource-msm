@@ -15,25 +15,28 @@
 
 #include <linux/types.h>
 
-enum msm_pcie_pm_opt {
-	MSM_PCIE_SUSPEND,
-	MSM_PCIE_RESUME
+/* gpios */
+enum msm_pcie_gpio {
+	MSM_PCIE_GPIO_RST_N,
+	MSM_PCIE_GPIO_PWR_EN,
+	MSM_PCIE_MAX_GPIO
 };
 
-/**
- * msm_pcie_pm_control - control the power state of a PCIe link.
- * @pm_opt:	power management operation
- * @busnr:	bus number of PCIe endpoint
- * @user:	handle of the caller
- * @data:	private data from the caller
- * @options:	options for pm control
- *
- * This function gives PCIe endpoint device drivers the control to change
- * the power state of a PCIe link for their device.
- *
- * Return: 0 on success, negative value on error
- */
-int msm_pcie_pm_control(enum msm_pcie_pm_opt pm_opt, u32 busnr, void *user,
-			void *data, u32 options);
+/* gpio info structure */
+struct msm_pcie_gpio_info_t {
+	char      *name;
+	uint32_t   num;
+	uint32_t   on;
+};
+
+/* msm pcie platfrom data */
+struct msm_pcie_platform {
+	struct msm_pcie_gpio_info_t  *gpio;
+
+	uint32_t                      axi_addr;
+	uint32_t                      axi_size;
+	uint32_t                      wake_n;
+	uint32_t                      vreg_n;
+};
 
 #endif

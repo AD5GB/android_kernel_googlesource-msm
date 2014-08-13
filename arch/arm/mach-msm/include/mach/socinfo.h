@@ -32,61 +32,79 @@
 #define SOCINFO_VERSION_MINOR(ver) (ver & 0x0000ffff)
 
 #ifdef CONFIG_OF
-#define of_board_is_sim()	of_machine_is_compatible("qcom,sim")
-#define of_board_is_rumi()	of_machine_is_compatible("qcom,rumi")
-#define of_board_is_fluid()	of_machine_is_compatible("qcom,fluid")
-#define of_board_is_liquid()	of_machine_is_compatible("qcom,liquid")
-#define of_board_is_dragonboard()	\
-	of_machine_is_compatible("qcom,dragonboard")
-#define of_board_is_cdp()	of_machine_is_compatible("qcom,cdp")
-#define of_board_is_mtp()	of_machine_is_compatible("qcom,mtp")
-#define of_board_is_qrd()	of_machine_is_compatible("qcom,qrd")
-#define of_board_is_xpm()	of_machine_is_compatible("qcom,xpm")
-
-#define machine_is_msm8974()	of_machine_is_compatible("qcom,msm8974")
-#define machine_is_msm9625()	of_machine_is_compatible("qcom,msm9625")
-#define machine_is_msm8610()	of_machine_is_compatible("qcom,msm8610")
-#define machine_is_msm8226()	of_machine_is_compatible("qcom,msm8226")
-#define machine_is_apq8074()	of_machine_is_compatible("qcom,apq8074")
-
-#define early_machine_is_msm8610()	\
-	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,msm8610")
+#define early_machine_is_msm8974()	\
+	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,msm8974")
+#define machine_is_msm8974()		\
+	of_machine_is_compatible("qcom,msm8974")
+#define machine_is_msm8974_sim()		\
+	of_machine_is_compatible("qcom,msm8974-sim")
+#define machine_is_msm8974_rumi()	\
+	of_machine_is_compatible("qcom,msm8974-rumi")
+#define machine_is_msm8974_fluid()	\
+	of_machine_is_compatible("qcom,msm8974-fluid")
+#define early_machine_is_msm9625()	\
+	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,msm9625")
+#define machine_is_msm9625()		\
+	of_machine_is_compatible("qcom,msm9625")
 #define early_machine_is_mpq8092()	\
 	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,mpq8092")
-#define early_machine_is_apq8084()	\
-	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,apq8084")
-#define early_machine_is_msmkrypton()	\
-	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,msmkrypton")
-#define early_machine_is_fsm9900()	\
-	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,fsm9900")
-#define early_machine_is_msmsamarium()	\
-	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,msmsamarium")
+#define machine_is_mpq8092_sim()           \
+	of_machine_is_compatible("qcom,mpq8092-sim")
+#define early_machine_is_msm8226()	\
+	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,msm8226")
+#define machine_is_msm8226()		\
+	of_machine_is_compatible("qcom,msm8226")
+#define machine_is_msm8226_sim()		\
+	of_machine_is_compatible("qcom,msm8226-sim")
+#define machine_is_msm8226_rumi()		\
+	of_machine_is_compatible("qcom,msm8226-rumi")
+#define machine_is_msm8226_cdp()		\
+	of_machine_is_compatible("qcom,msm8226-cdp")
+#define machine_is_msm8226_fluid()		\
+	of_machine_is_compatible("qcom,msm8226-fluid")
+#define machine_is_msm8226_mtp()		\
+	of_machine_is_compatible("qcom,msm8226-mtp")
+#define machine_is_msm8226_qrd()		\
+	of_machine_is_compatible("qcom,msm8226-qrd")
+#define early_machine_is_msm8610()	\
+	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,msm8610")
+#define machine_is_msm8610()		\
+	of_machine_is_compatible("qcom,msm8610")
+#define machine_is_msm8610_sim()		\
+	of_machine_is_compatible("qcom,msm8610-sim")
+#define machine_is_msm8610_rumi()		\
+	of_machine_is_compatible("qcom,msm8610-rumi")
+#define machine_is_msm8610_mtp()		\
+	of_machine_is_compatible("qcom,msm8610-mtp")
+#define machine_is_msm8610_cdp()		\
+	of_machine_is_compatible("qcom,msm8610-cdp")
+#define early_machine_is_msmzinc()	\
+	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,msmzinc")
+#define machine_is_msmzinc_sim()		\
+	of_machine_is_compatible("qcom,msmzinc-sim")
 #else
-#define of_board_is_sim()		0
-#define of_board_is_rumi()		0
-#define of_board_is_fluid()		0
-#define of_board_is_liquid()		0
-#define of_board_is_dragonboard()	0
-#define of_board_is_cdp()		0
-#define of_board_is_mtp()		0
-#define of_board_is_qrd()		0
-#define of_board_is_xpm()		0
-
+#define early_machine_is_msm8974()	0
 #define machine_is_msm8974()		0
+#define machine_is_msm8974_sim()	0
+#define machine_is_msm8974_rumi()	0
+#define machine_is_msm8974_fluid()	0
+#define early_machine_is_msm9625()	0
 #define machine_is_msm9625()		0
-#define machine_is_msm8610()		0
-#define machine_is_msm8226()		0
-#define machine_is_apq8074()		0
-
-#define early_machine_is_msm8610()	0
 #define early_machine_is_mpq8092()	0
-#define early_machine_is_apq8084()	0
-#define early_machine_is_msmkrypton()	0
-#define early_machine_is_fsm9900()	0
-#define early_machine_is_msmsamarium()	0
+#define machine_is_mpq8092_sim()	0
+#define early_machine_is_msm8226()	0
+#define machine_is_msm8226()		0
+#define machine_is_msm8226_sim()	0
+#define machine_is_msm8226_rumi()	0
+#define early_machine_is_msm8610()	0
+#define machine_is_msm8610()		0
+#define machine_is_msm8610_sim()	0
+#define machine_is_msm8610_rumi()	0
+#define early_machine_is_msmzinc()	0
+#define machine_is_msmzinc_sim()	0
+
 #endif
 
-#define PLATFORM_SUBTYPE_MDM	1
 #define PLATFORM_SUBTYPE_SGLTE	6
 
 enum msm_cpu {
@@ -115,9 +133,6 @@ enum msm_cpu {
 	MSM_CPU_7X27AA,
 	MSM_CPU_9615,
 	MSM_CPU_8974,
-	MSM_CPU_8974PRO_AA,
-	MSM_CPU_8974PRO_AB,
-	MSM_CPU_8974PRO_AC,
 	MSM_CPU_8627,
 	MSM_CPU_8625,
 	MSM_CPU_9625,
@@ -125,10 +140,7 @@ enum msm_cpu {
 	MSM_CPU_8226,
 	MSM_CPU_8610,
 	MSM_CPU_8625Q,
-	MSM_CPU_8084,
-	MSM_CPU_KRYPTON,
-	FSM_CPU_9900,
-	MSM_CPU_SAMARIUM,
+	MSM_CPU_ZINC,
 };
 
 enum pmic_model {
@@ -437,42 +449,6 @@ static inline int cpu_is_msm8974(void)
 #endif
 }
 
-static inline int cpu_is_msm8974pro_aa(void)
-{
-#ifdef CONFIG_ARCH_MSM8974
-	enum msm_cpu cpu = socinfo_get_msm_cpu();
-
-	BUG_ON(cpu == MSM_CPU_UNKNOWN);
-	return cpu == MSM_CPU_8974PRO_AA;
-#else
-	return 0;
-#endif
-}
-
-static inline int cpu_is_msm8974pro_ab(void)
-{
-#ifdef CONFIG_ARCH_MSM8974
-	enum msm_cpu cpu = socinfo_get_msm_cpu();
-
-	BUG_ON(cpu == MSM_CPU_UNKNOWN);
-	return cpu == MSM_CPU_8974PRO_AB;
-#else
-	return 0;
-#endif
-}
-
-static inline int cpu_is_msm8974pro_ac(void)
-{
-#ifdef CONFIG_ARCH_MSM8974
-	enum msm_cpu cpu = socinfo_get_msm_cpu();
-
-	BUG_ON(cpu == MSM_CPU_UNKNOWN);
-	return cpu == MSM_CPU_8974PRO_AC;
-#else
-	return 0;
-#endif
-}
-
 static inline int cpu_is_mpq8092(void)
 {
 #ifdef CONFIG_ARCH_MPQ8092
@@ -536,12 +512,6 @@ static inline int soc_class_is_msm8930(void)
 {
 	return cpu_is_msm8930() || cpu_is_msm8930aa() || cpu_is_msm8930ab() ||
 	       cpu_is_msm8627();
-}
-
-static inline int soc_class_is_msm8974(void)
-{
-	return cpu_is_msm8974() || cpu_is_msm8974pro_aa() ||
-	       cpu_is_msm8974pro_ab() || cpu_is_msm8974pro_ac();
 }
 
 #endif

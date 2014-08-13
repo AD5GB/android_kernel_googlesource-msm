@@ -1,4 +1,4 @@
-/* Copyright (c) 2010-2013, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2010-2012, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -23,8 +23,8 @@
 
 #include <mach/subsystem_restart.h>
 #include <mach/scm.h>
-#include <mach/ramdump.h>
 
+#include "ramdump.h"
 #include "peripheral-loader.h"
 #include "scm-pas.h"
 
@@ -116,7 +116,7 @@ static int pil_q6v3_reset(struct pil_desc *pil)
 {
 	u32 reg;
 	struct q6v3_data *drv = dev_get_drvdata(pil->dev);
-	phys_addr_t start_addr = pil_get_entry_addr(pil);
+	unsigned long start_addr = pil_get_entry_addr(pil);
 
 	/* Put Q6 into reset */
 	reg = readl_relaxed(drv->cbase + LCC_Q6_FUNC);
@@ -309,7 +309,7 @@ static irqreturn_t lpass_wdog_bite_irq(int irq, void *dev_id)
 	return IRQ_HANDLED;
 }
 
-static int __devinit pil_q6v3_driver_probe(struct platform_device *pdev)
+static int pil_q6v3_driver_probe(struct platform_device *pdev)
 {
 	struct q6v3_data *drv;
 	struct resource *res;
@@ -410,7 +410,7 @@ err_ramdump:
 	return ret;
 }
 
-static int __devexit pil_q6v3_driver_exit(struct platform_device *pdev)
+static int pil_q6v3_driver_exit(struct platform_device *pdev)
 {
 	struct q6v3_data *drv = platform_get_drvdata(pdev);
 	subsys_unregister(drv->subsys);
@@ -421,7 +421,7 @@ static int __devexit pil_q6v3_driver_exit(struct platform_device *pdev)
 
 static struct platform_driver pil_q6v3_driver = {
 	.probe = pil_q6v3_driver_probe,
-	.remove = __devexit_p(pil_q6v3_driver_exit),
+	.remove = pil_q6v3_driver_exit,
 	.driver = {
 		.name = "pil_qdsp6v3",
 		.owner = THIS_MODULE,

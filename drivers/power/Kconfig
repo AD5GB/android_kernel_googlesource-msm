@@ -212,14 +212,6 @@ config BATTERY_MAX17042
 	  with MAX17042. This driver also supports max17047/50 chips which are
 	  improved version of max17042.
 
-config BATTERY_MAX17050
-	tristate "Maxim MAX17050 Fuel Gauge"
-	depends on I2C
-	help
-	  MAX17050 is a fuel-gauge IC for lithium-ion (Li+) batteries
-	  in handheld and portable equipment. The MAX17050 is configured
-	  to operate with a single lithium cell.
-
 config BATTERY_ANDROID
 	tristate "Battery driver for Android"
 	help
@@ -368,12 +360,57 @@ config CHARGER_BQ2415X
 	  You'll need this driver to charge batteries on e.g. Nokia
 	  RX-51/N900.
 
+config BATTERY_MSM
+	tristate "MSM battery"
+	depends on ARCH_MSM && MSM_ONCRPCROUTER
+	help
+	  Say Y to enable support for the battery in Qualcomm MSM.
+
 config BATTERY_MSM_FAKE
 	tristate "Fake MSM battery"
 	depends on ARCH_MSM && BATTERY_MSM
 	default n
 	help
 	  Say Y to bypass actual battery queries.
+
+config BATTERY_MSM8X60
+	tristate "MSM8X60 battery"
+	select PMIC8XXX_BATTALARM
+	help
+	  Some MSM boards have dual charging paths to charge the battery.
+	  Say Y to enable support for the battery charging in
+	  such devices.
+
+config PM8058_CHARGER
+	tristate "pmic8058 charger"
+	depends on BATTERY_MSM8X60
+	depends on PMIC8058
+	help
+	  Say Y to enable support for battery charging from the pmic8058.
+	  pmic8058 provides a linear charging circuit connected to the usb
+	  cable on Qualcomm's msm8x60 surf board.
+
+config ISL9519_CHARGER
+	tristate "isl9519 charger"
+	depends on (BATTERY_MSM8X60 || PM8921_CHARGER)
+	depends on I2C
+	default n
+	help
+	  The isl9519q charger chip from intersil is connected to an external
+	  charger cable and is preferred way of charging the battery because
+	  of its high current rating.
+	  Choose Y if you are compiling for Qualcomm's msm8x60 surf/ffa board.
+
+config SMB137B_CHARGER
+	tristate "smb137b charger"
+	default n
+	depends on I2C
+	help
+	  The smb137b charger chip from summit is a switching mode based
+	  charging solution.
+	  Choose Y if you are compiling for Qualcomm's msm8x60 fluid board.
+	  To compile this driver as a module, choose M here: the module will
+	  be called smb137b.
 
 config SMB137C_CHARGER
 	tristate "Summit SMB137C Battery Charger"
@@ -385,15 +422,15 @@ config SMB137C_CHARGER
 	  charging, setting the input current limit, and enabling USB OTG mode
 	  in order to supply 5 V on the VBUS line.
 
-config SMB349_USB_CHARGER
-	tristate "smb349 usb charger (with VBUS detection)"
+config SMB349_CHARGER
+	tristate "smb349 charger"
 	depends on I2C
 	help
-	 Say Y to enable support for the SMB349 switching mode based charger.
-	 The driver supports charging control (enable/disable) and
-	 charge-current limiting. It also provides USB VBUS detection and
-	 notification support. The driver controls SMB349 via I2C and
-	 supports device-tree interface.
+	  Say Y to enable support for the SMB349 switching mode based charger
+	  and sysfs. The driver supports controlling charger-enable and
+	  current limiting capabilities. The driver also lets the
+	  SMB349 be operated as a slave device via the power supply
+	  framework.
 
 config SMB350_CHARGER
 	tristate "smb350 charger"
@@ -407,27 +444,29 @@ config SMB350_CHARGER
 	  The driver reports the charger status via the power supply framework.
 	  A charger status change triggers an IRQ via the device STAT pin.
 
-config SMB135X_CHARGER
-	tristate "SMB135X Battery Charger"
-	depends on I2C
+config PM8058_FIX_USB
+	tristate "pmic8058 software workaround for usb removal"
+	depends on PMIC8058
+	depends on !PM8058_CHARGER
 	help
-	  Say Y to include support for SMB135X Battery Charger.
-	  SMB135X is a dual path switching mode charger capable of charging
-	  the battery with 3Amps of current.
-	  The driver supports charger enable/disable.
-	  The driver reports the charger status via the power supply framework.
-	  A charger status change triggers an IRQ via the device STAT pin.
+	  Say Y to enable the software workaround to USB Vbus line
+	  staying high even when USB cable is removed. This option
+	  is in lieu of a complete pm8058 charging driver.
 
-config SMB1360_CHARGER_FG
-	tristate "SMB1360 Charger and Fuel Guage"
-	depends on I2C
+config BATTERY_QCIBAT
+	tristate "Quanta Computer Inc. Battery"
+	depends on SENSORS_WPCE775X
+	default n
 	help
-	  Say Y to include support for SMB1360 Charger and Fuel Guage.
-	  SMB1360 is a single path switching mode charger capable of charging
-	  the battery with 1.5Amps of current. It supports a fuel gauge which
-	  uses voltage and coloumb counting for state of charge reporting.
-	  The driver reports the status via the power supply framework.
-	  A status change triggers an IRQ via the device STAT pin.
+	  Say Y here if you want to use the Quanta battery driver for ST15
+	  platform.
+
+config BATTERY_BQ27520
+	tristate "BQ27520 battery driver"
+	depends on I2C
+	default n
+	help
+	  Say Y here to enable support for batteries with BQ27520 (I2C) chips.
 
 config BQ27520_TEST_ENABLE
 	bool "Enable BQ27520 Fuel Gauge Chip Test"
@@ -435,6 +474,13 @@ config BQ27520_TEST_ENABLE
 	default n
 	help
 	  Say Y here to enable Test sysfs Interface for BQ27520 Drivers.
+
+config BATTERY_BQ27541
+	tristate "BQ27541 battery driver"
+	depends on I2C
+	default n
+	help
+	  Say Y here to enable support for batteries with BQ27541 (I2C) chips.
 
 config BATTERY_BQ28400
 	tristate "BQ28400 battery driver"
@@ -448,6 +494,12 @@ config BATTERY_BQ28400
 	  The device monitors the battery level (Relative-State-Of-Charge).
 	  The device is SBS compliant, providing battery info over I2C.
 
+config PM8921_CHARGER
+	tristate "PM8921 Charger driver"
+	depends on MFD_PM8921_CORE
+	help
+	  Say Y here to enable support for pm8921 chip charger subdevice
+
 config QPNP_CHARGER
 	tristate "QPNP Charger driver"
 	depends on SPMI
@@ -459,7 +511,21 @@ config QPNP_CHARGER
 	  also offers relevant information to userspace via the power supply
 	  framework.
 
+config PM8XXX_CCADC
+	tristate "PM8XXX battery current adc driver"
+	depends on MFD_PM8921_CORE
+	help
+	  Say Y here to enable support for pm8921 chip bms subdevice
+
+config LTC4088_CHARGER
+	tristate "LTC4088 Charger driver"
+	depends on GPIOLIB
+	help
+	  Say Y here to enable support for ltc4088 chip charger. It controls the
+	  operations through GPIO pins.
+
 config PM8921_BMS
+	select PM8XXX_CCADC
 	tristate "PM8921 Battery Monitoring System driver"
 	depends on MFD_PM8921_CORE
 	help
@@ -538,6 +604,15 @@ config BATTERY_TEMP_MONITOR
 	  Say Y to enable battery temperature control for safety.
 	  It controls charging current depending on battery temperature.
 
+
+config QPNP_BMS
+	tristate "QPNP Battery Monitoring System driver"
+	depends on SPMI
+	depends on MSM_QPNP_INT
+	help
+	  Say Y here to enable support for QPNP chip bms device.
+	  It registers a fuelgauge bms power supply to report
+	  State of Charge.
 
 source "drivers/power/reset/Kconfig"
 

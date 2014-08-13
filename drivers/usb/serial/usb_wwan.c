@@ -364,13 +364,6 @@ static void usb_wwan_indat_callback(struct urb *urb)
 	portdata = usb_get_serial_port_data(port);
 	intfdata = port->serial->private;
 
-	spin_lock(&intfdata->susp_lock);
-	if (!portdata->opened) {
-		spin_unlock(&intfdata->susp_lock);
-		return;
-	}
-	spin_unlock(&intfdata->susp_lock);
-
 	usb_mark_last_busy(port->serial->dev);
 
 	if ((status == -ENOENT || !status) && urb->actual_length) {
@@ -387,7 +380,7 @@ static void usb_wwan_indat_callback(struct urb *urb)
 		__func__, status, endpoint);
 
 	spin_lock(&intfdata->susp_lock);
-	if (intfdata->suspended) {
+	if (intfdata->suspended || !portdata->opened) {
 		spin_unlock(&intfdata->susp_lock);
 		return;
 	}

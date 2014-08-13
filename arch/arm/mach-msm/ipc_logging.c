@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2013, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -32,10 +32,8 @@
 #include "ipc_logging.h"
 
 static LIST_HEAD(ipc_log_context_list);
-DEFINE_RWLOCK(ipc_log_context_list_lock);
+DEFINE_SPINLOCK(ipc_log_context_list_lock);
 static atomic_t next_log_id = ATOMIC_INIT(0);
-static void *get_deserialization_func(struct ipc_log_context *ilctxt,
-				      int type);
 
 static struct ipc_log_page *get_first_page(struct ipc_log_context *ilctxt)
 {
@@ -142,7 +140,7 @@ void ipc_log_write(void *ctxt, struct encode_context *ectxt)
 		return;
 	}
 
-	read_lock_irqsave(&ipc_log_context_list_lock, flags);
+	spin_lock_irqsave(&ipc_log_context_list_lock, flags);
 	spin_lock(&ilctxt->ipc_log_context_lock);
 	while (ilctxt->write_avail < ectxt->offset)
 		msg_read(ilctxt, NULL);
@@ -167,7 +165,7 @@ void ipc_log_write(void *ctxt, struct encode_context *ectxt)
 	ilctxt->write_avail -= ectxt->offset;
 	complete(&ilctxt->read_avail);
 	spin_unlock(&ilctxt->ipc_log_context_lock);
-	read_unlock_irqrestore(&ipc_log_context_list_lock, flags);
+	spin_unlock_irqrestore(&ipc_log_context_list_lock, flags);
 }
 EXPORT_SYMBOL(ipc_log_write);
 
@@ -341,59 +339,6 @@ int ipc_log_string(void *ilctxt, const char *fmt, ...)
 	ipc_log_write(ilctxt, &ectxt);
 	return 0;
 }
-EXPORT_SYMBOL(ipc_log_string);
-
-/**
- * ipc_log_extract - Reads and deserializes log
- *
- * @ctxt:  logging context
- * @buff:    buffer to receive the data
- * @size:    size of the buffer
- * @returns: 0 if no data read; >0 number of bytes read; < 0 error
- *
- * If no data is available to be read, then the ilctxt::read_avail
- * completion is reinitialized.  This allows clients to block
- * until new log data is save.
- */
-int ipc_log_extract(void *ctxt, char *buff, int size)
-{
-	struct encode_context ectxt;
-	struct decode_context dctxt;
-	void (*deserialize_func)(struct encode_context *ectxt,
-				 struct decode_context *dctxt);
-	struct ipc_log_context *ilctxt = (struct ipc_log_context *)ctxt;
-	unsigned long flags;
-
-	if (size < MAX_MSG_DECODED_SIZE)
-		return -EINVAL;
-
-	dctxt.output_format = OUTPUT_DEBUGFS;
-	dctxt.buff = buff;
-	dctxt.size = size;
-	read_lock_irqsave(&ipc_log_context_list_lock, flags);
-	spin_lock(&ilctxt->ipc_log_context_lock);
-	while (dctxt.size >= MAX_MSG_DECODED_SIZE &&
-	       !is_ilctxt_empty(ilctxt)) {
-		msg_read(ilctxt, &ectxt);
-		deserialize_func = get_deserialization_func(ilctxt,
-							ectxt.hdr.type);
-		spin_unlock(&ilctxt->ipc_log_context_lock);
-		read_unlock_irqrestore(&ipc_log_context_list_lock, flags);
-		if (deserialize_func)
-			deserialize_func(&ectxt, &dctxt);
-		else
-			pr_err("%s: unknown message 0x%x\n",
-				__func__, ectxt.hdr.type);
-		read_lock_irqsave(&ipc_log_context_list_lock, flags);
-		spin_lock(&ilctxt->ipc_log_context_lock);
-	}
-	if ((size - dctxt.size) == 0)
-		init_completion(&ilctxt->read_avail);
-	spin_unlock(&ilctxt->ipc_log_context_lock);
-	read_unlock_irqrestore(&ipc_log_context_list_lock, flags);
-	return size - dctxt.size;
-}
-EXPORT_SYMBOL(ipc_log_extract);
 
 /*
  * Helper funtion used to read data from a message context.
@@ -526,31 +471,16 @@ int add_deserialization_func(void *ctxt, int type,
 	if (!df_info)
 		return -ENOSPC;
 
-	read_lock_irqsave(&ipc_log_context_list_lock, flags);
+	spin_lock_irqsave(&ipc_log_context_list_lock, flags);
 	spin_lock(&ilctxt->ipc_log_context_lock);
 	df_info->type = type;
 	df_info->dfunc = dfunc;
 	list_add_tail(&df_info->list, &ilctxt->dfunc_info_list);
 	spin_unlock(&ilctxt->ipc_log_context_lock);
-	read_unlock_irqrestore(&ipc_log_context_list_lock, flags);
+	spin_unlock_irqrestore(&ipc_log_context_list_lock, flags);
 	return 0;
 }
 EXPORT_SYMBOL(add_deserialization_func);
-
-static void *get_deserialization_func(struct ipc_log_context *ilctxt,
-				      int type)
-{
-	struct dfunc_info *df_info = NULL;
-
-	if (!ilctxt)
-		return NULL;
-
-	list_for_each_entry(df_info, &ilctxt->dfunc_info_list, list) {
-		if (df_info->type == type)
-			return df_info->dfunc;
-	}
-	return NULL;
-}
 
 void *ipc_log_context_create(int max_num_pages,
 			     const char *mod_name)
@@ -598,9 +528,9 @@ void *ipc_log_context_create(int max_num_pages,
 
 	create_ctx_debugfs(ctxt, mod_name);
 
-	write_lock_irqsave(&ipc_log_context_list_lock, flags);
+	spin_lock_irqsave(&ipc_log_context_list_lock, flags);
 	list_add_tail(&ctxt->list, &ipc_log_context_list);
-	write_unlock_irqrestore(&ipc_log_context_list_lock, flags);
+	spin_unlock_irqrestore(&ipc_log_context_list_lock, flags);
 	return (void *)ctxt;
 
 release_ipc_log_context:
@@ -613,35 +543,6 @@ release_ipc_log_context:
 	return 0;
 }
 EXPORT_SYMBOL(ipc_log_context_create);
-
-/*
- * Destroy debug log context
- *
- * @ctxt: debug log context created by calling ipc_log_context_create API.
- */
-int ipc_log_context_destroy(void *ctxt)
-{
-	struct ipc_log_context *ilctxt = (struct ipc_log_context *)ctxt;
-	struct ipc_log_page *pg = NULL;
-	unsigned long flags;
-
-	if (!ilctxt)
-		return 0;
-
-	while (!list_empty(&ilctxt->page_list)) {
-		pg = get_first_page(ctxt);
-		list_del(&pg->hdr.list);
-		kfree(pg);
-	}
-
-	write_lock_irqsave(&ipc_log_context_list_lock, flags);
-	list_del(&ilctxt->list);
-	write_unlock_irqrestore(&ipc_log_context_list_lock, flags);
-
-	kfree(ilctxt);
-	return 0;
-}
-EXPORT_SYMBOL(ipc_log_context_destroy);
 
 static int __init ipc_logging_init(void)
 {

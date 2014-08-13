@@ -1,7 +1,7 @@
 /*
  *  Copyright (C) 2002 ARM Ltd.
  *  All Rights Reserved
- *  Copyright (c) 2011-2014, The Linux Foundation. All rights reserved.
+ *  Copyright (c) 2011-2012, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
@@ -11,13 +11,15 @@
 #include <linux/errno.h>
 #include <linux/smp.h>
 #include <linux/cpu.h>
-#include <linux/notifier.h>
-#include <linux/msm_rtb.h>
-#include <soc/qcom/spm.h>
-#include <soc/qcom/pm.h>
 
 #include <asm/smp_plat.h>
 #include <asm/vfp.h>
+
+#include <mach/jtag.h>
+#include <mach/msm_rtb.h>
+
+#include "pm.h"
+#include "spm.h"
 
 #include <soc/qcom/jtag.h>
 
@@ -36,6 +38,14 @@ static cpumask_t cpu_dying_mask;
 static DEFINE_PER_CPU_SHARED_ALIGNED(struct msm_hotplug_device,
 			msm_hotplug_devices);
 
+struct msm_hotplug_device {
+	struct completion cpu_killed;
+	unsigned int warm_boot;
+};
+
+static DEFINE_PER_CPU_SHARED_ALIGNED(struct msm_hotplug_device,
+			msm_hotplug_devices);
+
 static inline void cpu_enter_lowpower(void)
 {
 }
@@ -49,7 +59,7 @@ static inline void platform_do_lowpower(unsigned int cpu, int *spurious)
 	/* Just enter wfi for now. TODO: Properly shut off the cpu. */
 	for (;;) {
 
-		lpm_cpu_hotplug_enter(cpu);
+		msm_pm_cpu_enter_lowpower(cpu);
 		if (pen_release == cpu_logical_map(cpu)) {
 			/*
 			 * OK, proper wakeup, we're done
@@ -71,12 +81,12 @@ static inline void platform_do_lowpower(unsigned int cpu, int *spurious)
 
 int msm_cpu_kill(unsigned int cpu)
 {
-	int ret = 0;
+	int ret;
 
-	if (cpumask_test_and_clear_cpu(cpu, &cpu_dying_mask))
-		ret = msm_pm_wait_cpu_shutdown(cpu);
-
-	return ret ? 0 : 1;
+	ret = msm_pm_wait_cpu_shutdown(cpu);
+	if (ret)
+		return 0;
+	return 1;
 }
 
 /*
@@ -93,6 +103,7 @@ void __ref msm_cpu_die(unsigned int cpu)
 			__func__, smp_processor_id(), cpu);
 		BUG();
 	}
+	complete(&__get_cpu_var(msm_hotplug_devices).cpu_killed);
 	/*
 	 * we're ready for shutdown now, so do it
 	 */
@@ -133,7 +144,6 @@ static int hotplug_rtb_callback(struct notifier_block *nfb,
 		uncached_logk(LOGK_HOTPLUG, (void *)(cpudata | this_cpumask));
 		break;
 	case CPU_DYING:
-		cpumask_set_cpu((unsigned long)hcpu, &cpu_dying_mask);
 		uncached_logk(LOGK_HOTPLUG, (void *)(cpudata & ~this_cpumask));
 		break;
 	default:
@@ -149,10 +159,11 @@ static struct notifier_block hotplug_rtb_notifier = {
 int msm_platform_secondary_init(unsigned int cpu)
 {
 	int ret;
-	unsigned int *warm_boot = &__get_cpu_var(warm_boot_flag);
+	struct msm_hotplug_device *dev = &__get_cpu_var(msm_hotplug_devices);
 
-	if (!(*warm_boot)) {
-		*warm_boot = 1;
+	if (!dev->warm_boot) {
+		dev->warm_boot = 1;
+		init_completion(&dev->cpu_killed);
 		return 0;
 	}
 	msm_jtag_restore_state();
@@ -166,6 +177,9 @@ int msm_platform_secondary_init(unsigned int cpu)
 
 static int __init init_hotplug(void)
 {
+
+	struct msm_hotplug_device *dev = &__get_cpu_var(msm_hotplug_devices);
+	init_completion(&dev->cpu_killed);
 	return register_hotcpu_notifier(&hotplug_rtb_notifier);
 }
 early_initcall(init_hotplug);

@@ -10,7 +10,9 @@ config USB_ARCH_HAS_EHCI
 	bool
 
 config USB_ARCH_HAS_XHCI
-	bool
+	boolean
+	default y if ARCH_MSM8974
+	default PCI
 
 menuconfig USB_SUPPORT
 	bool "USB support"

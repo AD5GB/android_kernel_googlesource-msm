@@ -313,7 +313,7 @@ static void msm_ts_late_resume(struct early_suspend *h)
 #endif
 
 
-static int __devinit msm_ts_probe(struct platform_device *pdev)
+static int msm_ts_probe(struct platform_device *pdev)
 {
 	struct msm_ts_platform_data *pdata = pdev->dev.platform_data;
 	struct msm_ts *ts;
@@ -466,7 +466,7 @@ err_ioremap_tssc:
 	return err;
 }
 
-static int __devexit msm_ts_remove(struct platform_device *pdev)
+static int msm_ts_remove(struct platform_device *pdev)
 {
 	struct msm_ts *ts = platform_get_drvdata(pdev);
 
@@ -494,7 +494,7 @@ static struct platform_driver msm_touchscreen_driver = {
 #endif
 	},
 	.probe		= msm_ts_probe,
-	.remove		= __devexit_p(msm_ts_remove),
+	.remove		= msm_ts_remove,
 };
 
 static int __init msm_ts_init(void)

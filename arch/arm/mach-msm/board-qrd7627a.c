@@ -620,7 +620,7 @@ static struct gpio_regulator_platform_data msm_gpio_regulator_pdata[] = {
 };
 
 /* GPIO regulator */
-static struct platform_device qrd_vreg_gpio_ext_2p85v __devinitdata = {
+static struct platform_device qrd_vreg_gpio_ext_2p85v = {
 	.name	= GPIO_REGULATOR_DEV_NAME,
 	.id	= 35,
 	.dev	= {
@@ -629,7 +629,7 @@ static struct platform_device qrd_vreg_gpio_ext_2p85v __devinitdata = {
 	},
 };
 
-static struct platform_device qrd_vreg_gpio_ext_1p8v __devinitdata = {
+static struct platform_device qrd_vreg_gpio_ext_1p8v = {
 	.name	= GPIO_REGULATOR_DEV_NAME,
 	.id	= 40,
 	.dev	= {
@@ -638,7 +638,7 @@ static struct platform_device qrd_vreg_gpio_ext_1p8v __devinitdata = {
 	},
 };
 
-static struct platform_device qrd_vreg_gpio_ext_2p85v_sku3 __devinitdata = {
+static struct platform_device qrd_vreg_gpio_ext_2p85v_sku3 = {
 	.name	= GPIO_REGULATOR_DEV_NAME,
 	.id	= 35,
 	.dev	= {
@@ -647,7 +647,7 @@ static struct platform_device qrd_vreg_gpio_ext_2p85v_sku3 __devinitdata = {
 	},
 };
 
-static struct platform_device qrd_vreg_gpio_ext_1p8v_sku3 __devinitdata = {
+static struct platform_device qrd_vreg_gpio_ext_1p8v_sku3 = {
 	.name	= GPIO_REGULATOR_DEV_NAME,
 	.id	= 34,
 	.dev	= {
@@ -656,7 +656,7 @@ static struct platform_device qrd_vreg_gpio_ext_1p8v_sku3 __devinitdata = {
 	},
 };
 
-static struct platform_device qrd_vreg_gpio_ext_1p8v_sku3_1 __devinitdata = {
+static struct platform_device qrd_vreg_gpio_ext_1p8v_sku3_1 = {
 	.name	= GPIO_REGULATOR_DEV_NAME,
 	.id	= 58,
 	.dev	= {
@@ -1181,7 +1181,6 @@ MACHINE_START(MSM8625_EVB, "QRD MSM8625 EVB")
 	.init_machine	= msm_qrd_init,
 	.timer		= &msm_timer,
 	.init_early	= qrd7627a_init_early,
-	.handle_irq	= gic_handle_irq,
 	.smp		= &msm8625_smp_ops,
 MACHINE_END
 MACHINE_START(MSM8625_QRD7, "QRD MSM8625 QRD7")
@@ -1192,7 +1191,6 @@ MACHINE_START(MSM8625_QRD7, "QRD MSM8625 QRD7")
 	.init_machine	= msm_qrd_init,
 	.timer		= &msm_timer,
 	.init_early	= qrd7627a_init_early,
-	.handle_irq	= gic_handle_irq,
 	.smp		= &msm8625_smp_ops,
 MACHINE_END
 MACHINE_START(MSM8625_EVT, "QRD MSM8625 EVT")
@@ -1203,7 +1201,6 @@ MACHINE_START(MSM8625_EVT, "QRD MSM8625 EVT")
 	.init_machine	= msm_qrd_init,
 	.timer		= &msm_timer,
 	.init_early	= qrd7627a_init_early,
-	.handle_irq	= gic_handle_irq,
 	.smp		= &msm8625_smp_ops,
 MACHINE_END
 MACHINE_START(QRD_SKUD_PRIME, "QRD MSM8625 SKUD PRIME")
@@ -1214,6 +1211,5 @@ MACHINE_START(QRD_SKUD_PRIME, "QRD MSM8625 SKUD PRIME")
 	.init_machine	= msm_qrd_init,
 	.timer		= &msm_timer,
 	.init_early	= qrd7627a_init_early,
-	.handle_irq	= gic_handle_irq,
 	.smp		= &msm8625_smp_ops,
 MACHINE_END

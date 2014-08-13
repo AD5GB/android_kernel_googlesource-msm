@@ -82,7 +82,9 @@ extern unsigned int processor_id;
 		__val;							\
 	})
 
-#else /* ifdef CONFIG_CPU_CP15 */
+#define ARM_CPU_IMP_ARM			0x41
+#define ARM_CPU_IMP_INTEL		0x69
+#define ARM_CPU_IMP_QUALCOMM		0x51
 
 /*
  * read_cpuid and read_cpuid_ext should only ever be called on machines that

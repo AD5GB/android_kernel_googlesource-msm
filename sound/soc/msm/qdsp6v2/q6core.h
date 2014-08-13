@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2014, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -12,8 +12,8 @@
 
 #ifndef __Q6CORE_H__
 #define __Q6CORE_H__
-#include <linux/qdsp6v2/apr.h>
-#include <soc/qcom/ocmem.h>
+#include <mach/qdsp6v2/apr.h>
+#include <mach/ocmem.h>
 
 
 #define AVCS_CMD_GET_LOW_POWER_SEGMENTS_INFO              0x00012903
@@ -24,9 +24,6 @@ struct avcs_cmd_get_low_power_segments_info {
 
 
 #define AVCS_CMDRSP_GET_LOW_POWER_SEGMENTS_INFO           0x00012904
-
-#define AVCS_CMD_ADSP_EVENT_GET_STATE		0x0001290C
-#define AVCS_CMDRSP_ADSP_EVENT_GET_STATE	0x0001290D
 
 /* @brief AVCS_CMDRSP_GET_LOW_POWER_SEGMENTS_INFO payload
  * structure. Payload for this event comprises one instance of
@@ -92,15 +89,5 @@ struct avcs_cmd_rsp_get_low_power_segments_info_t {
 
 int core_get_low_power_segments(
 			struct avcs_cmd_rsp_get_low_power_segments_info_t **);
-bool q6core_is_adsp_ready(void);
-
-#define ADSP_CMD_SET_DOLBY_MANUFACTURER_ID 0x00012918
-
-struct adsp_dolby_manufacturer_id {
-	struct apr_hdr hdr;
-	int manufacturer_id;
-};
-
-uint32_t core_set_dolby_manufacturer_id(int manufacturer_id);
 
 #endif /* __Q6CORE_H__ */

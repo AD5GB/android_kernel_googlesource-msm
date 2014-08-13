@@ -28,3 +28,4 @@ struct msm_psy_batt_pdata {
 };
 
 #endif
+

@@ -5,7 +5,7 @@
  *  power management protocol extension to H4 to support AR300x Bluetooth Chip.
  *
  *  Copyright (c) 2009-2010 Atheros Communications Inc.
- *  Copyright (c) 2012-2014 The Linux Foundation. All rights reserved.
+ *  Copyright (c) 2012-2013 The Linux Foundation. All rights reserved.
  *
  *  Acknowledgements:
  *  This file is based on hci_h4.c, which was written
@@ -39,8 +39,6 @@
 #include <linux/platform_device.h>
 #include <linux/gpio.h>
 #include <linux/of_gpio.h>
-#include <linux/proc_fs.h>
-
 #include <net/bluetooth/bluetooth.h>
 #include <net/bluetooth/hci_core.h>
 
@@ -105,6 +103,52 @@ struct work_struct ws_sleep;
 /* global pointer to a single hci device. */
 static struct bluesleep_info *bsi;
 
+unsigned int enableuartsleep = 1;
+module_param(enableuartsleep, uint, 0644);
+/*
+ * Global variables
+ */
+
+/** Device table */
+static struct of_device_id bluesleep_match_table[] = {
+	{ .compatible = "qca,ar3002_bluesleep" },
+	{}
+};
+
+/** Global state flags */
+static unsigned long flags;
+
+/** Tasklet to respond to change in hostwake line */
+static struct tasklet_struct hostwake_task;
+
+/** Transmission timer */
+static void bluesleep_tx_timer_expire(unsigned long data);
+static DEFINE_TIMER(tx_timer, bluesleep_tx_timer_expire, 0, 0);
+
+/** Lock for state transitions */
+static spinlock_t rw_lock;
+
+#define POLARITY_LOW 0
+#define POLARITY_HIGH 1
+
+struct bluesleep_info {
+	unsigned host_wake;			/* wake up host */
+	unsigned ext_wake;			/* wake up device */
+	unsigned host_wake_irq;
+	int irq_polarity;
+};
+
+/* 1 second timeout */
+#define TX_TIMER_INTERVAL  1
+
+/* state variable names and bit positions */
+#define BT_TXEXPIRED    0x01
+#define BT_SLEEPENABLE  0x02
+#define BT_SLEEPCMD	0x03
+
+/* global pointer to a single hci device. */
+static struct bluesleep_info *bsi;
+
 struct ath_struct {
 	struct hci_uart *hu;
 	unsigned int cur_sleep;
@@ -113,22 +157,9 @@ struct ath_struct {
 	struct work_struct ctxtsw;
 };
 
-static void hsuart_serial_clock_on(struct uart_port *port)
+static void hostwake_interrupt(unsigned long data)
 {
-	BT_DBG("");
-	if (port)
-		msm_hs_request_clock_on(port);
-	else
-		BT_INFO("Uart has not voted for Clock ON");
-}
-
-static void hsuart_serial_clock_off(struct uart_port *port)
-{
-	BT_DBG("");
-	if (port)
-		msm_hs_request_clock_off(port);
-	else
-		BT_INFO("Uart has not voted for Clock OFF");
+	BT_INFO(" wakeup host\n");
 }
 
 static void modify_timer_task(void)
@@ -140,31 +171,17 @@ static void modify_timer_task(void)
 
 }
 
-static int ath_wakeup_ar3k(void)
+static int ath_wakeup_ar3k(struct tty_struct *tty)
 {
 	int status = 0;
 	if (test_bit(BT_TXEXPIRED, &flags)) {
-		hsuart_serial_clock_on(bsi->uport);
-		BT_DBG("wakeup device\n");
+		BT_INFO("wakeup device\n");
 		gpio_set_value(bsi->ext_wake, 0);
 		msleep(20);
 		gpio_set_value(bsi->ext_wake, 1);
 	}
-	if (!is_lpm_enabled)
-		modify_timer_task();
+	modify_timer_task();
 	return status;
-}
-
-static void wakeup_host_work(struct work_struct *work)
-{
-
-	BT_DBG("wake up host");
-	if (test_bit(BT_SLEEPENABLE, &flags)) {
-		if (test_bit(BT_TXEXPIRED, &flags))
-			hsuart_serial_clock_on(bsi->uport);
-	}
-	if (!is_lpm_enabled)
-		modify_timer_task();
 }
 
 static void ath_hci_uart_work(struct work_struct *work)
@@ -179,7 +196,7 @@ static void ath_hci_uart_work(struct work_struct *work)
 
 	/* verify and wake up controller */
 	if (test_bit(BT_SLEEPENABLE, &flags))
-		status = ath_wakeup_ar3k();
+		status = ath_wakeup_ar3k(tty);
 	/* Ready to send Data */
 	clear_bit(HCI_UART_SENDING, &hu->tx_state);
 	hci_uart_tx_wakeup(hu);
@@ -187,11 +204,8 @@ static void ath_hci_uart_work(struct work_struct *work)
 
 static irqreturn_t bluesleep_hostwake_isr(int irq, void *dev_id)
 {
-	/* schedule a work to global shared workqueue to handle
-	 * the change in the host wake line
-	 */
-	schedule_work(&ws_sleep);
-
+	/* schedule a tasklet to handle the change in the host wake line */
+	tasklet_schedule(&hostwake_task);
 	return IRQ_HANDLED;
 }
 
@@ -245,6 +259,9 @@ static int ath_bluesleep_gpio_config(int on)
 	tx_timer.function = bluesleep_tx_timer_expire;
 	tx_timer.data = 0;
 
+	/* initialize host wake tasklet */
+	tasklet_init(&hostwake_task, hostwake_interrupt, 0);
+
 	if (bsi->irq_polarity == POLARITY_LOW) {
 		ret = request_irq(bsi->host_wake_irq, bluesleep_hostwake_isr,
 				IRQF_DISABLED | IRQF_TRIGGER_FALLING,
@@ -279,44 +296,6 @@ gpio_config_failed:
 	return ret;
 }
 
-static int ath_lpm_start(void)
-{
-	BT_DBG("Start LPM mode");
-
-	if (!bsi) {
-		BT_ERR("HCIATH3K bluesleep info does not exist");
-		return -EIO;
-	}
-
-	bsi->uport = msm_hs_get_uart_port(0);
-	if (!bsi->uport) {
-		BT_ERR("UART Port is not available");
-		return -ENODEV;
-	}
-
-	INIT_WORK(&ws_sleep, wakeup_host_work);
-
-	if (ath_bluesleep_gpio_config(1) < 0) {
-		BT_ERR("HCIATH3K GPIO Config failed");
-		return -EIO;
-	}
-
-	return 0;
-}
-
-static int ath_lpm_stop(void)
-{
-	BT_DBG("Stop LPM mode");
-	cancel_work_sync(&ws_sleep);
-
-	if (bsi) {
-		bsi->uport = NULL;
-		ath_bluesleep_gpio_config(0);
-	}
-
-	return 0;
-}
-
 /* Initialize protocol */
 static int ath_open(struct hci_uart *hu)
 {
@@ -325,8 +304,11 @@ static int ath_open(struct hci_uart *hu)
 
 	BT_DBG("hu %p, bsi %p", hu, bsi);
 
-	if (!bsi) {
-		BT_ERR("HCIATH3K bluesleep info does not exist");
+	if (!bsi)
+		return -EIO;
+
+	if (ath_bluesleep_gpio_config(1) < 0) {
+		BT_ERR("HCIATH3K GPIO Config failed");
 		return -EIO;
 	}
 
@@ -342,18 +324,12 @@ static int ath_open(struct hci_uart *hu)
 	ath->hu = hu;
 	state = hu->tty->driver_data;
 
-	if (!state) {
-		BT_ERR("HCIATH3K tty driver data does not exist");
-		return -ENXIO;
+	ath->cur_sleep = enableuartsleep;
+	if (ath->cur_sleep == 1) {
+		set_bit(BT_SLEEPENABLE, &flags);
+		modify_timer_task();
 	}
-	bsi->uport = state->uart_port;
-
-	if (ath_bluesleep_gpio_config(1) < 0) {
-		BT_ERR("HCIATH3K GPIO Config failed");
-		hu->priv = NULL;
-		kfree(ath);
-		return -EIO;
-	}
+	INIT_WORK(&ath->ctxtsw, ath_hci_uart_work);
 
 	ath->cur_sleep = enableuartsleep;
 	if (ath->cur_sleep == 1) {
@@ -396,6 +372,9 @@ static int ath_close(struct hci_uart *hu)
 	hu->priv = NULL;
 	bsi->uport = NULL;
 	kfree(ath);
+
+	if (bsi)
+		ath_bluesleep_gpio_config(0);
 
 	return 0;
 }
@@ -485,13 +464,11 @@ static int ath_recv(struct hci_uart *hu, void *data, int count)
 
 static void bluesleep_tx_timer_expire(unsigned long data)
 {
-
 	if (!test_bit(BT_SLEEPENABLE, &flags))
 		return;
 	BT_INFO("Tx timer expired\n");
 
 	set_bit(BT_TXEXPIRED, &flags);
-	hsuart_serial_clock_off(bsi->uport);
 }
 
 static struct hci_uart_proto athp = {
@@ -504,88 +481,6 @@ static struct hci_uart_proto athp = {
 	.flush = ath_flush,
 };
 
-static int lpm_enabled;
-
-static int bluesleep_lpm_set(const char *val, const struct kernel_param *kp)
-{
-	int ret;
-
-	ret = param_set_int(val, kp);
-
-	if (ret) {
-		BT_ERR("HCIATH3K: lpm enable parameter set failed");
-		return ret;
-	}
-
-	BT_DBG("lpm : %d", lpm_enabled);
-
-	if ((lpm_enabled == 0) && is_lpm_enabled) {
-		ath_lpm_stop();
-		clear_bit(BT_SLEEPENABLE, &flags);
-		is_lpm_enabled = false;
-	} else if ((lpm_enabled == 1) && !is_lpm_enabled) {
-		if (ath_lpm_start() < 0) {
-			BT_ERR("HCIATH3K LPM mode failed");
-			return -EIO;
-		}
-		set_bit(BT_SLEEPENABLE, &flags);
-		is_lpm_enabled = true;
-	} else {
-		BT_ERR("HCIATH3K invalid lpm value");
-		return -EINVAL;
-	}
-	return 0;
-
-}
-
-static struct kernel_param_ops bluesleep_lpm_ops = {
-	.set = bluesleep_lpm_set,
-	.get = param_get_int,
-};
-
-module_param_cb(ath_lpm, &bluesleep_lpm_ops,
-		&lpm_enabled, S_IRUGO | S_IWUSR);
-MODULE_PARM_DESC(ath_lpm, "Enable Atheros LPM sleep Protocol");
-
-static int lpm_btwrite;
-
-static int bluesleep_lpm_btwrite(const char *val, const struct kernel_param *kp)
-{
-	int ret;
-
-	ret = param_set_int(val, kp);
-
-	if (ret) {
-		BT_ERR("HCIATH3K: lpm btwrite parameter set failed");
-		return ret;
-	}
-
-	BT_DBG("btwrite : %d", lpm_btwrite);
-	if (is_lpm_enabled) {
-		if (lpm_btwrite == 0) {
-			/*Setting TXEXPIRED bit to make it
-			compatible with current solution*/
-			set_bit(BT_TXEXPIRED, &flags);
-			hsuart_serial_clock_off(bsi->uport);
-		} else if (lpm_btwrite == 1) {
-			ath_wakeup_ar3k();
-			clear_bit(BT_TXEXPIRED, &flags);
-		} else {
-			BT_ERR("HCIATH3K invalid btwrite value");
-			return -EINVAL;
-		}
-	}
-	return 0;
-}
-
-static struct kernel_param_ops bluesleep_lpm_btwrite_ops = {
-	.set = bluesleep_lpm_btwrite,
-	.get = param_get_int,
-};
-
-module_param_cb(ath_btwrite, &bluesleep_lpm_btwrite_ops,
-		&lpm_btwrite, S_IRUGO | S_IWUSR);
-MODULE_PARM_DESC(ath_lpm, "Assert/Deassert the sleep");
 
 static int bluesleep_populate_dt_pinfo(struct platform_device *pdev)
 {
@@ -724,6 +619,5 @@ int __init ath_init(void)
 int __exit ath_deinit(void)
 {
 	platform_driver_unregister(&bluesleep_driver);
-
 	return hci_uart_unregister_proto(&athp);
 }

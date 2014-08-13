@@ -23,12 +23,11 @@
 #include <linux/tick.h>
 #include <mach/mpm.h>
 #include <mach/rpm-smd.h>
-#include <mach/trace_msm_low_power.h>
 #include "spm.h"
 #include "lpm_resources.h"
 #include "rpm-notifier.h"
 #include "idle.h"
-
+#include "trace_msm_low_power.h"
 
 /*Debug Definitions*/
 enum {
@@ -430,7 +429,7 @@ static void msm_lpm_aggregate_l2(struct msm_rpmrs_limits *limits)
 	trace_lpm_resources(rs->sleep_value, rs->name);
 }
 
-static void msm_lpm_set_l2_mode(int sleep_mode)
+static void msm_lpm_set_l2_mode(int sleep_mode, int notify_rpm)
 {
 	int lpm, rc;
 
@@ -454,7 +453,7 @@ static void msm_lpm_set_l2_mode(int sleep_mode)
 		break;
 	}
 
-	rc = msm_spm_l2_set_low_power_mode(lpm, true);
+	rc = msm_spm_l2_set_low_power_mode(lpm, notify_rpm);
 
 	if (rc < 0)
 		pr_err("%s: Failed to set L2 low power mode %d",
@@ -475,7 +474,7 @@ static void msm_lpm_flush_l2(int notify_rpm)
 {
 	struct msm_lpm_resource *rs = &msm_lpm_l2;
 
-	msm_lpm_set_l2_mode(rs->sleep_value);
+	msm_lpm_set_l2_mode(rs->sleep_value, notify_rpm);
 }
 
 int msm_lpm_get_l2_cache_value(struct device_node *node,
@@ -766,15 +765,13 @@ int msm_lpmrs_enter_sleep(uint32_t sclk_count, struct msm_rpmrs_limits *limits,
 			rs->aggregate(limits);
 	}
 
-	if (notify_rpm)
-		msm_lpm_get_rpm_notif = false;
+	msm_lpm_get_rpm_notif = false;
 	for (i = 0; i < ARRAY_SIZE(msm_lpm_resources); i++) {
 		rs = msm_lpm_resources[i];
 		if (rs->valid && rs->flush)
 			rs->flush(notify_rpm);
 	}
-	if (notify_rpm)
-		msm_lpm_get_rpm_notif = true;
+	msm_lpm_get_rpm_notif = true;
 
 	if (notify_rpm)
 		msm_mpm_enter_sleep(sclk_count, from_idle);
@@ -789,7 +786,7 @@ void msm_lpmrs_exit_sleep(struct msm_rpmrs_limits *limits,
 		msm_mpm_exit_sleep(from_idle);
 
 	if (msm_lpm_l2.valid)
-		msm_lpm_set_l2_mode(msm_lpm_l2.rs_data.default_value);
+		msm_lpm_set_l2_mode(msm_lpm_l2.rs_data.default_value, false);
 }
 
 static int msm_lpm_cpu_callback(struct notifier_block *cpu_nb,
@@ -816,7 +813,7 @@ static int msm_lpm_cpu_callback(struct notifier_block *cpu_nb,
 }
 
 /* RPM CTL */
-static int __devinit msm_lpm_init_rpm_ctl(void)
+static int msm_lpm_init_rpm_ctl(void)
 {
 	struct msm_lpm_resource *rs = &msm_lpm_rpm_ctl;
 
@@ -831,7 +828,7 @@ static int __devinit msm_lpm_init_rpm_ctl(void)
 	return 0;
 }
 
-static int __devinit msm_lpm_resource_sysfs_add(void)
+static int msm_lpm_resource_sysfs_add(void)
 {
 	struct kobject *module_kobj = NULL;
 	struct kobject *low_power_kobj = NULL;
@@ -888,7 +885,7 @@ resource_sysfs_add_exit:
 
 late_initcall(msm_lpm_resource_sysfs_add);
 
-static int __devinit msm_lpmrs_probe(struct platform_device *pdev)
+static int msm_lpmrs_probe(struct platform_device *pdev)
 {
 	struct device_node *node = NULL;
 	char *key = NULL;

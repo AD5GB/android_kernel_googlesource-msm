@@ -1,4 +1,4 @@
-/* Copyright (c) 2011-2014, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2011-2012, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -17,36 +17,13 @@
 #include <linux/debugfs.h>
 #include <linux/seq_file.h>
 #include <linux/usb.h>
-#include <linux/ratelimit.h>
 #include <linux/usb/usbnet.h>
 #include <linux/msm_rmnet.h>
 
-#include "rmnet_usb.h"
+#include "rmnet_usb_ctrl.h"
 
 #define RMNET_DATA_LEN			2000
-#define RMNET_HEADROOM			sizeof(struct QMI_QOS_HDR_S)
-
-static unsigned int no_rmnet_devs = 1;
-module_param(no_rmnet_devs, uint, S_IRUGO | S_IWUSR);
-
-unsigned int no_rmnet_insts_per_dev = 4;
-module_param(no_rmnet_insts_per_dev, uint, S_IRUGO | S_IWUSR);
-
-/*
- * To support  mux on multiple devices, bit position represents device
- * and value represnts if mux is enabled or disabled.
- * e.g. bit 0: mdm over HSIC, bit1: mdm over hsusb
- */
-static unsigned long mux_enabled;
-module_param(mux_enabled, ulong, S_IRUGO | S_IWUSR);
-
-struct usbnet	*unet_list[TOTAL_RMNET_DEV_COUNT];
-
-/* net device name prefixes, indexed by driver_info->data */
-static const char * const rmnet_names[] = {
-	"rmnet_usb%d",
-	"rmnet2_usb%d",
-};
+#define HEADROOM_FOR_QOS		8
 
 static int	data_msg_dbg_mask;
 
@@ -103,68 +80,43 @@ static DEVICE_ATTR(dbg_mask, 0644, dbg_mask_show, dbg_mask_store);
 #define DBG1(x...) DBG(DEBUG_MASK_LVL1, x)
 #define DBG2(x...) DBG(DEBUG_MASK_LVL2, x)
 
-static int rmnet_data_start(void);
-static bool rmnet_data_init;
-
-static int rmnet_init(const char *val, const struct kernel_param *kp)
-{
-	int ret = 0;
-
-	if (rmnet_data_init) {
-		pr_err("dynamic setting rmnet params currently unsupported\n");
-		return -EINVAL;
-	}
-
-	ret = param_set_bool(val, kp);
-	if (ret)
-		return ret;
-
-	rmnet_data_start();
-
-	return ret;
-}
-
-static struct kernel_param_ops rmnet_init_ops = {
-	.set = rmnet_init,
-	.get = param_get_bool,
-};
-module_param_cb(rmnet_data_init, &rmnet_init_ops, &rmnet_data_init,
-		S_IRUGO | S_IWUSR);
-
 static void rmnet_usb_setup(struct net_device *);
 static int rmnet_ioctl(struct net_device *, struct ifreq *, int);
 
 static int rmnet_usb_suspend(struct usb_interface *iface, pm_message_t message)
 {
-	struct usbnet		*unet = usb_get_intfdata(iface);
-	struct rmnet_ctrl_udev	*dev;
+	struct usbnet		*unet;
+	struct rmnet_ctrl_dev	*dev;
 
-	dev = (struct rmnet_ctrl_udev *)unet->data[1];
+	unet = usb_get_intfdata(iface);
+
+	dev = (struct rmnet_ctrl_dev *)unet->data[1];
+
 	if (work_busy(&dev->get_encap_work))
+		return -EBUSY;
+
+	if (usbnet_suspend(iface, message))
 		return -EBUSY;
 
 	usb_kill_anchored_urbs(&dev->rx_submitted);
-	if (work_busy(&dev->get_encap_work))
-		return -EBUSY;
-
-	if (usbnet_suspend(iface, message)) {
-		rmnet_usb_ctrl_start_rx(dev);
-		return -EBUSY;
-	}
 
 	return 0;
 }
 
 static int rmnet_usb_resume(struct usb_interface *iface)
 {
-	struct usbnet		*unet = usb_get_intfdata(iface);
-	struct rmnet_ctrl_udev	*dev;
+	int			retval = 0;
+	struct usbnet		*unet;
+	struct rmnet_ctrl_dev	*dev;
 
-	dev = (struct rmnet_ctrl_udev *)unet->data[1];
+	unet = usb_get_intfdata(iface);
+
+	dev = (struct rmnet_ctrl_dev *)unet->data[1];
 
 	usbnet_resume(iface);
+	retval = rmnet_usb_ctrl_start_rx(dev);
 
-	return rmnet_usb_ctrl_start_rx(dev);
+	return retval;
 }
 
 static int rmnet_usb_bind(struct usbnet *usbnet, struct usb_interface *iface)
@@ -173,7 +125,6 @@ static int rmnet_usb_bind(struct usbnet *usbnet, struct usb_interface *iface)
 	struct usb_host_endpoint	*bulk_in = NULL;
 	struct usb_host_endpoint	*bulk_out = NULL;
 	struct usb_host_endpoint	*int_in = NULL;
-	struct driver_info		*info = usbnet->driver_info;
 	int				status = 0;
 	int				i;
 	int				numends;
@@ -206,9 +157,10 @@ static int rmnet_usb_bind(struct usbnet *usbnet, struct usb_interface *iface)
 		bulk_out->desc.bEndpointAddress & USB_ENDPOINT_NUMBER_MASK);
 	usbnet->status = int_in;
 
-	strlcpy(usbnet->net->name, rmnet_names[info->data],
-			IFNAMSIZ);
+	/*change name of net device to rmnet_usbx here*/
+	strlcpy(usbnet->net->name, "rmnet_usb%d", IFNAMSIZ);
 
+	/*TBD: update rx_urb_size, curently set to eth frame len by usbnet*/
 out:
 	return status;
 }
@@ -226,17 +178,18 @@ static struct sk_buff *rmnet_usb_tx_fixup(struct usbnet *dev,
 		qmih->flow_id = skb->mark;
 	 }
 
-	if (skb)
-		DBG1("[%s] Tx packet #%lu len=%d mark=0x%x\n",
-			dev->net->name, dev->net->stats.tx_packets,
-			skb->len, skb->mark);
+	DBG1("[%s] Tx packet #%lu len=%d mark=0x%x\n",
+	    dev->net->name, dev->net->stats.tx_packets, skb->len, skb->mark);
 
 	return skb;
 }
 
-static __be16 rmnet_ip_type_trans(struct sk_buff *skb)
+static __be16 rmnet_ip_type_trans(struct sk_buff *skb,
+	struct net_device *dev)
 {
 	__be16	protocol = 0;
+
+	skb->dev = dev;
 
 	switch (skb->data[0] & 0xf0) {
 	case 0x40:
@@ -246,20 +199,19 @@ static __be16 rmnet_ip_type_trans(struct sk_buff *skb)
 		protocol = htons(ETH_P_IPV6);
 		break;
 	default:
-		/*
-		 * There is no good way to determine if a packet has
-		 * a MAP header. For now default to MAP protocol
-		 */
-		protocol = htons(ETH_P_MAP);
+		pr_err("[%s] rmnet_recv() L3 protocol decode error: 0x%02x",
+		       dev->name, skb->data[0] & 0xf0);
 	}
 
 	return protocol;
 }
 
-static int rmnet_usb_rx_fixup(struct usbnet *dev, struct sk_buff *skb)
+static int rmnet_usb_rx_fixup(struct usbnet *dev,
+	struct sk_buff *skb)
 {
+
 	if (test_bit(RMNET_MODE_LLP_IP, &dev->data[0]))
-		skb->protocol = rmnet_ip_type_trans(skb);
+		skb->protocol = rmnet_ip_type_trans(skb, dev->net);
 	else /*set zero for eth mode*/
 		skb->protocol = 0;
 
@@ -318,67 +270,13 @@ static const struct net_device_ops rmnet_usb_ops_ip = {
 	.ndo_validate_addr = 0,
 };
 
-static int rmnet_ioctl_extended(struct net_device *dev, struct ifreq *ifr)
-{
-	struct rmnet_ioctl_extended_s ext_cmd;
-	int rc = 0;
-	struct usbnet *unet = netdev_priv(dev);
-
-	rc = copy_from_user(&ext_cmd, ifr->ifr_ifru.ifru_data,
-			    sizeof(struct rmnet_ioctl_extended_s));
-
-	if (rc) {
-		DBG0("%s(): copy_from_user() failed\n", __func__);
-		return rc;
-	}
-
-	switch (ext_cmd.extended_ioctl) {
-	case RMNET_IOCTL_GET_SUPPORTED_FEATURES:
-		ext_cmd.u.data = 0;
-		break;
-
-	case RMNET_IOCTL_SET_MRU:
-		if (test_bit(EVENT_DEV_OPEN, &unet->flags))
-			return -EBUSY;
-
-		/* 16K max */
-		if ((size_t)ext_cmd.u.data > 0x4000)
-			return -EINVAL;
-
-		unet->rx_urb_size = (size_t) ext_cmd.u.data;
-		DBG0("[%s] rmnet_ioctl(): SET MRU to %u\n", dev->name,
-				unet->rx_urb_size);
-		break;
-
-	case RMNET_IOCTL_GET_MRU:
-		ext_cmd.u.data = (uint32_t)unet->rx_urb_size;
-		break;
-
-	case RMNET_IOCTL_GET_DRIVER_NAME:
-		strlcpy(ext_cmd.u.if_name, unet->driver_name,
-			sizeof(ext_cmd.u.if_name));
-		break;
-	case RMNET_IOCTL_GET_EPID:
-		ext_cmd.u.data =
-			unet->intf->cur_altsetting->desc.bInterfaceNumber;
-		break;
-	}
-
-	rc = copy_to_user(ifr->ifr_ifru.ifru_data, &ext_cmd,
-			  sizeof(struct rmnet_ioctl_extended_s));
-
-	if (rc)
-		DBG0("%s(): copy_to_user() failed\n", __func__);
-	return rc;
-}
 
 static int rmnet_ioctl(struct net_device *dev, struct ifreq *ifr, int cmd)
 {
 	struct usbnet	*unet = netdev_priv(dev);
-	unsigned long	old_opmode;
+	u32		old_opmode;
 	int		prev_mtu = dev->mtu;
 	int		rc = 0;
-	struct rmnet_ioctl_data_s ioctl_data;
 
 	old_opmode = unet->data[0]; /*data[0] saves operation mode*/
 	/* Process IOCTL command */
@@ -408,6 +306,7 @@ static int rmnet_ioctl(struct net_device *dev, struct ifreq *ifr, int cmd)
 			dev->mtu = prev_mtu;
 			dev->addr_len = 0;
 			dev->flags &= ~(IFF_BROADCAST | IFF_MULTICAST);
+			dev->needed_headroom = HEADROOM_FOR_QOS;
 			dev->netdev_ops = &rmnet_usb_ops_ip;
 			clear_bit(RMNET_MODE_LLP_ETH, &unet->data[0]);
 			set_bit(RMNET_MODE_LLP_IP, &unet->data[0]);
@@ -417,12 +316,9 @@ static int rmnet_ioctl(struct net_device *dev, struct ifreq *ifr, int cmd)
 		break;
 
 	case RMNET_IOCTL_GET_LLP:	/* Get link protocol state */
-		ioctl_data.u.operation_mode = (unet->data[0]
+		ifr->ifr_ifru.ifru_data = (void *)(unet->data[0]
 						& (RMNET_MODE_LLP_ETH
 						| RMNET_MODE_LLP_IP));
-		if (copy_to_user(ifr->ifr_ifru.ifru_data, &ioctl_data,
-			sizeof(struct rmnet_ioctl_data_s)))
-			rc = -EFAULT;
 		break;
 
 	case RMNET_IOCTL_SET_QOS_ENABLE:	/* Set QoS header enabled*/
@@ -438,18 +334,12 @@ static int rmnet_ioctl(struct net_device *dev, struct ifreq *ifr, int cmd)
 		break;
 
 	case RMNET_IOCTL_GET_QOS:		/* Get QoS header state */
-		ioctl_data.u.operation_mode = (unet->data[0]
+		ifr->ifr_ifru.ifru_data = (void *)(unet->data[0]
 						& RMNET_MODE_QOS);
-		if (copy_to_user(ifr->ifr_ifru.ifru_data, &ioctl_data,
-			sizeof(struct rmnet_ioctl_data_s)))
-			rc = -EFAULT;
 		break;
 
 	case RMNET_IOCTL_GET_OPMODE:		/* Get operation mode*/
-		ioctl_data.u.operation_mode = unet->data[0];
-		if (copy_to_user(ifr->ifr_ifru.ifru_data, &ioctl_data,
-			sizeof(struct rmnet_ioctl_data_s)))
-			rc = -EFAULT;
+		ifr->ifr_ifru.ifru_data = (void *)unet->data[0];
 		break;
 
 	case RMNET_IOCTL_OPEN:			/* Open transport port */
@@ -462,17 +352,14 @@ static int rmnet_ioctl(struct net_device *dev, struct ifreq *ifr, int cmd)
 		DBG0("[%s] rmnet_ioctl(): close transport port\n", dev->name);
 		break;
 
-	case RMNET_IOCTL_EXTENDED:
-		rc = rmnet_ioctl_extended(dev, ifr);
-		break;
-
 	default:
-		dev_dbg(&unet->intf->dev, "[%s] error: rmnet_ioctl called for unsupported cmd[0x%x]\n",
+		dev_err(&unet->intf->dev, "[%s] error: "
+			"rmnet_ioct called for unsupported cmd[%d]",
 			dev->name, cmd);
 		return -EINVAL;
 	}
 
-	DBG2("[%s] %s: cmd=0x%x opmode old=0x%08lx new=0x%08lx\n",
+	DBG2("[%s] %s: cmd=0x%x opmode old=0x%08x new=0x%08lx\n",
 		dev->name, __func__, cmd, old_opmode, unet->data[0]);
 
 	return rc;
@@ -486,9 +373,7 @@ static void rmnet_usb_setup(struct net_device *dev)
 	/* set this after calling ether_setup */
 	dev->mtu = RMNET_DATA_LEN;
 
-	/* for QOS header */
-	dev->needed_headroom = RMNET_HEADROOM;
-
+	dev->needed_headroom = HEADROOM_FOR_QOS;
 	random_ether_addr(dev->dev_addr);
 	dev->watchdog_timeo = 1000; /* 10 seconds? */
 }
@@ -518,6 +403,7 @@ static int rmnet_usb_data_status(struct seq_file *s, void *unused)
 	seq_printf(s, "tx errors:          %lu\n", unet->net->stats.tx_errors);
 	seq_printf(s, "tx packets:         %lu\n", unet->net->stats.tx_packets);
 	seq_printf(s, "tx bytes:           %lu\n", unet->net->stats.tx_bytes);
+	seq_printf(s, "suspend count:      %d\n", unet->suspend_count);
 	seq_printf(s, "EVENT_DEV_OPEN:     %d\n",
 			test_bit(EVENT_DEV_OPEN, &unet->flags));
 	seq_printf(s, "EVENT_TX_HALT:      %d\n",
@@ -572,35 +458,37 @@ static void rmnet_usb_data_debugfs_cleanup(struct usbnet *unet)
 {
 	struct dentry *root = (struct dentry *)unet->data[2];
 
-	if (root) {
-		debugfs_remove_recursive(root);
-		unet->data[2] = 0;
-	}
+	debugfs_remove_recursive(root);
+	unet->data[2] = 0;
 }
 
 static int rmnet_usb_probe(struct usb_interface *iface,
 		const struct usb_device_id *prod)
 {
 	struct usbnet		*unet;
-	struct driver_info	*info = (struct driver_info *)prod->driver_info;
+	struct driver_info	*info;
 	struct usb_device	*udev;
+	unsigned int		iface_num;
+	static int		first_rmnet_iface_num = -EINVAL;
 	int			status = 0;
 
-	udev = interface_to_usbdev(iface);
-
+	iface_num = iface->cur_altsetting->desc.bInterfaceNumber;
 	if (iface->num_altsetting != 1) {
 		dev_err(&iface->dev, "%s invalid num_altsetting %u\n",
 			__func__, iface->num_altsetting);
-		return -EINVAL;
+		status = -EINVAL;
+		goto out;
 	}
+
+	info = (struct driver_info *)prod->driver_info;
+	if (!test_bit(iface_num, &info->data))
+		return -ENODEV;
 
 	status = usbnet_probe(iface, prod);
 	if (status < 0) {
-		dev_err(&iface->dev, "usbnet_probe failed %d\n",
-				status);
-		return status;
+		dev_err(&iface->dev, "usbnet_probe failed %d\n", status);
+		goto out;
 	}
-
 	unet = usb_get_intfdata(iface);
 
 	/*set rmnet operation mode to eth by default*/
@@ -610,25 +498,27 @@ static int rmnet_usb_probe(struct usb_interface *iface,
 	rmnet_usb_setup(unet->net);
 
 	/*create /sys/class/net/rmnet_usbx/dbg_mask*/
-	status = device_create_file(&unet->net->dev,
-			&dev_attr_dbg_mask);
-	if (status) {
-		usbnet_disconnect(iface);
-		return status;
-	}
+	status = device_create_file(&unet->net->dev, &dev_attr_dbg_mask);
+	if (status)
+		goto out;
 
-	status = rmnet_usb_ctrl_probe(iface, unet->status, info->data,
-			&unet->data[1]);
-	if (status) {
-		device_remove_file(&unet->net->dev, &dev_attr_dbg_mask);
-		usbnet_disconnect(iface);
-		return status;
-	}
+	if (first_rmnet_iface_num == -EINVAL)
+		first_rmnet_iface_num = iface_num;
+
+	/*save control device intstance */
+	unet->data[1] = (unsigned long)ctrl_dev	\
+			[iface_num - first_rmnet_iface_num];
+
+	status = rmnet_usb_ctrl_probe(iface, unet->status,
+		(struct rmnet_ctrl_dev *)unet->data[1]);
+	if (status)
+		goto out;
 
 	status = rmnet_usb_data_debugfs_init(unet);
 	if (status)
-		dev_dbg(&iface->dev,
-				"mode debugfs file is not available\n");
+		dev_dbg(&iface->dev, "mode debugfs file is not available\n");
+
+	udev = unet->udev;
 
 	usb_enable_autosuspend(udev);
 
@@ -638,114 +528,83 @@ static int rmnet_usb_probe(struct usb_interface *iface,
 		device_set_wakeup_enable(&udev->parent->dev, 1);
 	}
 
-	return 0;
+out:
+	return status;
 }
 
 static void rmnet_usb_disconnect(struct usb_interface *intf)
 {
-	struct usbnet		*unet = usb_get_intfdata(intf);
-	struct rmnet_ctrl_udev	*dev;
+	struct usbnet		*unet;
+	struct rmnet_ctrl_dev	*dev;
+
+	unet = usb_get_intfdata(intf);
+	if (!unet) {
+		dev_err(&intf->dev, "%s:data device not found\n", __func__);
+		return;
+	}
 
 	device_set_wakeup_enable(&unet->udev->dev, 0);
+	rmnet_usb_data_debugfs_cleanup(unet);
 
-	device_remove_file(&unet->net->dev, &dev_attr_dbg_mask);
-
-	dev = (struct rmnet_ctrl_udev *)unet->data[1];
-	rmnet_usb_ctrl_disconnect(dev);
+	dev = (struct rmnet_ctrl_dev *)unet->data[1];
+	if (!dev) {
+		dev_err(&intf->dev, "%s:ctrl device not found\n", __func__);
+		return;
+	}
 	unet->data[0] = 0;
 	unet->data[1] = 0;
-	rmnet_usb_data_debugfs_cleanup(unet);
+	rmnet_usb_ctrl_disconnect(dev);
+	device_remove_file(&unet->net->dev, &dev_attr_dbg_mask);
 	usbnet_disconnect(intf);
 }
 
-static struct driver_info rmnet_info = {
+/*bit position represents interface number*/
+#define PID9034_IFACE_MASK	0xF0
+#define PID9048_IFACE_MASK	0x1E0
+#define PID904C_IFACE_MASK	0x1C0
+
+static const struct driver_info rmnet_info_pid9034 = {
 	.description   = "RmNET net device",
 	.flags         = FLAG_SEND_ZLP,
 	.bind          = rmnet_usb_bind,
 	.tx_fixup      = rmnet_usb_tx_fixup,
 	.rx_fixup      = rmnet_usb_rx_fixup,
 	.manage_power  = rmnet_usb_manage_power,
-	.data          = 0,
+	.data          = PID9034_IFACE_MASK,
 };
 
-static struct driver_info rmnet_usb_info = {
+static const struct driver_info rmnet_info_pid9048 = {
 	.description   = "RmNET net device",
 	.flags         = FLAG_SEND_ZLP,
 	.bind          = rmnet_usb_bind,
 	.tx_fixup      = rmnet_usb_tx_fixup,
 	.rx_fixup      = rmnet_usb_rx_fixup,
 	.manage_power  = rmnet_usb_manage_power,
-	.data          = 1,
+	.data          = PID9048_IFACE_MASK,
+};
+
+static const struct driver_info rmnet_info_pid904c = {
+	.description   = "RmNET net device",
+	.flags         = FLAG_SEND_ZLP,
+	.bind          = rmnet_usb_bind,
+	.tx_fixup      = rmnet_usb_tx_fixup,
+	.rx_fixup      = rmnet_usb_rx_fixup,
+	.manage_power  = rmnet_usb_manage_power,
+	.data          = PID904C_IFACE_MASK,
 };
 
 static const struct usb_device_id vidpids[] = {
-	{ USB_DEVICE_INTERFACE_NUMBER(0x05c6, 0x9034, 4),
-	.driver_info = (unsigned long)&rmnet_info,
+	{
+		USB_DEVICE(0x05c6, 0x9034), /* MDM9x15*/
+		.driver_info = (unsigned long)&rmnet_info_pid9034,
 	},
-	{ USB_DEVICE_INTERFACE_NUMBER(0x05c6, 0x9034, 5),
-	.driver_info = (unsigned long)&rmnet_info,
+	{
+		USB_DEVICE(0x05c6, 0x9048), /* MDM9x15*/
+		.driver_info = (unsigned long)&rmnet_info_pid9048,
 	},
-	{ USB_DEVICE_INTERFACE_NUMBER(0x05c6, 0x9034, 6),
-	.driver_info = (unsigned long)&rmnet_info,
-	},
-	{ USB_DEVICE_INTERFACE_NUMBER(0x05c6, 0x9034, 7),
-	.driver_info = (unsigned long)&rmnet_info,
-	},
-	{ USB_DEVICE_INTERFACE_NUMBER(0x05c6, 0x9048, 5),
-	.driver_info = (unsigned long)&rmnet_info,
-	},
-	{ USB_DEVICE_INTERFACE_NUMBER(0x05c6, 0x9048, 6),
-	.driver_info = (unsigned long)&rmnet_info,
-	},
-	{ USB_DEVICE_INTERFACE_NUMBER(0x05c6, 0x9048, 7),
-	.driver_info = (unsigned long)&rmnet_info,
-	},
-	{ USB_DEVICE_INTERFACE_NUMBER(0x05c6, 0x9048, 8),
-	.driver_info = (unsigned long)&rmnet_info,
-	},
-	{ USB_DEVICE_INTERFACE_NUMBER(0x05c6, 0x904c, 6),
-	.driver_info = (unsigned long)&rmnet_info,
-	},
-	{ USB_DEVICE_INTERFACE_NUMBER(0x05c6, 0x904c, 7),
-	.driver_info = (unsigned long)&rmnet_info,
-	},
-	{ USB_DEVICE_INTERFACE_NUMBER(0x05c6, 0x904c, 8),
-	.driver_info = (unsigned long)&rmnet_info,
-	},
-	/* mux over hsic mdm */
-	{ USB_DEVICE_INTERFACE_NUMBER(0x05c6, 0x9075, 6),
-	.driver_info = (unsigned long)&rmnet_info,
-	},
-	{ USB_DEVICE_INTERFACE_NUMBER(0x05c6, 0x908E, 8),
-	.driver_info = (unsigned long)&rmnet_info,
-	},
-	{ USB_DEVICE_INTERFACE_NUMBER(0x05c6, 0x9079, 5),
-	.driver_info = (unsigned long)&rmnet_usb_info,
-	},
-	{ USB_DEVICE_INTERFACE_NUMBER(0x05c6, 0x9079, 6),
-	.driver_info = (unsigned long)&rmnet_usb_info,
-	},
-	{ USB_DEVICE_INTERFACE_NUMBER(0x05c6, 0x9079, 7),
-	.driver_info = (unsigned long)&rmnet_usb_info,
-	},
-	{ USB_DEVICE_INTERFACE_NUMBER(0x05c6, 0x9079, 8),
-	.driver_info = (unsigned long)&rmnet_usb_info,
-	},
-	/* mux over hsic mdm */
-	{ USB_DEVICE_INTERFACE_NUMBER(0x05c6, 0x908A, 6),
-	.driver_info = (unsigned long)&rmnet_info,
-	},
-	/* mux over hsic mdm */
-	{ USB_DEVICE_INTERFACE_NUMBER(0x05c6, 0x909F, 6),
-	.driver_info = (unsigned long)&rmnet_info,
-	},
-	/* mux over hsic mdm */
-	{ USB_DEVICE_INTERFACE_NUMBER(0x05c6, 0x90A0, 6),
-	.driver_info = (unsigned long)&rmnet_info,
-	},
-	/* mux over hsic mdm */
-	{ USB_DEVICE_INTERFACE_NUMBER(0x05c6, 0x90A4, 8),
-	.driver_info = (unsigned long)&rmnet_info,
+	{
+		USB_DEVICE(0x05c6, 0x904c), /* MDM9x15*/
+		.driver_info = (unsigned long)&rmnet_info_pid904c,
 	},
 
 	{ }, /* Terminating entry */
@@ -760,41 +619,34 @@ static struct usb_driver rmnet_usb = {
 	.disconnect = rmnet_usb_disconnect,
 	.suspend    = rmnet_usb_suspend,
 	.resume     = rmnet_usb_resume,
-	.reset_resume     = rmnet_usb_resume,
 	.supports_autosuspend = true,
 };
 
-static int rmnet_data_start(void)
+static int __init rmnet_usb_init(void)
 {
 	int	retval;
 
-	if (no_rmnet_devs > MAX_RMNET_DEVS) {
-		pr_err("ERROR:%s: param no_rmnet_devs(%d) > than maximum(%d)",
-			__func__, no_rmnet_devs, MAX_RMNET_DEVS);
-		return -EINVAL;
-	}
-
-	/* initialize ctrl devices */
-	retval = rmnet_usb_ctrl_init(no_rmnet_devs, no_rmnet_insts_per_dev,
-			mux_enabled);
-	if (retval) {
-		pr_err("rmnet_usb_cmux_init failed: %d", retval);
-		return retval;
-	}
-
 	retval = usb_register(&rmnet_usb);
 	if (retval) {
-		pr_err("usb_register failed: %d", retval);
+		err("usb_register failed: %d", retval);
+		return retval;
+	}
+	/* initialize rmnet ctrl device here*/
+	retval = rmnet_usb_ctrl_init();
+	if (retval) {
+		usb_deregister(&rmnet_usb);
+		err("rmnet_usb_cmux_init failed: %d", retval);
 		return retval;
 	}
 
-	return retval;
+	return 0;
 }
+module_init(rmnet_usb_init);
 
 static void __exit rmnet_usb_exit(void)
 {
+	rmnet_usb_ctrl_exit();
 	usb_deregister(&rmnet_usb);
-	rmnet_usb_ctrl_exit(no_rmnet_devs, no_rmnet_insts_per_dev, mux_enabled);
 }
 module_exit(rmnet_usb_exit);
 

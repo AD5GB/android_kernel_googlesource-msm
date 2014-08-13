@@ -34,9 +34,9 @@
 struct clk_freq_tbl {
 	unsigned long	freq_hz;
 	struct clk	*src_clk;
-	u32	m_val;
-	u32	n_val;
-	u32	d_val;
+	const u32	m_val;
+	const u32	n_val;
+	const u32	d_val;
 	u32	div_src_val;
 	const unsigned	sys_vdd;
 };
@@ -157,38 +157,6 @@ static inline struct measure_clk *to_measure_clk(struct clk *clk)
 	return container_of(clk, struct measure_clk, c);
 }
 
-struct mux_source {
-	struct clk *const clk;
-	const u32 select_val;
-};
-
-/**
- * struct cam_mux_clk - branch clock
- * @c: clk
- * @enable_reg: register that contains the enable bit(s) for the mux
- * @select_reg: register that contains the source selection bits for the mux
- * @enable_mask: mask that enables the mux
- * @select_mask: mask for the source selection bits
- * @sources: list of mux sources
- * @base: pointer to base address of ioremapped registers.
- */
-struct cam_mux_clk {
-	struct clk c;
-	const u32 enable_reg;
-	const u32 select_reg;
-	const u32 enable_mask;
-	const u32 select_mask;
-
-	struct mux_source *sources;
-
-	void *const __iomem *base;
-};
-
-static inline struct cam_mux_clk *to_cam_mux_clk(struct clk *clk)
-{
-	return container_of(clk, struct cam_mux_clk, c);
-}
-
 /*
  * Generic set-rate implementations
  */
@@ -200,7 +168,6 @@ void set_rate_hid(struct rcg_clk *clk, struct clk_freq_tbl *nf);
  */
 extern spinlock_t local_clock_reg_lock;
 
-extern struct clk_ops clk_ops_cam_mux;
 extern struct clk_ops clk_ops_empty;
 extern struct clk_ops clk_ops_rcg;
 extern struct clk_ops clk_ops_rcg_mnd;
@@ -209,9 +176,6 @@ extern struct clk_ops clk_ops_vote;
 extern struct clk_ops clk_ops_rcg_hdmi;
 extern struct clk_ops clk_ops_byte;
 extern struct clk_ops clk_ops_pixel;
-
-enum handoff pixel_rcg_handoff(struct clk *clk);
-enum handoff byte_rcg_handoff(struct clk *clk);
 
 /*
  * Clock definition macros

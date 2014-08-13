@@ -270,21 +270,21 @@ static struct pm8xxx_adc_platform_data pm8018_adc_pdata = {
 	.adc_prop		= &pm8018_adc_data,
 };
 
-static struct pm8xxx_irq_platform_data pm8xxx_irq_pdata __devinitdata = {
+static struct pm8xxx_irq_platform_data pm8xxx_irq_pdata = {
 	.irq_base		= PM8018_IRQ_BASE,
 	.devirq			= MSM_GPIO_TO_INT(87),
 	.irq_trigger_flag	= IRQF_TRIGGER_LOW,
 };
 
-static struct pm8xxx_gpio_platform_data pm8xxx_gpio_pdata __devinitdata = {
+static struct pm8xxx_gpio_platform_data pm8xxx_gpio_pdata = {
 	.gpio_base		= PM8018_GPIO_PM_TO_SYS(1),
 };
 
-static struct pm8xxx_mpp_platform_data pm8xxx_mpp_pdata __devinitdata = {
+static struct pm8xxx_mpp_platform_data pm8xxx_mpp_pdata = {
 	.mpp_base		= PM8018_MPP_PM_TO_SYS(1),
 };
 
-static struct pm8xxx_rtc_platform_data pm8xxx_rtc_pdata __devinitdata = {
+static struct pm8xxx_rtc_platform_data pm8xxx_rtc_pdata = {
 	.rtc_write_enable	= false,
 	.rtc_alarm_powerup	= false,
 };
@@ -343,7 +343,7 @@ static struct ltc4088_charger_platform_data ltc4088_chg_pdata = {
 };
 #endif
 
-static struct pm8018_platform_data pm8018_platform_data __devinitdata = {
+static struct pm8018_platform_data pm8018_platform_data = {
 	.irq_pdata		= &pm8xxx_irq_pdata,
 	.gpio_pdata		= &pm8xxx_gpio_pdata,
 	.mpp_pdata		= &pm8xxx_mpp_pdata,
@@ -355,7 +355,7 @@ static struct pm8018_platform_data pm8018_platform_data __devinitdata = {
 	.leds_pdata		= &pm8xxx_leds_pdata,
 };
 
-static struct msm_ssbi_platform_data msm9615_ssbi_pm8018_pdata __devinitdata = {
+static struct msm_ssbi_platform_data msm9615_ssbi_pm8018_pdata = {
 	.controller_type = MSM_SBI_CTRL_PMIC_ARBITER,
 	.slave	= {
 		.name		= PM8018_CORE_DEV_NAME,
@@ -363,7 +363,7 @@ static struct msm_ssbi_platform_data msm9615_ssbi_pm8018_pdata __devinitdata = {
 	},
 };
 
-static struct platform_device msm9615_device_rpm_regulator __devinitdata = {
+static struct platform_device msm9615_device_rpm_regulator = {
 	.name	= "rpm-regulator",
 	.id	= -1,
 	.dev	= {
@@ -841,10 +841,6 @@ static struct ci13xxx_platform_data msm_hsic_peripheral_pdata = {
 	.prv_data = &msm_hsic_peripheral_pdata_private,
 };
 
-static struct msm_hsic_host_platform_data msm_hsic_pdata = {
-	.phy_sof_workaround	= true,
-};
-
 #define PID_MAGIC_ID		0x71432909
 #define SERIAL_NUM_MAGIC_ID	0x61945374
 #define SERIAL_NUMBER_LENGTH	127
@@ -1077,7 +1073,6 @@ static void __init msm9615_common_init(void)
 		&msm_peripheral_pdata;
 	msm_device_hsic_peripheral.dev.platform_data =
 		&msm_hsic_peripheral_pdata;
-	msm_device_hsic_host.dev.platform_data = &msm_hsic_pdata;
 	msm_device_usb_bam.dev.platform_data = &msm_usb_bam_pdata;
 	platform_add_devices(common_devices, ARRAY_SIZE(common_devices));
 	msm9615_pm8xxx_gpio_mpp_init();
@@ -1122,7 +1117,6 @@ static void __init mdm9615_allocate_memory_regions(void)
 MACHINE_START(MSM9615_CDP, "QCT MSM9615 CDP")
 	.map_io = msm9615_map_io,
 	.init_irq = msm9615_init_irq,
-	.handle_irq = gic_handle_irq,
 	.timer = &msm_timer,
 	.init_machine = msm9615_cdp_init,
 	.reserve = msm9615_reserve,
@@ -1135,7 +1129,6 @@ MACHINE_END
 MACHINE_START(MSM9615_MTP, "QCT MSM9615 MTP")
 	.map_io = msm9615_map_io,
 	.init_irq = msm9615_init_irq,
-	.handle_irq = gic_handle_irq,
 	.timer = &msm_timer,
 	.init_machine = msm9615_mtp_init,
 	.reserve = msm9615_reserve,

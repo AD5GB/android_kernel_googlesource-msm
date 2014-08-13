@@ -16,11 +16,9 @@
 
 / {
 	model = "Qualcomm MSM 8610 Rumi";
-	compatible = "qcom,msm8610-rumi", "qcom,msm8610", "qcom,rumi";
+	compatible = "qcom,msm8610-rumi", "qcom,msm8610";
 	qcom,msm-id = <147 15 0>;
-};
 
-&soc {
 	serial@f991f000 {
 		status = "ok";
 	};

@@ -216,6 +216,8 @@ static int tsif_get_clocks(struct msm_tsif_device *tsif_device)
 		tsif_device->tsif_clk = clk_get(&tsif_device->pdev->dev,
 						pdata->tsif_clk);
 		if (IS_ERR(tsif_device->tsif_clk)) {
+			dev_err(&tsif_device->pdev->dev, "failed to get %s\n",
+				pdata->tsif_clk);
 			rc = PTR_ERR(tsif_device->tsif_clk);
 			tsif_device->tsif_clk = NULL;
 			goto ret;
@@ -225,6 +227,8 @@ static int tsif_get_clocks(struct msm_tsif_device *tsif_device)
 		tsif_device->tsif_pclk = clk_get(&tsif_device->pdev->dev,
 						 pdata->tsif_pclk);
 		if (IS_ERR(tsif_device->tsif_pclk)) {
+			dev_err(&tsif_device->pdev->dev, "failed to get %s\n",
+				pdata->tsif_pclk);
 			rc = PTR_ERR(tsif_device->tsif_pclk);
 			tsif_device->tsif_pclk = NULL;
 			goto ret;
@@ -234,6 +238,8 @@ static int tsif_get_clocks(struct msm_tsif_device *tsif_device)
 		tsif_device->tsif_ref_clk = clk_get(&tsif_device->pdev->dev,
 						    pdata->tsif_ref_clk);
 		if (IS_ERR(tsif_device->tsif_ref_clk)) {
+			dev_err(&tsif_device->pdev->dev, "failed to get %s\n",
+				pdata->tsif_ref_clk);
 			rc = PTR_ERR(tsif_device->tsif_ref_clk);
 			tsif_device->tsif_ref_clk = NULL;
 			goto ret;
@@ -1385,7 +1391,7 @@ static struct msm_tsif_device *tsif_find_by_id(int id)
 	return NULL;
 }
 
-static int __devinit msm_tsif_probe(struct platform_device *pdev)
+static int msm_tsif_probe(struct platform_device *pdev)
 {
 	int rc = -ENODEV;
 	struct msm_tsif_platform_data *plat = pdev->dev.platform_data;
@@ -1425,8 +1431,7 @@ static int __devinit msm_tsif_probe(struct platform_device *pdev)
 		     (unsigned long)tsif_device);
 	tasklet_init(&tsif_device->clocks_off, tsif_clocks_off,
 		     (unsigned long)tsif_device);
-	rc = tsif_get_clocks(tsif_device);
-	if (rc)
+	if (tsif_get_clocks(tsif_device))
 		goto err_clocks;
 /* map I/O memory */
 	tsif_device->memres = platform_get_resource(pdev, IORESOURCE_MEM, 0);
@@ -1496,7 +1501,7 @@ out:
 	return rc;
 }
 
-static int __devexit msm_tsif_remove(struct platform_device *pdev)
+static int msm_tsif_remove(struct platform_device *pdev)
 {
 	struct msm_tsif_device *tsif_device = platform_get_drvdata(pdev);
 	dev_info(&pdev->dev, "Unload\n");

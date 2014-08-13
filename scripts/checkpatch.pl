@@ -3783,12 +3783,6 @@ sub process {
 			      "illegal return value, please use an error code\n" . $herecurr);
 		}
 
-# check for return codes on error paths
-		if ($line =~ /\breturn\s+-\d+/) {
-			ERROR("NO_ERROR_CODE",
-			      "illegal return value, please use an error code\n" . $herecurr);
-		}
-
 # check for gcc specific __FUNCTION__
 		if ($line =~ /__FUNCTION__/) {
 			WARN("USE_FUNC",

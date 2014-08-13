@@ -792,4 +792,7 @@ static inline void ftrace_dump(enum ftrace_dump_mode oops_dump_mode) { }
 /* To identify board information in panic logs, set this */
 extern char *mach_panic_string;
 
+/* To identify board information in panic logs, set this */
+extern char *mach_panic_string;
+
 #endif

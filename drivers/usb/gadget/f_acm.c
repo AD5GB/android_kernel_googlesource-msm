@@ -5,7 +5,7 @@
  * Copyright (C) 2008 by David Brownell
  * Copyright (C) 2008 by Nokia Corporation
  * Copyright (C) 2009 by Samsung Electronics
- * Copyright (c) 2011, 2014 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2011 The Linux Foundation. All rights reserved.
  * Author: Michal Nazarewicz (mina86@mina86.com)
  *
  * This software is distributed under the terms of the GNU General
@@ -20,6 +20,7 @@
 #include <linux/module.h>
 #include <linux/device.h>
 #include <linux/err.h>
+#include <mach/usb_gadget_xport.h>
 
 #include "usb_gadget_xport.h"
 #include "u_serial.h"
@@ -79,11 +80,9 @@ struct f_acm {
 };
 
 static unsigned int no_acm_tty_ports;
+static unsigned int no_acm_sdio_ports;
 static unsigned int no_acm_smd_ports;
 static unsigned int nr_acm_ports;
-static unsigned int acm_next_free_port;
-
-#define GSERIAL_NO_PORTS 4
 
 static struct acm_port_info {
 	enum transport_type	transport;
@@ -101,12 +100,13 @@ static inline struct f_acm *port_to_acm(struct gserial *p)
 	return container_of(p, struct f_acm, port);
 }
 
-int acm_port_setup(struct usb_configuration *c)
+static int acm_port_setup(struct usb_configuration *c)
 {
 	int ret = 0, i;
 
-	pr_debug("%s: no_acm_tty_ports:%u nr_acm_ports:%u\n",
-			__func__, no_acm_tty_ports, nr_acm_ports);
+	pr_debug("%s: no_acm_tty_ports:%u no_acm_sdio_ports: %u nr_acm_ports:%u\n",
+			__func__, no_acm_tty_ports, no_acm_sdio_ports,
+				nr_acm_ports);
 
 	if (no_acm_tty_ports) {
 		for (i = 0; i < no_acm_tty_ports; i++) {
@@ -116,13 +116,15 @@ int acm_port_setup(struct usb_configuration *c)
 				return ret;
 		}
 	}
+	if (no_acm_sdio_ports)
+		ret = gsdio_setup(c->cdev->gadget, no_acm_sdio_ports);
 	if (no_acm_smd_ports)
 		ret = gsmd_setup(c->cdev->gadget, no_acm_smd_ports);
 
 	return ret;
 }
 
-void acm_port_cleanup(void)
+static void acm_port_cleanup(void)
 {
 	int i;
 
@@ -144,6 +146,9 @@ static int acm_port_connect(struct f_acm *acm)
 	switch (acm->transport) {
 	case USB_GADGET_XPORT_TTY:
 		gserial_connect(&acm->port, port_num);
+		break;
+	case USB_GADGET_XPORT_SDIO:
+		gsdio_connect(&acm->port, port_num);
 		break;
 	case USB_GADGET_XPORT_SMD:
 		gsmd_connect(&acm->port, port_num);
@@ -170,6 +175,9 @@ static int acm_port_disconnect(struct f_acm *acm)
 	switch (acm->transport) {
 	case USB_GADGET_XPORT_TTY:
 		gserial_disconnect(&acm->port);
+		break;
+	case USB_GADGET_XPORT_SDIO:
+		gsdio_disconnect(&acm->port, port_num);
 		break;
 	case USB_GADGET_XPORT_SMD:
 		gsmd_disconnect(&acm->port, port_num);
@@ -551,6 +559,15 @@ static int acm_set_alt(struct usb_function *f, unsigned intf, unsigned alt)
 				return -EINVAL;
 			}
 		}
+		if (config_ep_by_speed(cdev->gadget, f,
+				acm->port.in) ||
+			config_ep_by_speed(cdev->gadget, f,
+				acm->port.out)) {
+			acm->port.in->desc = NULL;
+			acm->port.out->desc = NULL;
+			return -EINVAL;
+		}
+
 		acm_port_connect(acm);
 
 	} else
@@ -928,10 +945,12 @@ static struct f_serial_opts_attribute f_acm_port_num =
 	__CONFIGFS_ATTR_RO(port_num, f_acm_port_num_show);
 
 
-static struct configfs_attribute *acm_attrs[] = {
-	&f_acm_port_num.attr,
-	NULL,
-};
+	opts = container_of(fi, struct f_serial_opts, func_inst);
+	acm->port_num = opts->port_num;
+	acm->transport = gacm_ports[port_num].transport;
+
+	acm->port.func.unbind = acm_unbind;
+	acm->port.func.free_func = acm_free_func;
 
 static struct config_item_type acm_func_type = {
 	.ct_item_ops    = &acm_item_ops,
@@ -972,42 +991,7 @@ static struct usb_function_instance *acm_alloc_instance(void)
 }
 DECLARE_USB_FUNCTION_INIT(acm, acm_alloc_instance, acm_alloc_func);
 MODULE_LICENSE("GPL");
-
-/**
- * acm_init_port - bind a acm_port to its transport
- */
-int acm_init_port(int port_num, const char *name)
-{
-	enum transport_type transport;
-
-	if (port_num >= GSERIAL_NO_PORTS)
-		return -ENODEV;
-
-	transport = str_to_xport(name);
-	pr_debug("%s, port:%d, transport:%s\n", __func__,
-			port_num, xport_to_str(transport));
-
-	gacm_ports[port_num].transport = transport;
-	gacm_ports[port_num].port_num = port_num;
-
-	switch (transport) {
-	case USB_GADGET_XPORT_TTY:
-		no_acm_tty_ports++;
-		break;
-	case USB_GADGET_XPORT_SMD:
-		gacm_ports[port_num].client_port_num = no_acm_smd_ports;
-		no_acm_smd_ports++;
-		break;
-	default:
-		pr_err("%s: Un-supported transport transport: %u\n",
-				__func__, gacm_ports[port_num].transport);
-		return -ENODEV;
-	}
-
-	nr_acm_ports++;
-
-	return 0;
-}
+#endif
 
 /**
  * acm_init_port - bind a acm_port to its transport
@@ -1028,7 +1012,6 @@ static int acm_init_port(int port_num, const char *name)
 
 	switch (transport) {
 	case USB_GADGET_XPORT_TTY:
-		gacm_ports[port_num].client_port_num = no_acm_tty_ports;
 		no_acm_tty_ports++;
 		break;
 	case USB_GADGET_XPORT_SDIO:

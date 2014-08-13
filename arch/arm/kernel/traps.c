@@ -44,6 +44,8 @@
 
 #include <trace/events/exception.h>
 
+#include <trace/events/exception.h>
+
 static const char *handler[]= { "prefetch abort", "data abort", "address exception", "interrupt" };
 
 void *vectors_page;

@@ -35,7 +35,6 @@
 #ifndef __LINUX_REGULATOR_CONSUMER_H_
 #define __LINUX_REGULATOR_CONSUMER_H_
 
-#include <linux/types.h>
 #include <linux/compiler.h>
 
 struct device;
@@ -162,6 +161,8 @@ int __must_check devm_regulator_bulk_get(struct device *dev, int num_consumers,
 					 struct regulator_bulk_data *consumers);
 int __must_check regulator_bulk_enable(int num_consumers,
 				       struct regulator_bulk_data *consumers);
+int regulator_bulk_set_voltage(int num_consumers,
+			  struct regulator_bulk_data *consumers);
 int regulator_bulk_set_voltage(int num_consumers,
 			  struct regulator_bulk_data *consumers);
 int regulator_bulk_set_voltage(int num_consumers,

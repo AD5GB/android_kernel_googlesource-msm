@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2014, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2013, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -25,7 +25,6 @@
 #define MSM_SEC_MI2S  1
 #define MSM_TERT_MI2S 2
 #define MSM_QUAT_MI2S  3
-#define MSM_SEC_MI2S_VIBRA  4
 
 struct msm_dai_auxpcm_config {
 	u16 mode;
@@ -37,10 +36,11 @@ struct msm_dai_auxpcm_config {
 	* in multichannel scenario */
 	u16 slot;
 	u16 data;
-	u32 pcm_clk_rate;
+	int pcm_clk_rate;
 };
 
 struct msm_dai_auxpcm_pdata {
+	void *clk_cfg;
 	struct msm_dai_auxpcm_config mode_8k;
 	struct msm_dai_auxpcm_config mode_16k;
 };

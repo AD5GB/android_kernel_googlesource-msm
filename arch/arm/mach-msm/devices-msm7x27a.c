@@ -942,6 +942,7 @@ static struct kgsl_device_platform_data kgsl_3d0_pdata = {
 	.set_grp_async = set_grp_xbar_async,
 	.idle_timeout = HZ,
 	.strtstp_sleepwake = true,
+	.nap_allowed = false,
 	.clk_map = KGSL_CLK_CORE | KGSL_CLK_IFACE | KGSL_CLK_MEM,
 };
 
@@ -1666,7 +1667,7 @@ static struct resource pl310_resources[] = {
 	},
 	{
 		.name   = "l2_irq",
-		.start  = MSM8625_INT_SC_SICL2PERFMONIRPTREQ,
+		.start  = MSM8625_INT_L2CC_INTR,
 		.flags  = IORESOURCE_IRQ,
 	},
 };
@@ -2095,7 +2096,7 @@ int __init msm7x2x_misc_init(void)
 		msm_cpr_init();
 
 	if (!cpu_is_msm8625() && !cpu_is_msm8625q())
-		pl310_resources[1].start = SC_SICL2PERFMONIRPTREQ;
+		pl310_resources[1].start = INT_L2CC_INTR;
 
 	platform_device_register(&pl310_erp_device);
 
