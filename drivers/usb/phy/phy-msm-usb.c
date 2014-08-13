@@ -2757,6 +2757,9 @@ static void msm_otg_sm_work(struct work_struct *w)
 						OTG_STATE_B_PERIPHERAL;
 					break;
 				case USB_SDP_CHARGER:
+					if (motg->pdata->no_set_vbus_power)
+						msm_otg_notify_charger(motg,
+								IDEV_CHG_MIN);
 					msm_otg_start_peripheral(otg, 1);
 					otg->phy->state =
 						OTG_STATE_B_PERIPHERAL;
@@ -3453,10 +3456,12 @@ static void msm_otg_set_vbus_state(int online)
 
 	if (online) {
 		pr_debug("PMIC: BSV set\n");
-		set_bit(B_SESS_VLD, &motg->inputs);
+		if (test_and_set_bit(B_SESS_VLD, &motg->inputs) && init)
+			return;
 	} else {
 		pr_debug("PMIC: BSV clear\n");
-		clear_bit(B_SESS_VLD, &motg->inputs);
+		if (!test_and_clear_bit(B_SESS_VLD, &motg->inputs) && init)
+			return;
 	}
 
 #ifdef OTG_WAIT_PMIC
@@ -3475,7 +3480,9 @@ static void msm_otg_set_vbus_state(int online)
 		init = true;
 		complete(&pmic_vbus_init);
 		pr_debug("PMIC: BSV init complete\n");
-		return;
+		/* fallthrough and schedule state machine work
+		 * to handle vbus change incase no current work
+		 */
 	}
 #endif
 
@@ -3838,7 +3845,9 @@ static int otg_power_set_property_usb(struct power_supply *psy,
 	switch (psp) {
 	/* Process PMIC notification in PRESENT prop */
 	case POWER_SUPPLY_PROP_PRESENT:
-		msm_otg_set_vbus_state(val->intval);
+		/* Pre-check to eliminate redundancy */
+		if(!!test_bit(B_SESS_VLD, &motg->inputs) != val->intval)
+			msm_otg_set_vbus_state(val->intval);
 		break;
 	/* The ONLINE property reflects if usb has enumerated */
 	case POWER_SUPPLY_PROP_ONLINE:
@@ -4406,6 +4415,8 @@ struct msm_otg_platform_data *msm_otg_dt_to_pdata(struct platform_device *pdev)
 
 	pdata->rw_during_lpm_workaround = of_property_read_bool(node,
 				"qcom,hsusb-otg-rw-during-lpm-workaround");
+	pdata->no_set_vbus_power = of_property_read_bool(node,
+				"qcom,no-set-vbus-power");
 
 	return pdata;
 }
@@ -4762,7 +4773,8 @@ static int msm_otg_probe(struct platform_device *pdev)
 		msm_mpm_enable_pin(pdata->mpm_dmshv_int, 1);
 
 	phy->init = msm_otg_reset;
-	phy->set_power = msm_otg_set_power;
+	if (!pdata->no_set_vbus_power)
+		phy->set_power = msm_otg_set_power;
 	phy->set_suspend = msm_otg_set_suspend;
 
 	phy->io_ops = &msm_otg_io_ops;
@@ -4847,8 +4859,10 @@ static int msm_otg_probe(struct platform_device *pdev)
 		pm_runtime_use_autosuspend(&pdev->dev);
 	}
 
-	motg->usb_psy.name = "msm-usb";
-	motg->usb_psy.type = POWER_SUPPLY_TYPE_UNKNOWN;
+	motg->current_max = IDEV_CHG_MIN * 1000;
+
+	motg->usb_psy.name = "usb";
+	motg->usb_psy.type = POWER_SUPPLY_TYPE_USB;
 	motg->usb_psy.supplied_to = otg_pm_power_supplied_to;
 	motg->usb_psy.num_supplicants = ARRAY_SIZE(otg_pm_power_supplied_to);
 	motg->usb_psy.properties = otg_pm_power_props_usb;
@@ -5126,7 +5140,6 @@ static int msm_otg_pm_resume(struct device *dev)
 	dev_dbg(dev, "OTG PM resume\n");
 
 	motg->pm_done = 0;
-	atomic_set(&motg->pm_suspended, 0);
 	if (motg->async_int || motg->sm_work_pending ||
 			!pm_runtime_suspended(dev)) {
 		pm_runtime_get_noresume(dev);
@@ -5142,6 +5155,7 @@ static int msm_otg_pm_resume(struct device *dev)
 			queue_work(system_nrt_wq, &motg->sm_work);
 		}
 	}
+	atomic_set(&motg->pm_suspended, 0);
 
 	return ret;
 }

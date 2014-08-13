@@ -281,6 +281,7 @@ struct msm_otg_platform_data {
 	bool rw_during_lpm_workaround;
 	bool enable_ahb2ahb_bypass;
 	bool disable_retention_with_vdd_min;
+	bool no_set_vbus_power;
 };
 
 /* phy related flags */

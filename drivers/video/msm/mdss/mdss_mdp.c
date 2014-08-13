@@ -2714,6 +2714,7 @@ static int mdss_mdp_pm_suspend(struct device *dev)
 #if !defined(CONFIG_FB_MSM_MDSS_PANEL_ALWAYS_ON)
 	mdata->ulps = false;
 #endif
+
 	return mdss_mdp_suspend_sub(mdata);
 }
 

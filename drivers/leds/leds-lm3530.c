@@ -1,4 +1,5 @@
 /*
+ * Copyright (C) 2013 LGE Inc.
  * Copyright (C) 2011 ST-Ericsson SA.
  * Copyright (C) 2009 Motorola, Inc.
  *
@@ -8,6 +9,8 @@
  *
  * Author: Shreshtha Kumar SAHU <shreshthakumar.sahu@stericsson.com>
  * based on leds-lm3530.c by Dan Murphy <D.Murphy@motorola.com>
+ *
+ * Author: ChoongRyeol Lee <choongryeol.lee@lge.com>
  */
 
 #include <linux/i2c.h>
@@ -19,6 +22,10 @@
 #include <linux/types.h>
 #include <linux/regulator/consumer.h>
 #include <linux/module.h>
+#include <linux/of_device.h>
+#include <linux/of_gpio.h>
+#include <linux/gpio.h>
+#include <linux/reboot.h>
 
 #define LM3530_LED_DEV "lcd-backlight"
 #define LM3530_NAME "lm3530-led"
@@ -81,6 +88,7 @@
 
 /* 7 bits are used for the brightness : LM3530_BRT_CTRL_REG */
 #define MAX_BRIGHTNESS			(127)
+#define MAX_USER_BRIGHTNESS		(255)
 
 struct lm3530_mode_map {
 	const char *mode;
@@ -102,6 +110,7 @@ static struct lm3530_mode_map mode_map[] = {
  * @regulator: regulator
  * @brighness: previous brightness value
  * @enable: regulator is enabled
+ * @en_gpio: enable gpio
  */
 struct lm3530_data {
 	struct led_classdev led_dev;
@@ -109,8 +118,10 @@ struct lm3530_data {
 	struct lm3530_platform_data *pdata;
 	enum lm3530_mode mode;
 	struct regulator *regulator;
-	enum led_brightness brightness;
+	u8 brightness;
 	bool enable;
+	int en_gpio;
+	struct notifier_block nb_reboot;
 };
 
 /*
@@ -127,10 +138,10 @@ struct lm3530_als_data {
 
 static const u8 lm3530_reg[LM3530_REG_MAX] = {
 	LM3530_GEN_CONFIG,
-	LM3530_ALS_CONFIG,
 	LM3530_BRT_RAMP_RATE,
-	LM3530_ALS_IMP_SELECT,
 	LM3530_BRT_CTRL_REG,
+	LM3530_ALS_CONFIG,
+	LM3530_ALS_IMP_SELECT,
 	LM3530_ALS_ZB0_REG,
 	LM3530_ALS_ZB1_REG,
 	LM3530_ALS_ZB2_REG,
@@ -194,13 +205,18 @@ static int lm3530_led_enable(struct lm3530_data *drvdata)
 	if (drvdata->enable)
 		return 0;
 
-	ret = regulator_enable(drvdata->regulator);
-	if (ret) {
-		dev_err(drvdata->led_dev.dev, "Failed to enable vin:%d\n", ret);
-		return ret;
+	if (drvdata->regulator) {
+		ret = regulator_enable(drvdata->regulator);
+		if (ret) {
+			dev_err(drvdata->led_dev.dev,
+				"Failed to enable vin:%d\n", ret);
+			return ret;
+		}
 	}
 
+	gpio_set_value_cansleep(drvdata->en_gpio, 1);
 	drvdata->enable = true;
+	pr_info("%s\n", __func__);
 	return 0;
 }
 
@@ -211,14 +227,18 @@ static void lm3530_led_disable(struct lm3530_data *drvdata)
 	if (!drvdata->enable)
 		return;
 
-	ret = regulator_disable(drvdata->regulator);
-	if (ret) {
-		dev_err(drvdata->led_dev.dev, "Failed to disable vin:%d\n",
-			ret);
-		return;
-	}
+	gpio_set_value_cansleep(drvdata->en_gpio, 0);
 
+	if (drvdata->regulator) {
+		ret = regulator_disable(drvdata->regulator);
+		if (ret) {
+			dev_err(drvdata->led_dev.dev,
+				"Failed to disable vin:%d\n",	ret);
+			return;
+		}
+	}
 	drvdata->enable = false;
+	pr_info("%s\n", __func__);
 }
 
 static int lm3530_init_registers(struct lm3530_data *drvdata)
@@ -229,6 +249,7 @@ static int lm3530_init_registers(struct lm3530_data *drvdata)
 	u8 brt_ramp;
 	u8 brightness;
 	u8 reg_val[LM3530_REG_MAX];
+	u8 reg_max_cnt = LM3530_REG_MAX;
 	struct lm3530_platform_data *pdata = drvdata->pdata;
 	struct i2c_client *client = drvdata->client;
 	struct lm3530_pwm_data *pwm = &pdata->pwm_data;
@@ -261,14 +282,14 @@ static int lm3530_init_registers(struct lm3530_data *drvdata)
 	else
 		brightness = drvdata->brightness = pdata->brt_val;
 
-	if (brightness > drvdata->led_dev.max_brightness)
-		brightness = drvdata->led_dev.max_brightness;
+	if (brightness > pdata->max_brt)
+		brightness = pdata->max_brt;
 
 	reg_val[0] = gen_config;	/* LM3530_GEN_CONFIG */
-	reg_val[1] = als.config;	/* LM3530_ALS_CONFIG */
-	reg_val[2] = brt_ramp;		/* LM3530_BRT_RAMP_RATE */
-	reg_val[3] = als.imp_sel;	/* LM3530_ALS_IMP_SELECT */
-	reg_val[4] = brightness;	/* LM3530_BRT_CTRL_REG */
+	reg_val[1] = brt_ramp;		/* LM3530_BRT_RAMP_RATE */
+	reg_val[2] = brightness;	/* LM3530_BRT_CTRL_REG */
+	reg_val[3] = als.config;	/* LM3530_ALS_CONFIG */
+	reg_val[4] = als.imp_sel;	/* LM3530_ALS_IMP_SELECT */
 	reg_val[5] = als.zones[0];	/* LM3530_ALS_ZB0_REG */
 	reg_val[6] = als.zones[1];	/* LM3530_ALS_ZB1_REG */
 	reg_val[7] = als.zones[2];	/* LM3530_ALS_ZB2_REG */
@@ -283,13 +304,16 @@ static int lm3530_init_registers(struct lm3530_data *drvdata)
 	if (ret)
 		return ret;
 
-	for (i = 0; i < LM3530_REG_MAX; i++) {
+	if (drvdata->mode != LM3530_BL_MODE_ALS)
+		reg_max_cnt = 3;
+
+	for (i = 0; i < reg_max_cnt; i++) {
 		/* do not update brightness register when pwm mode */
 		if (lm3530_reg[i] == LM3530_BRT_CTRL_REG &&
 		    drvdata->mode == LM3530_BL_MODE_PWM) {
 			if (pwm->pwm_set_intensity)
 				pwm->pwm_set_intensity(reg_val[i],
-					drvdata->led_dev.max_brightness);
+					pdata->max_brt);
 			continue;
 		}
 
@@ -302,6 +326,13 @@ static int lm3530_init_registers(struct lm3530_data *drvdata)
 	return ret;
 }
 
+/* macro for maps android backlight level 0 to 255 into
+   driver backlight level 0 to max_bright with rounding */
+static int inline lm3530_map_user_lvl_to_bl(int v, int bl_max, int max_bright)
+{
+	return (2 * v * bl_max + max_bright) / (2 * max_bright);
+}
+
 static void lm3530_brightness_set(struct led_classdev *led_cdev,
 				     enum led_brightness brt_val)
 {
@@ -310,10 +341,20 @@ static void lm3530_brightness_set(struct led_classdev *led_cdev,
 	    container_of(led_cdev, struct lm3530_data, led_dev);
 	struct lm3530_platform_data *pdata = drvdata->pdata;
 	struct lm3530_pwm_data *pwm = &pdata->pwm_data;
-	u8 max_brightness = led_cdev->max_brightness;
+	u8 max_brightness = pdata->max_brt;
+	u8 bklt_lvl;
+
+	bklt_lvl = lm3530_map_user_lvl_to_bl(brt_val, max_brightness,
+			MAX_USER_BRIGHTNESS);
+	pr_debug("%s: user_lvl=%d bl_lvl = %d\n", __func__, brt_val, bklt_lvl);
 
 	switch (drvdata->mode) {
 	case LM3530_BL_MODE_MANUAL:
+		if (brt_val == 0) {
+			lm3530_led_disable(drvdata);
+			drvdata->brightness = bklt_lvl;
+			break;
+		}
 
 		if (!drvdata->enable) {
 			err = lm3530_init_registers(drvdata);
@@ -326,21 +367,19 @@ static void lm3530_brightness_set(struct led_classdev *led_cdev,
 
 		/* set the brightness in brightness control register*/
 		err = i2c_smbus_write_byte_data(drvdata->client,
-				LM3530_BRT_CTRL_REG, brt_val);
+				LM3530_BRT_CTRL_REG, bklt_lvl);
 		if (err)
 			dev_err(&drvdata->client->dev,
 				"Unable to set brightness: %d\n", err);
 		else
-			drvdata->brightness = brt_val;
+			drvdata->brightness = bklt_lvl;
 
-		if (brt_val == 0)
-			lm3530_led_disable(drvdata);
 		break;
 	case LM3530_BL_MODE_ALS:
 		break;
 	case LM3530_BL_MODE_PWM:
 		if (pwm->pwm_set_intensity)
-			pwm->pwm_set_intensity(brt_val, max_brightness);
+			pwm->pwm_set_intensity(bklt_lvl, max_brightness);
 		break;
 	default:
 		break;
@@ -377,7 +416,7 @@ static ssize_t lm3530_mode_set(struct device *dev, struct device_attribute
 
 	drvdata = container_of(led_cdev, struct lm3530_data, led_dev);
 	pwm = &drvdata->pdata->pwm_data;
-	max_brightness = led_cdev->max_brightness;
+	max_brightness = drvdata->pdata->max_brt;
 	mode = lm3530_get_mode_from_str(buf);
 	if (mode < 0) {
 		dev_err(dev, "Invalid mode\n");
@@ -400,12 +439,113 @@ static ssize_t lm3530_mode_set(struct device *dev, struct device_attribute
 }
 static DEVICE_ATTR(mode, 0644, lm3530_mode_get, lm3530_mode_set);
 
+static int lm3530_parse_dt(struct device *dev,
+			struct lm3530_platform_data *pdata)
+{
+	struct device_node *np = dev->of_node;
+	int err = 0;
+	u8 tmp;
+
+	pdata->en_gpio = of_get_named_gpio(np, "lm3530,en_gpio", 0);
+	if (pdata->en_gpio < 0) {
+		dev_err(dev, "failed to get lm3530,en_gpio\n");
+		err = pdata->en_gpio;
+		return err;
+	}
+
+	err = of_property_read_u8(np, "lm3530,mode", &tmp);
+	if (err < 0) {
+		dev_err(dev, " failed to get lm3530,mode\n");
+		return err;
+	}
+	pdata->mode = (enum lm3530_mode)tmp;
+
+	err = of_property_read_u8(np, "lm3530,max_current",
+					&pdata->max_current);
+	if (err < 0) {
+		dev_err(dev, "failed to get lm3530,max_current\n");
+		return err;
+	}
+
+	err = of_property_read_u8(np, "lm3530,linear_map", &tmp);
+	if (err < 0) {
+		dev_err(dev, "failed to get lm3530,linear_map\n");
+		return err;
+	}
+	pdata->brt_ramp_law = (bool)tmp;
+
+	err = of_property_read_u8(np, "lm3530,max_brt",
+					&pdata->max_brt);
+	if (err < 0) {
+		dev_err(dev, "failed to get lm3530,max_brt\n");
+		return err;
+	}
+
+	err = of_property_read_u8(np, "lm3530,default_brt",
+					&pdata->brt_val);
+	if (err < 0) {
+		dev_err(dev, "failed to get lm3530,default_brt\n");
+		return err;
+	}
+
+	err = of_property_read_u8(np, "lm3530,brt_ramp_fall",
+					&pdata->brt_ramp_fall);
+	if (err < 0) {
+		dev_err(dev, "failed to get lm3530,brt_ramp_fall\n");
+		return err;
+	}
+
+	err = of_property_read_u8(np, "lm3530,brt_ramp_rise",
+					&pdata->brt_ramp_rise);
+	if (err < 0) {
+		dev_err(dev, "failed to get lm3530,brt_ramp_rise\n");
+		return err;
+	}
+
+	pdata->no_regulator = of_property_read_bool(np,
+					"lm3530,no_regulator");
+
+	return 0;
+}
+
+static int lm3530_notify_reboot(struct notifier_block *this,
+		unsigned long code, void *x)
+{
+	struct lm3530_data *drvdata =
+		container_of(this, struct lm3530_data, nb_reboot);
+
+	if (!drvdata)
+		return 0;
+
+	lm3530_led_disable(drvdata);
+
+	return NOTIFY_DONE;
+}
+
 static int lm3530_probe(struct i2c_client *client,
 			   const struct i2c_device_id *id)
 {
-	struct lm3530_platform_data *pdata = client->dev.platform_data;
+	struct lm3530_platform_data *pdata;
 	struct lm3530_data *drvdata;
 	int err = 0;
+
+	if (client->dev.of_node) {
+		pdata = devm_kzalloc(&client->dev,
+				sizeof(struct lm3530_platform_data),
+				GFP_KERNEL);
+		if (!pdata) {
+			dev_err(&client->dev, "no pdata\n");
+			return -ENOMEM;
+		}
+		client->dev.platform_data = pdata;
+		err = lm3530_parse_dt(&client->dev, pdata);
+		if (err < 0) {
+			dev_err(&client->dev, "failed to get device tree\n");
+			return err;
+		}
+	} else {
+		pdata = client->dev.platform_data;
+	}
 
 	if (pdata == NULL) {
 		dev_err(&client->dev, "platform data required\n");
@@ -435,15 +575,28 @@ static int lm3530_probe(struct i2c_client *client,
 	drvdata->enable = false;
 	drvdata->led_dev.name = LM3530_LED_DEV;
 	drvdata->led_dev.brightness_set = lm3530_brightness_set;
-	drvdata->led_dev.max_brightness = MAX_BRIGHTNESS;
+	drvdata->led_dev.max_brightness = MAX_USER_BRIGHTNESS;
+	drvdata->en_gpio = pdata->en_gpio;
+	drvdata->nb_reboot.notifier_call = lm3530_notify_reboot;
 
 	i2c_set_clientdata(client, drvdata);
 
-	drvdata->regulator = devm_regulator_get(&client->dev, "vin");
-	if (IS_ERR(drvdata->regulator)) {
-		dev_err(&client->dev, "regulator get failed\n");
-		err = PTR_ERR(drvdata->regulator);
+	if (pdata->no_regulator) {
 		drvdata->regulator = NULL;
+	} else {
+		drvdata->regulator = devm_regulator_get(&client->dev, "vin");
+		if (IS_ERR(drvdata->regulator)) {
+			dev_err(&client->dev, "regulator get failed\n");
+			err = PTR_ERR(drvdata->regulator);
+			drvdata->regulator = NULL;
+			return err;
+		}
+	}
+
+	err = gpio_request_one(drvdata->en_gpio, GPIOF_OUT_INIT_HIGH,
+				"lm3530_en");
+	if (err < 0) {
+		dev_err(&client->dev, "failed to request en_gpio\n");
 		return err;
 	}
 
@@ -468,6 +621,8 @@ static int lm3530_probe(struct i2c_client *client,
 		goto err_create_file;
 	}
 
+	register_reboot_notifier(&drvdata->nb_reboot);
+
 	return 0;
 
 err_create_file:
@@ -479,12 +634,19 @@ static int lm3530_remove(struct i2c_client *client)
 {
 	struct lm3530_data *drvdata = i2c_get_clientdata(client);
 
+	unregister_reboot_notifier(&drvdata->nb_reboot);
 	device_remove_file(drvdata->led_dev.dev, &dev_attr_mode);
 
 	lm3530_led_disable(drvdata);
 	led_classdev_unregister(&drvdata->led_dev);
+	gpio_free(drvdata->en_gpio);
 	return 0;
 }
+
+static struct of_device_id lm3530_match_table[] = {
+	{ .compatible = "backlight,lm3530",},
+	{ },
+};
 
 static const struct i2c_device_id lm3530_id[] = {
 	{LM3530_NAME, 0},
@@ -499,6 +661,7 @@ static struct i2c_driver lm3530_i2c_driver = {
 	.driver = {
 		.name = LM3530_NAME,
 		.owner = THIS_MODULE,
+		.of_match_table = lm3530_match_table,
 	},
 };
 

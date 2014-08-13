@@ -2715,8 +2715,6 @@ static int msm_hs_startup(struct uart_port *uport)
 		goto free_uart_irq;
 	}
 
-	msm_hs_clock_vote(msm_uport);
-
 	spin_lock_irqsave(&uport->lock, flags);
 
 	msm_hs_start_rx_locked(uport);

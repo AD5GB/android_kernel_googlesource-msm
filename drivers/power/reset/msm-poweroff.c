@@ -30,11 +30,10 @@
 
 #include <soc/qcom/scm.h>
 #include <soc/qcom/restart.h>
-#ifdef CONFIG_SEC_DEBUG
-#include <mach/sec_debug.h>
-#include <linux/notifier.h>
-#include <linux/ftrace.h>
+#ifdef CONFIG_LGE_HANDLE_PANIC
+#include <mach/lge_handle_panic.h>
 #endif
+
 #define EMERGENCY_DLOAD_MAGIC1    0x322A4F99
 #define EMERGENCY_DLOAD_MAGIC2    0xC67E4350
 #define EMERGENCY_DLOAD_MAGIC3    0x77777777
@@ -104,7 +103,6 @@ void set_dload_mode(int on)
 					(unsigned int) CALLER_ADDR0);
 #endif
 }
-EXPORT_SYMBOL(set_dload_mode);
 
 static void enable_emergency_dload_mode(void)
 {
@@ -198,29 +196,14 @@ static void msm_restart_prepare(const char *cmd)
 	 * Kill download mode if master-kill switch is set
 	 */
 
+#ifdef CONFIG_LGE_HANDLE_PANIC
+	set_dload_mode(download_mode && in_panic);
+#else
 	set_dload_mode(download_mode &&
 			(in_panic || restart_mode == RESTART_DLOAD));
 #endif
 #endif
-#ifdef CONFIG_SEC_DEBUG_LOW_LOG
-#ifdef CONFIG_MSM_DLOAD_MODE
-#ifdef CONFIG_SEC_DEBUG
-	if (sec_debug_is_enabled()
-	&& ((restart_mode == RESTART_DLOAD) || in_panic))
-		set_dload_mode(1);
-	else
-		set_dload_mode(0);
-#else
-	set_dload_mode(0);
-	set_dload_mode(in_panic);
-	if (restart_mode == RESTART_DLOAD)
-		set_dload_mode(1);
-#endif
-#endif
-#endif
-	pr_info("preparing for restart now\n");
 
-	/* Memory contents must be maintained, so use warm reset only. */
 	qpnp_pon_system_pwr_off(PON_POWER_OFF_WARM_RESET);
 
 	if (cmd != NULL) {
@@ -231,26 +214,37 @@ static void msm_restart_prepare(const char *cmd)
 		} else if (!strcmp(cmd, "rtc")) {
 			__raw_writel(0x77665503, restart_reason);
 		} else if (!strncmp(cmd, "oem-", 4)) {
+			int ret;
 			unsigned long code;
-			code = kstrtoul(cmd + 4, 16, NULL) & 0xff;
-			__raw_writel(0x6f656d00 | code, restart_reason);
-#ifdef CONFIG_SEC_DEBUG
-		} else if (!strncmp(cmd, "sec_debug_hw_reset", 18)) {
-			__raw_writel(0x776655ee, restart_reason);
-#endif
+			ret = kstrtoul(cmd + 4, 16, &code);
+			if (!ret) {
+				code &= 0xff;
+				__raw_writel(0x6f656d00 | code, restart_reason);
+			} else {
+				pr_warn("Invalid value: force to do normal reboot\n");
+				__raw_writel(0x77665501, restart_reason);
+			}
 		} else if (!strncmp(cmd, "edl", 3)) {
 			enable_emergency_dload_mode();
+#ifdef CONFIG_LGE_HANDLE_PANIC
+		} else if (!strncmp(cmd, "lafd", 4)) {
+			lge_set_restart_reason(LAF_DLOAD_MODE);
+#endif
 		} else {
 			__raw_writel(0x77665501, restart_reason);
 		}
-		pr_notice("%s : restart_reason = 0x%x\n",
-				__func__, __raw_readl(restart_reason));
+	} else {
+		__raw_writel(0x77665501, restart_reason);
 	}
-#ifdef CONFIG_SEC_DEBUG
-	else {
-		pr_notice("%s: clear reset flag\n", __func__);
+#ifdef CONFIG_LGE_HANDLE_PANIC
+	if (restart_mode == RESTART_DLOAD)
+		lge_set_restart_reason(LAF_DLOAD_MODE);
 
-		__raw_writel(0x12345678, restart_reason);
+	if (in_panic) {
+		lge_set_panic_reason();
+
+		if (!lge_is_handle_panic_enable())
+			set_dload_mode(0);
 	}
 #endif
 	flush_cache_all();
@@ -385,6 +379,14 @@ static int msm_restart_probe(struct platform_device *pdev)
 	if (scm_is_call_available(SCM_SVC_PWR, SCM_IO_DISABLE_PMIC_ARBITER) > 0)
 		scm_pmic_arbiter_disable_supported = true;
 
+#ifdef CONFIG_LGE_HANDLE_PANIC
+	/* Set default restart_reason to TZ crash.
+	 * If can't be set explicit, it causes by TZ */
+	__raw_writel(LGE_RB_MAGIC | LGE_ERR_TZ, restart_reason);
+
+	if (!lge_is_handle_panic_enable())
+		set_dload_mode(0);
+#endif
 	return 0;
 #ifndef CONFIG_SEC_DEBUG
 err_restart_reason:

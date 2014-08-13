@@ -153,6 +153,14 @@ static void mdss_dsi_panel_bklt_dcs(struct mdss_dsi_ctrl_pdata *ctrl, int level)
 	mdss_dsi_cmdlist_put(ctrl, &cmdreq);
 }
 
+void mdss_dsi_panel_idle_mode(struct mdss_dsi_ctrl_pdata *ctrl, int enable)
+{
+	if (enable)
+		mdss_dsi_panel_cmds_send(ctrl, &ctrl->idle_on_cmds);
+	else
+		mdss_dsi_panel_cmds_send(ctrl, &ctrl->idle_off_cmds);
+}
+
 static int mdss_dsi_request_gpios(struct mdss_dsi_ctrl_pdata *ctrl_pdata)
 {
 	int rc = 0;
@@ -201,6 +209,14 @@ rst_gpio_err:
 		gpio_free(ctrl_pdata->disp_en_gpio);
 disp_en_gpio_err:
 	return rc;
+}
+
+void mdss_dsi_panel_low_fps_mode(struct mdss_dsi_ctrl_pdata *ctrl, int enable)
+{
+	if (enable)
+		mdss_dsi_panel_cmds_send(ctrl, &ctrl->low_fps_mode_on_cmds);
+	else
+		mdss_dsi_panel_cmds_send(ctrl, &ctrl->low_fps_mode_off_cmds);
 }
 
 int mdss_dsi_panel_reset(struct mdss_panel_data *pdata, int enable)
@@ -378,6 +394,8 @@ static void mdss_dsi_panel_bl_ctrl(struct mdss_panel_data *pdata,
 			mdss_dsi_panel_bklt_dcs(sctrl, bl_level);
 		}
 		break;
+	case BL_EXTERNAL:
+		break;
 	default:
 		pr_err("%s: Unknown bl_ctrl configuration\n",
 			__func__);
@@ -401,9 +419,11 @@ static int mdss_dsi_panel_on(struct mdss_panel_data *pdata)
 
 	pr_debug("%s: ctrl=%p ndx=%d\n", __func__, ctrl, ctrl->ndx);
 
+	mutex_lock(&ctrl->suspend_mutex);
 	if (ctrl->on_cmds.cmd_cnt)
 		mdss_dsi_panel_cmds_send(ctrl, &ctrl->on_cmds);
 
+	mutex_unlock(&ctrl->suspend_mutex);
 	pr_debug("%s:-\n", __func__);
 	return 0;
 }
@@ -425,9 +445,10 @@ static int mdss_dsi_panel_off(struct mdss_panel_data *pdata)
 
 	mipi  = &pdata->panel_info.mipi;
 
+	mutex_lock(&ctrl->suspend_mutex);
 	if (ctrl->off_cmds.cmd_cnt)
 		mdss_dsi_panel_cmds_send(ctrl, &ctrl->off_cmds);
-
+	mutex_unlock(&ctrl->suspend_mutex);
 	pr_debug("%s:-\n", __func__);
 	return 0;
 }
@@ -944,6 +965,8 @@ static int mdss_panel_parse_dt(struct device_node *np,
 			ctrl_pdata->pwm_pmic_gpio = tmp;
 		} else if (!strncmp(data, "bl_ctrl_dcs", 11)) {
 			ctrl_pdata->bklt_ctrl = BL_DCS_CMD;
+		} else if (!strncmp(data, "bl_external", 11)) {
+			ctrl_pdata->bklt_ctrl = BL_EXTERNAL;
 		}
 	}
 	rc = of_property_read_u32(np, "qcom,mdss-brightness-max-level", &tmp);
@@ -1089,11 +1112,23 @@ static int mdss_panel_parse_dt(struct device_node *np,
 	mdss_dsi_parse_dcs_cmds(np, &ctrl_pdata->off_cmds,
 		"qcom,mdss-dsi-off-command", "qcom,mdss-dsi-off-command-state");
 
+	mdss_dsi_parse_dcs_cmds(np, &ctrl_pdata->idle_on_cmds,
+		"qcom,mdss-dsi-idle-on-command", "qcom,mdss-dsi-idle-on-command-state");
+
+	mdss_dsi_parse_dcs_cmds(np, &ctrl_pdata->idle_off_cmds,
+		"qcom,mdss-dsi-idle-off-command", "qcom,mdss-dsi-idle-off-command-state");
+
 	rc = mdss_dsi_parse_panel_features(np, ctrl_pdata);
 	if (rc) {
 		pr_err("%s: failed to parse panel features\n", __func__);
 		goto error;
 	}
+
+	mdss_dsi_parse_dcs_cmds(np, &ctrl_pdata->low_fps_mode_on_cmds,
+		"qcom,mdss-dsi-low-fps-mode-on-command", "qcom,mdss-dsi-low-fps-mode-on-command-state");
+
+	mdss_dsi_parse_dcs_cmds(np, &ctrl_pdata->low_fps_mode_off_cmds,
+		"qcom,mdss-dsi-low-fps-mode-off-command", "qcom,mdss-dsi-low-fps-mocd-off-command-state");
 
 	return 0;
 

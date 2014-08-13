@@ -35,6 +35,7 @@
 #include <linux/earlysuspend.h>
 #endif
 #include <linux/debugfs.h>
+#include <linux/time.h>
 
 #define PDT_PROPS (0x00EF)
 #define PDT_START (0x00E9)
@@ -213,6 +214,8 @@ struct synaptics_rmi4_data {
 	struct mutex rmi4_io_ctrl_mutex;
 	struct delayed_work det_work;
 	struct workqueue_struct *det_workqueue;
+	struct work_struct recovery_work;
+	struct delayed_work init_work;
 #ifdef CONFIG_HAS_EARLYSUSPEND
 	struct early_suspend early_suspend;
 #endif
@@ -239,6 +242,8 @@ struct synaptics_rmi4_data {
 	int disp_maxy;
 	int disp_minx;
 	int disp_miny;
+	bool palm_detected;
+	struct timespec palm_debounce;
 	bool irq_enabled;
 	bool touch_stopped;
 	bool fingers_on_2d;

@@ -1,7 +1,7 @@
 /*
  * arch/arm/mach-msm/lge/lge_handle_panic.c
  *
- * Copyright (C) 2012,2013 LGE, Inc.
+ * Copyright (C) 2012-2014 LGE, Inc
  *
  * This software is licensed under the terms of the GNU General Public
  * License version 2, as published by the Free Software Foundation, and
@@ -13,39 +13,65 @@
  * GNU General Public License for more details.
  */
 
+#include <linux/init.h>
 #include <linux/module.h>
 #include <linux/moduleparam.h>
 #include <linux/platform_device.h>
 #include <linux/reboot.h>
 #include <linux/io.h>
+#include <linux/of_address.h>
 #include <asm/setup.h>
-#include <linux/init.h>
 #include <mach/subsystem_restart.h>
 #include <mach/msm_iomap.h>
 #include <mach/lge_handle_panic.h>
+#include <soc/qcom/restart.h>
+#include <soc/qcom/scm.h>
 
 #define PANIC_HANDLER_NAME        "panic-handler"
 
-#define RESTART_REASON_ADDR       0x65C
-#define DLOAD_MODE_ADDR           0x0
-#define UEFI_RAM_DUMP_MAGIC_ADDR  0xC
-#define RAM_CONSOLE_ADDR_ADDR     0x24
-#define RAM_CONSOLE_SIZE_ADDR     0x28
-#define FB1_ADDR_ADDR             0x2C
+#define SCM_WDOG_DEBUG_BOOT_PART    0x9
+#define BOOT_PART_EN_VAL            0x5D1
 
-#define RESTART_REASON      (MSM_IMEM_BASE + RESTART_REASON_ADDR)
-#define UEFI_RAM_DUMP_MAGIC \
-		(MSM_IMEM_BASE + DLOAD_MODE_ADDR + UEFI_RAM_DUMP_MAGIC_ADDR)
-#define RAM_CONSOLE_ADDR    (MSM_IMEM_BASE + RAM_CONSOLE_ADDR_ADDR)
-#define RAM_CONSOLE_SIZE    (MSM_IMEM_BASE + RAM_CONSOLE_SIZE_ADDR)
-#define FB1_ADDR            (MSM_IMEM_BASE + FB1_ADDR_ADDR)
+#define RESTART_REASON_OFFSET       0x65C
+#define UEFI_RAM_DUMP_MAGIC_OFFSET  0xC
+#define RAM_CONSOLE_ADDR_OFFSET     0x28
+#define RAM_CONSOLE_SIZE_OFFSET     0x2C
+#define FB1_ADDR_OFFSET             0x30
 
+static void *msm_imem_base;
 static int dummy_arg;
-
 static int subsys_crash_magic = 0x0;
+static int enable = 0; /* 0 - disabled, 1 - enabled */
+static int enable_set(const char *val, struct kernel_param *kp);
+module_param_call(enable, enable_set, param_get_int,
+		&enable, S_IWUSR | S_IRUGO);
 
-static int enable = 0;
-module_param_named(enable, enable, int, S_IWUSR | S_IRUGO);
+static void imem_writel(unsigned int val, unsigned int offset)
+{
+	if (msm_imem_base)
+		__raw_writel(val, msm_imem_base + offset);
+}
+
+static int enable_set(const char *val, struct kernel_param *kp)
+{
+	int ret;
+	int old_val = enable;
+
+	ret = param_set_int(val, kp);
+	if (ret)
+		return ret;
+
+	/* if enable is not zero or one, ignore */
+	if (enable >> 1) {
+		enable = old_val;
+		return -EINVAL;
+	}
+
+#ifdef CONFIG_MSM_DLOAD_MODE
+	set_dload_mode(enable);
+#endif
+	return 0;
+}
 
 int lge_is_handle_panic_enable(void)
 {
@@ -55,7 +81,7 @@ EXPORT_SYMBOL(lge_is_handle_panic_enable);
 
 int lge_set_magic_subsystem(const char *name, int type)
 {
-	const char *subsys_name[] = { "adsp", "mba", "modem", "wcnss" };
+	const char *subsys_name[] = { "adsp", "wcnss" };
 	int i = 0;
 
 	if (!name)
@@ -76,60 +102,38 @@ EXPORT_SYMBOL(lge_set_magic_subsystem);
 void lge_skip_dload_by_sbl(int on)
 {
 	/* skip entering dload mode at sbl1 */
-	__raw_writel(on ? 1 : 0, UEFI_RAM_DUMP_MAGIC);
+	imem_writel(on ? 1 : 0, UEFI_RAM_DUMP_MAGIC_OFFSET);
 }
 EXPORT_SYMBOL(lge_skip_dload_by_sbl);
 
 void lge_set_ram_console_addr(unsigned int addr, unsigned int size)
 {
-	__raw_writel(addr, RAM_CONSOLE_ADDR);
-	__raw_writel(size, RAM_CONSOLE_SIZE);
+	imem_writel(addr, RAM_CONSOLE_ADDR_OFFSET);
+	imem_writel(size, RAM_CONSOLE_SIZE_OFFSET);
 }
 EXPORT_SYMBOL(lge_set_ram_console_addr);
 
 void lge_set_fb1_addr(unsigned int addr)
 {
-	__raw_writel(addr, FB1_ADDR);
+	imem_writel(addr, FB1_ADDR_OFFSET);
 }
 EXPORT_SYMBOL(lge_set_fb1_addr);
 
 void lge_set_panic_reason(void)
 {
 	if (subsys_crash_magic == 0)
-		__raw_writel(LGE_RB_MAGIC | LGE_ERR_KERN, RESTART_REASON);
+		imem_writel(LGE_RB_MAGIC | LGE_ERR_KERN, RESTART_REASON_OFFSET);
 	else
-		__raw_writel(subsys_crash_magic, RESTART_REASON);
+		imem_writel(subsys_crash_magic, RESTART_REASON_OFFSET);
 }
 EXPORT_SYMBOL(lge_set_panic_reason);
 
 void lge_set_restart_reason(unsigned int reason)
 {
-	__raw_writel(reason, RESTART_REASON);
+	imem_writel(reason, RESTART_REASON_OFFSET);
 }
 EXPORT_SYMBOL(lge_set_restart_reason);
 
-static bool lge_crash_handler_skiped = false;
-void lge_check_crash_skiped(char *reason)
-{
-	char *p;
-
-	p = strstr(reason, "AP requested modem reset!!!");
-	if (p)
-		lge_crash_handler_skiped = true;
-}
-EXPORT_SYMBOL(lge_check_crash_skiped);
-
-bool lge_is_crash_skipped(void)
-{
-	return lge_crash_handler_skiped;
-}
-EXPORT_SYMBOL(lge_is_crash_skipped);
-
-void lge_clear_crash_skipped(void)
-{
-	lge_crash_handler_skiped = false;
-};
-EXPORT_SYMBOL(lge_clear_crash_skipped);
 
 static int gen_bug(const char *val, struct kernel_param *kp)
 {
@@ -153,22 +157,6 @@ static int gen_adsp_panic(const char *val, struct kernel_param *kp)
 	return 0;
 }
 module_param_call(gen_adsp_panic, gen_adsp_panic, param_get_bool, &dummy_arg,
-		S_IWUSR | S_IRUGO);
-
-static int gen_mba_panic(const char *val, struct kernel_param *kp)
-{
-	subsystem_restart("mba");
-	return 0;
-}
-module_param_call(gen_mba_panic, gen_mba_panic, param_get_bool, &dummy_arg,
-		S_IWUSR | S_IRUGO);
-
-static int gen_modem_panic(const char *val, struct kernel_param *kp)
-{
-	subsystem_restart("modem");
-	return 0;
-}
-module_param_call(gen_modem_panic, gen_modem_panic, param_get_bool, &dummy_arg,
 		S_IWUSR | S_IRUGO);
 
 static int gen_wcnss_panic(const char *val, struct kernel_param *kp)
@@ -227,12 +215,31 @@ static int gen_bus_hang(const char *val, struct kernel_param *kp)
 module_param_call(gen_bus_hang, gen_bus_hang, param_get_bool,
 		&dummy_arg, S_IWUSR | S_IRUGO);
 
-extern void msm_disable_wdog_debug(void);
+void lge_msm_enable_wdog_debug(void)
+{
+	int ret;
+
+	ret = scm_call_atomic2(SCM_SVC_BOOT,
+	SCM_WDOG_DEBUG_BOOT_PART, 0, BOOT_PART_EN_VAL);
+	if (ret)
+		pr_err("failed to enable wdog debug: %d\n", ret);
+}
+
+void lge_msm_disable_wdog_debug(void)
+{
+	int ret;
+
+	ret = scm_call_atomic2(SCM_SVC_BOOT,
+	SCM_WDOG_DEBUG_BOOT_PART, 1, 0);
+	if (ret)
+		pr_err("failed to disable wdog debug: %d\n", ret);
+}
+
 static int gen_hw_reset(const char *val, struct kernel_param *kp)
 {
 	static void __iomem *reserved;
 
-	msm_disable_wdog_debug();
+	lge_msm_disable_wdog_debug();
 	reserved = ioremap(0xFF000000 - 0x10, 0x10);
 	__raw_writel(1, reserved);
 
@@ -241,21 +248,21 @@ static int gen_hw_reset(const char *val, struct kernel_param *kp)
 module_param_call(gen_hw_reset, gen_hw_reset, param_get_bool,
 		&dummy_arg, S_IWUSR | S_IRUGO);
 
-static int lge_panic_handler_probe(struct platform_device *pdev)
+static int __init lge_panic_handler_probe(struct platform_device *pdev)
 {
 	int ret = 0;
 
 	return ret;
 }
 
-static int lge_panic_handler_remove(struct platform_device *pdev)
+static int __exit lge_panic_handler_remove(struct platform_device *pdev)
 {
 	return 0;
 }
 
 static struct platform_driver panic_handler_driver __refdata = {
 	.probe = lge_panic_handler_probe,
-	.remove = lge_panic_handler_remove,
+	.remove = __exit_p(lge_panic_handler_remove),
 	.driver = {
 		.name = PANIC_HANDLER_NAME,
 		.owner = THIS_MODULE,
@@ -274,6 +281,27 @@ static void __exit lge_panic_handler_exit(void)
 
 module_init(lge_panic_handler_init);
 module_exit(lge_panic_handler_exit);
+
+static int __init lge_panic_handler_early_init(void)
+{
+	struct device_node *np;
+
+	np = of_find_compatible_node(NULL, NULL, "qcom,msm-imem");
+	if (!np) {
+		pr_err("%s: unable to find DT imem node\n", __func__);
+		return -ENODEV;
+	}
+
+	msm_imem_base = of_iomap(np, 0);
+	if (!msm_imem_base) {
+		pr_err("%s: unable to map imem offset\n", __func__);
+		return -ENOMEM;
+	}
+
+	return 0;
+}
+
+postcore_initcall(lge_panic_handler_early_init);
 
 MODULE_DESCRIPTION("LGE panic handler driver");
 MODULE_AUTHOR("SungEun Kim <cleaneye.kim@lge.com>");

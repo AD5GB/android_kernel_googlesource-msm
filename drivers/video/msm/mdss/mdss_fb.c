@@ -52,7 +52,12 @@
 #include <linux/msm_iommu_domains.h>
 #include <mach/msm_memtypes.h>
 
+#include "mdss_dsi.h"
 #include "mdss_fb.h"
+
+#ifdef CONFIG_LGE_HANDLE_PANIC
+#include <mach/lge_handle_panic.h>
+#endif
 
 #ifdef CONFIG_FB_MSM_TRIPLE_BUFFER
 #define MDSS_FB_NUM 3
@@ -517,7 +522,9 @@ static int mdss_fb_probe(struct platform_device *pdev)
 	pm_runtime_enable(mfd->fbi->dev);
 
 	/* android supports only one lcd-backlight/lcd for now */
-	if (!lcd_backlight_registered) {
+	if (!lcd_backlight_registered &&
+			mfd->panel_info->bklt_ctrl != BL_EXTERNAL &&
+			mfd->panel_info->bklt_ctrl != UNKNOWN_CTRL) {
 		backlight_led.brightness = mfd->panel_info->brightness_max;
 		backlight_led.max_brightness = mfd->panel_info->brightness_max;
 		if (led_classdev_register(&pdev->dev, &backlight_led))
@@ -645,6 +652,10 @@ static int mdss_fb_suspend_sub(struct msm_fb_data_type *mfd)
 #endif
 	mfd->panel_info->is_suspending = false;
 
+#if defined(CONFIG_FB_MSM_MDSS_PANEL_ALWAYS_ON)
+	if (mfd->index == 0)
+		return mfd->mdp.off_pan_on_fnc(mfd);
+#endif
 	mdss_fb_pan_idle(mfd);
 	ret = mdss_fb_send_panel_event(mfd, MDSS_EVENT_SUSPEND, NULL);
 	if (ret) {
@@ -677,13 +688,8 @@ static int mdss_fb_resume_sub(struct msm_fb_data_type *mfd)
 	if ((!mfd) || (mfd->key != MFD_KEY))
 		return 0;
 
-	pdata = dev_get_platdata(&mfd->pdev->dev);
-
 #if defined(CONFIG_FB_MSM_MDSS_PANEL_ALWAYS_ON)
 	if (mfd->index == 0)
-		if ((pdata) && (pdata->send_alpm)) {
-			pdata->send_alpm(pdata, false);
-		}
 		return 0;
 #endif
 	INIT_COMPLETION(mfd->power_set_comp);
@@ -1117,6 +1123,13 @@ static int mdss_fb_alloc_fbmem_iommu(struct msm_fb_data_type *mfd, int dom)
 
 	pr_debug("alloc 0x%zxB @ (%pa phys) (0x%p virt) (%pa iova) for fb%d\n",
 		 size, &phys, virt, &mfd->iova, mfd->index);
+
+#ifdef CONFIG_LGE_HANDLE_PANIC
+	/* save fb1 address for lge crash handler display buffer */
+	lge_set_fb1_addr((unsigned int)(phys +
+				(mfd->fbi->fix.line_length *
+				 mfd->fbi->var.yres)));
+#endif
 
 	mfd->fbi->screen_base = virt;
 	mfd->fbi->fix.smem_start = phys;
@@ -2423,10 +2436,12 @@ int mdss_fb_do_ioctl(struct fb_info *info, unsigned int cmd,
 	if (!mfd)
 		return -EINVAL;
 
-	if (mfd->shutdown_pending)
-		return -EPERM;
-
 	atomic_inc(&mfd->ioctl_ref_cnt);
+	if (mfd->shutdown_pending) {
+		ret = -EPERM;
+		goto exit;
+	}
+
 
 	mdss_fb_power_setting_idle(mfd);
 

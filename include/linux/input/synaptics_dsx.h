@@ -52,6 +52,8 @@ struct synaptics_rmi4_capacitance_button_map {
  * @panel_minx: touch panel minimum values on the x
  * @panel_miny: touch panel minimum values on the y
  * @reset_delay: reset delay
+ * @palm_detect_threshold: minimum width at which a finger is considered a palm
+ * @palm_detect_keycode: key code to send when palm is detected
  * @gpio_config: pointer to gpio configuration function
  * @capacitance_button_map: pointer to 0d button map
  */
@@ -60,6 +62,7 @@ struct synaptics_rmi4_platform_data {
 	bool y_flip;
 	bool i2c_pull_up;
 	bool power_down_enable;
+	bool wakeup;
 	bool disable_gpios;
 	bool do_lockdown;
 	unsigned irq_gpio;
@@ -75,6 +78,11 @@ struct synaptics_rmi4_platform_data {
 	unsigned disp_maxx;
 	unsigned disp_maxy;
 	unsigned reset_delay;
+	unsigned pon_delay;
+	unsigned palm_detect_threshold;
+	unsigned palm_detect_keycode;
+	unsigned doze_interval_active;
+	unsigned doze_interval_sleep;
 	const char *fw_image_name;
 	int (*gpio_config)(unsigned gpio, bool configure);
 	struct synaptics_rmi4_capacitance_button_map *capacitance_button_map;

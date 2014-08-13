@@ -522,16 +522,7 @@ static int mdss_dsi_ulps_config_sub(struct mdss_dsi_ctrl_pdata *ctrl_pdata,
 		/* disable DSI controller */
 		mdss_dsi_controller_cfg(0, pdata);
 
-		mdss_dsi_phy_disable(ctrl_pdata);
-
 		mdss_dsi_clk_ctrl(ctrl_pdata, DSI_BUS_CLKS, 0);
-
-		ret = msm_dss_enable_vreg(
-			ctrl_pdata->power_data.vreg_config + 2, 2, 0);
-		if (ret) {
-			pr_err("%s: Failed to disable vregs.rc=%d\n",
-				__func__, ret);
-		}
 		ctrl_pdata->ulps = true;
 		pr_err("enable ulps mode\n");
 	} else if (!enable && ctrl_pdata->ulps) {
@@ -609,8 +600,7 @@ error:
 	return ret;
 }
 
-static int mdss_dsi_ulps_config(struct mdss_dsi_ctrl_pdata *ctrl,
-	int enable)
+int mdss_dsi_ulps_config(struct mdss_dsi_ctrl_pdata *ctrl, int enable)
 {
 	int rc;
 	struct mdss_dsi_ctrl_pdata *mctrl = NULL;
@@ -820,6 +810,7 @@ static int mdss_dsi_unblank(struct mdss_panel_data *pdata)
 		}
 	}
 
+	ctrl_pdata->blanked = false;
 	pr_debug("%s-:\n", __func__);
 
 	return ret;
@@ -880,6 +871,7 @@ static int mdss_dsi_blank(struct mdss_panel_data *pdata)
 	if (mdss_dsi_pinctrl_set_state(ctrl_pdata, false))
 		pr_debug("dsi blank: pinctrl not enabled\n");
 
+	ctrl_pdata->blanked = true;
 	pr_debug("%s-:End\n", __func__);
 	return ret;
 }
@@ -1246,6 +1238,23 @@ end:
 	return dsi_pan_node;
 }
 
+static ssize_t mdss_dsi_idle_mode_store(struct device *dev,
+				struct device_attribute *attr,
+				const char *buf, size_t count)
+{
+	struct platform_device *pdev = to_platform_device(dev);
+	struct mdss_dsi_ctrl_pdata *ctrl_pdata = platform_get_drvdata(pdev);
+	int ret, enable;
+
+	ret = sscanf(buf, "%d", &enable);
+	if (ret != 1)
+		return -EINVAL;
+
+	mdss_dsi_panel_idle_mode(ctrl_pdata, enable);
+	return count;
+}
+DEVICE_ATTR(idle_mode, 0200, NULL, mdss_dsi_idle_mode_store);
+
 static int mdss_dsi_ctrl_probe(struct platform_device *pdev)
 {
 	int rc = 0;
@@ -1346,15 +1355,23 @@ static int mdss_dsi_ctrl_probe(struct platform_device *pdev)
 		goto error_pan_node;
 	}
 
+	rc = device_create_file(&pdev->dev, &dev_attr_idle_mode);
+	if (rc) {
+		pr_err("%s: failed to create idle mode attr\n", __func__);
+		goto error_pan_node;
+	}
+
 	rc = dsi_panel_device_register(dsi_pan_node, ctrl_pdata);
 	if (rc) {
 		pr_err("%s: dsi panel dev reg failed\n", __func__);
-		goto error_pan_node;
+		goto error_register;
 	}
 
 	pr_debug("%s: Dsi Ctrl->%d initialized\n", __func__, index);
 	return 0;
 
+error_register:
+	device_remove_file(&pdev->dev, &dev_attr_idle_mode);
 error_pan_node:
 	of_node_put(dsi_pan_node);
 error_vreg:
@@ -1379,12 +1396,62 @@ static int mdss_dsi_ctrl_remove(struct platform_device *pdev)
 			ctrl_pdata->power_data.vreg_config,
 			ctrl_pdata->power_data.num_vreg, 1) < 0)
 		pr_err("%s: failed to de-init vregs\n", __func__);
+	device_remove_file(&pdev->dev, &dev_attr_idle_mode);
 	mdss_dsi_put_dt_vreg_data(&pdev->dev, &ctrl_pdata->power_data);
 	mfd = platform_get_drvdata(pdev);
 	msm_dss_iounmap(&ctrl_pdata->mmss_misc_io);
 	msm_dss_iounmap(&ctrl_pdata->phy_io);
 	msm_dss_iounmap(&ctrl_pdata->ctrl_io);
 	return 0;
+}
+
+static int mdss_dsi_pm_prepare(struct device *dev)
+{
+	struct mdss_dsi_ctrl_pdata *ctrl_pdata = dev_get_drvdata(dev);
+	struct mdss_panel_data *pdata;
+
+	if (!ctrl_pdata) {
+		pr_err("%s: no driver data\n", __func__);
+		return -ENODEV;
+	}
+
+	pdata = &ctrl_pdata->panel_data;
+	if (!pdata) {
+		pr_err("%s: no panel data\n", __func__);
+		return -ENODEV;
+	}
+
+	mutex_lock(&ctrl_pdata->suspend_mutex);
+	if (!ctrl_pdata->blanked) {
+		pr_debug("%s: set low fps mode on\n", __func__);
+		mdss_dsi_panel_low_fps_mode(ctrl_pdata, 1);
+	}
+	mutex_unlock(&ctrl_pdata->suspend_mutex);
+	return 0;
+}
+
+static void mdss_dsi_pm_complete(struct device *dev)
+{
+	struct mdss_dsi_ctrl_pdata *ctrl_pdata = dev_get_drvdata(dev);
+	struct mdss_panel_data *pdata;
+
+	if (!ctrl_pdata) {
+		pr_err("%s: no driver data\n", __func__);
+		return;
+	}
+
+	pdata = &ctrl_pdata->panel_data;
+	if (!pdata) {
+		pr_err("%s: no panel data\n", __func__);
+		return;
+	}
+
+	mutex_lock(&ctrl_pdata->suspend_mutex);
+	if (!ctrl_pdata->blanked) {
+		pr_debug("%s: set low fps mode off\n", __func__);
+		mdss_dsi_panel_low_fps_mode(ctrl_pdata, 0);
+	}
+	mutex_unlock(&ctrl_pdata->suspend_mutex);
 }
 
 struct device dsi_dev;
@@ -1716,6 +1783,11 @@ int dsi_panel_device_register(struct device_node *pan_node,
 	return 0;
 }
 
+static const struct dev_pm_ops mdss_dsi_pm_ops = {
+	.prepare = mdss_dsi_pm_prepare,
+	.complete = mdss_dsi_pm_complete,
+};
+
 static const struct of_device_id mdss_dsi_ctrl_dt_match[] = {
 	{.compatible = "qcom,mdss-dsi-ctrl"},
 	{}
@@ -1729,6 +1801,7 @@ static struct platform_driver mdss_dsi_ctrl_driver = {
 	.driver = {
 		.name = "mdss_dsi_ctrl",
 		.of_match_table = mdss_dsi_ctrl_dt_match,
+		.pm = &mdss_dsi_pm_ops,
 	},
 };
 

@@ -96,6 +96,7 @@ void mdss_dsi_ctrl_init(struct mdss_dsi_ctrl_pdata *ctrl)
 	spin_lock_init(&ctrl->mdp_lock);
 	mutex_init(&ctrl->mutex);
 	mutex_init(&ctrl->cmd_mutex);
+	mutex_init(&ctrl->suspend_mutex);
 	mdss_dsi_buf_alloc(&ctrl->tx_buf, SZ_4K);
 	mdss_dsi_buf_alloc(&ctrl->rx_buf, SZ_4K);
 	ctrl->cmdlist_commit = mdss_dsi_cmdlist_commit;
@@ -1244,6 +1245,7 @@ int mdss_dsi_cmdlist_rx(struct mdss_dsi_ctrl_pdata *ctrl,
 int mdss_dsi_cmdlist_commit(struct mdss_dsi_ctrl_pdata *ctrl, int from_mdp)
 {
 	struct dcs_cmd_req *req;
+	bool ulps_restore = false;
 	int ret = -EINVAL;
 
 	mutex_lock(&ctrl->cmd_mutex);
@@ -1265,6 +1267,17 @@ int mdss_dsi_cmdlist_commit(struct mdss_dsi_ctrl_pdata *ctrl, int from_mdp)
 	 */
 	mdss_bus_bandwidth_ctrl(1);
 
+	/* If ULPS mode is enabled, then exit ULPS first */
+	if (ctrl->ulps) {
+		ulps_restore = true;
+		ret = mdss_dsi_ulps_config(ctrl, 0);
+		if (ret) {
+			pr_err("%s: failed to exit ULPS mode. rc=%d\n",
+				__func__, ret);
+			goto ulps_error;
+		}
+	}
+
 	pr_debug("%s:  from_mdp=%d pid=%d\n", __func__, from_mdp, current->pid);
 	mdss_dsi_clk_ctrl(ctrl, DSI_ALL_CLKS, 1);
 
@@ -1274,6 +1287,17 @@ int mdss_dsi_cmdlist_commit(struct mdss_dsi_ctrl_pdata *ctrl, int from_mdp)
 		ret = mdss_dsi_cmdlist_tx(ctrl, req);
 
 	mdss_dsi_clk_ctrl(ctrl, DSI_ALL_CLKS, 0);
+
+	if (ulps_restore) {
+		ret = mdss_dsi_ulps_config(ctrl, 1);
+		if (ret) {
+			pr_warn("%s: failed to enter ULPS mode. rc=%d\n",
+				__func__, ret);
+			ret = 0;
+		}
+	}
+
+ulps_error:
 	mdss_bus_bandwidth_ctrl(0);
 
 need_lock:

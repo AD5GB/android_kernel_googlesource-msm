@@ -41,6 +41,10 @@
 
 #include <asm/current.h>
 
+#ifdef CONFIG_LGE_HANDLE_PANIC
+#include <mach/lge_handle_panic.h>
+#endif
+
 static int enable_debug;
 module_param(enable_debug, int, S_IRUGO | S_IWUSR);
 
@@ -461,9 +465,13 @@ static void subsystem_shutdown(struct subsys_device *dev, void *data)
 	const char *name = dev->desc->name;
 
 	pr_info("[%p]: Shutting down %s\n", current, name);
-	if (dev->desc->shutdown(dev->desc, true) < 0)
+	if (dev->desc->shutdown(dev->desc, true) < 0){
+#ifdef CONFIG_LGE_HANDLE_PANIC
+		lge_set_magic_subsystem(name, LGE_ERR_SUB_SD);
+#endif
 		panic("subsys-restart: [%p]: Failed to shutdown %s!",
 			current, name);
+	}
 	dev->crash_count++;
 	subsys_set_state(dev, SUBSYS_OFFLINE);
 	disable_all_irqs(dev);
@@ -490,6 +498,9 @@ static void subsystem_powerup(struct subsys_device *dev, void *data)
 	if (dev->desc->powerup(dev->desc) < 0) {
 		notify_each_subsys_device(&dev, 1, SUBSYS_POWERUP_FAILURE,
 								NULL);
+#ifdef CONFIG_LGE_HANDLE_PANIC
+		lge_set_magic_subsystem(name, LGE_ERR_SUB_PWR);
+#endif
 		panic("[%p]: Powerup error: %s!", current, name);
 	}
 	enable_all_irqs(dev);
@@ -782,6 +793,9 @@ static void device_restart_work_hdlr(struct work_struct *work)
 							device_restart_work);
 
 	notify_each_subsys_device(&dev, 1, SUBSYS_SOC_RESET, NULL);
+#ifdef CONFIG_LGE_HANDLE_PANIC
+	lge_set_magic_subsystem(dev->desc->name, LGE_ERR_SUB_RST);
+#endif
 	panic("subsys-restart: Resetting the SoC - %s crashed.",
 							dev->desc->name);
 }
@@ -824,6 +838,9 @@ int subsystem_restart_dev(struct subsys_device *dev)
 		schedule_work(&dev->device_restart_work);
 		return 0;
 	default:
+#ifdef CONFIG_LGE_HANDLE_PANIC
+		lge_set_magic_subsystem(name, LGE_ERR_SUB_UNK);
+#endif
 		panic("subsys-restart: Unknown restart level!\n");
 		break;
 	}

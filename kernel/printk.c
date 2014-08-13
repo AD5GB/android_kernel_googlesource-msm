@@ -2156,7 +2156,6 @@ module_param_named(console_suspend, console_suspend_enabled,
 MODULE_PARM_DESC(console_suspend, "suspend console during suspend"
 	" and hibernate operations");
 
-
 /* check current suspend/resume status of the console */
 int is_console_suspended(void)
 {

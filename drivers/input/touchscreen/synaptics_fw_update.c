@@ -268,6 +268,7 @@ struct synaptics_rmi4_fwu_handle {
 	const unsigned char *firmware_data;
 	const unsigned char *config_data;
 	const unsigned char *lockdown_data;
+	unsigned char img_config_data[4];
 	unsigned short block_size;
 	unsigned short fw_block_count;
 	unsigned short config_block_count;
@@ -348,8 +349,12 @@ static void parse_header(void)
 	memcpy(img->product_info, data->product_info,
 		sizeof(data->product_info));
 
+#ifdef CHECK_BUILD_INFO
 	img->is_contain_build_info =
 		(data->options_firmware_id == (1 << OPTION_BUILD_INFO));
+#else
+	img->is_contain_build_info = 0;
+#endif
 
 	if (img->is_contain_build_info) {
 		img->package_id = (data->pkg_id_msb << 8) |
@@ -707,6 +712,7 @@ static enum flash_area fwu_go_nogo(void)
 	struct i2c_client *i2c_client = fwu->rmi4_data->i2c_client;
 	struct f01_device_status f01_device_status;
 	struct image_content *img = &fwu->image_content;
+	int config_flag = 0;
 
 	if (fwu->force_update) {
 		flash_area = UI_FIRMWARE;
@@ -802,7 +808,8 @@ static enum flash_area fwu_go_nogo(void)
 			dev_err(&i2c_client->dev,
 				"No valid PR number (PRxxxxxxx)" \
 				"found in image file name...\n");
-			goto exit;
+			config_flag = 1;
+			goto check_config_id;
 		}
 
 		strptr += 2;
@@ -835,6 +842,8 @@ static enum flash_area fwu_go_nogo(void)
 		goto exit;
 	}
 
+check_config_id:
+
 	/* device config id */
 	retval = fwu->fn_ptr->read(fwu->rmi4_data,
 				fwu->f34_fd.ctrl_base_addr,
@@ -849,12 +858,12 @@ static enum flash_area fwu_go_nogo(void)
 	}
 	deviceConfigID =  extract_uint_be(config_id);
 
-	dev_dbg(&i2c_client->dev,
+	dev_info(&i2c_client->dev,
 		"Device config ID 0x%02X, 0x%02X, 0x%02X, 0x%02X\n",
 		config_id[0], config_id[1], config_id[2], config_id[3]);
 
 	/* .img config id */
-	dev_dbg(&i2c_client->dev,
+	dev_info(&i2c_client->dev,
 			".img config ID 0x%02X, 0x%02X, 0x%02X, 0x%02X\n",
 			fwu->config_data[0],
 			fwu->config_data[1],
@@ -862,12 +871,21 @@ static enum flash_area fwu_go_nogo(void)
 			fwu->config_data[3]);
 	imageConfigID =  extract_uint_be(fwu->config_data);
 
+	/* copy to keep debug information */
+	fwu->img_config_data[0] = fwu->config_data[0];
+	fwu->img_config_data[1] = fwu->config_data[1];
+	fwu->img_config_data[2] = fwu->config_data[2];
+	fwu->img_config_data[3] = fwu->config_data[3];
+
 	dev_dbg(&i2c_client->dev,
 		"%s: Device config ID %d, .img config ID %d\n",
 		__func__, deviceConfigID, imageConfigID);
 
 	if (imageConfigID > deviceConfigID) {
-		flash_area = CONFIG_AREA;
+		if (config_flag)
+			flash_area = UI_FIRMWARE;
+		else
+			flash_area = CONFIG_AREA;
 		goto exit;
 	}
 exit:
@@ -1607,6 +1625,9 @@ static int fwu_start_reflash(void)
 	/* reset device */
 	fwu_reset_device();
 
+	/* rescan pdt */
+	fwu_scan_pdt();
+
 	/* check device status */
 	retval = fwu_read_f01_device_status(&f01_device_status);
 	if (retval < 0)
@@ -1653,10 +1674,16 @@ int synaptics_fw_updater(void)
 
 	fwu->config_area = UI_CONFIG_AREA;
 
+	if (fwu->fn_ptr->enable)
+		fwu->fn_ptr->enable(fwu->rmi4_data, false);
+
 	retval = fwu_start_reflash();
 	fwu->rmi4_data->fw_updating = false;
 
 	synaptics_rmi4_update_debug_info();
+
+	if (fwu->fn_ptr->enable)
+		fwu->fn_ptr->enable(fwu->rmi4_data, true);
 
 	return retval;
 }
@@ -1991,13 +2018,19 @@ static ssize_t fwu_sysfs_config_id_show(struct device *dev,
 {
 	unsigned char config_id[4];
 	/* device config id */
+
+	if (fwu->rmi4_data->suspended == true)
+		return snprintf(buf, PAGE_SIZE, "Device is in suspend\n");
+
 	fwu->fn_ptr->read(fwu->rmi4_data,
 				fwu->f34_fd.ctrl_base_addr,
 				config_id,
 				sizeof(config_id));
 
-	return snprintf(buf, PAGE_SIZE, "%d.%d.%d.%d\n",
-		config_id[0], config_id[1], config_id[2], config_id[3]);
+	return snprintf(buf, PAGE_SIZE, "DEVICE: %c%c%c%c IMG: %c%c%c%c\n",
+		config_id[0], config_id[1], config_id[2], config_id[3],
+		fwu->img_config_data[0], fwu->img_config_data[1],
+		fwu->img_config_data[2], fwu->img_config_data[3]);
 }
 
 static ssize_t fwu_sysfs_package_id_show(struct device *dev,
@@ -2005,6 +2038,10 @@ static ssize_t fwu_sysfs_package_id_show(struct device *dev,
 {
 	unsigned char pkg_id[4];
 	/* read device package id */
+
+	if (fwu->rmi4_data->suspended == true)
+		return snprintf(buf, PAGE_SIZE, "Device is in suspend\n");
+
 	fwu->fn_ptr->read(fwu->rmi4_data,
 				fwu->f01_fd.query_base_addr + 17,
 				pkg_id,
@@ -2111,7 +2148,17 @@ static struct device_attribute attrs[] = {
 
 static void synaptics_rmi4_fwu_work(struct work_struct *work)
 {
+	struct synaptics_rmi4_fwu_handle *fwu =
+		container_of(to_delayed_work(work),
+			struct synaptics_rmi4_fwu_handle, fwu_work);
+
+	if (fwu->fn_ptr->enable)
+		fwu->fn_ptr->enable(fwu->rmi4_data, false);
+
 	fwu_start_reflash();
+
+	if (fwu->fn_ptr->enable)
+		fwu->fn_ptr->enable(fwu->rmi4_data, true);
 }
 
 static int synaptics_rmi4_fwu_init(struct synaptics_rmi4_data *rmi4_data)

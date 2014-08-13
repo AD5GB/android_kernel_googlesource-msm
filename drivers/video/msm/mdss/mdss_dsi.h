@@ -78,10 +78,11 @@ enum dsi_trigger_type {
 };
 
 enum dsi_panel_bl_ctrl {
+	UNKNOWN_CTRL,
 	BL_PWM,
 	BL_WLED,
 	BL_DCS_CMD,
-	UNKNOWN_CTRL,
+	BL_EXTERNAL,
 };
 
 enum dsi_ctrl_op_mode {
@@ -291,6 +292,7 @@ struct mdss_dsi_ctrl_pdata {
 	int bklt_max;
 	int new_fps;
 	int pwm_enabled;
+	bool blanked;
 	struct pwm_device *pwm_bl;
 	struct dsi_drv_cm_data shared_pdata;
 	u32 pclk_rate;
@@ -303,6 +305,12 @@ struct mdss_dsi_ctrl_pdata {
 	struct dsi_panel_cmds on_cmds;
 	struct dsi_panel_cmds off_cmds;
 
+	struct dsi_panel_cmds idle_on_cmds;
+	struct dsi_panel_cmds idle_off_cmds;
+
+	struct dsi_panel_cmds low_fps_mode_on_cmds;
+	struct dsi_panel_cmds low_fps_mode_off_cmds;
+
 	struct dcs_cmd_list cmdlist;
 	struct completion dma_comp;
 	struct completion mdp_comp;
@@ -313,6 +321,7 @@ struct mdss_dsi_ctrl_pdata {
 	int mdp_busy;
 	struct mutex mutex;
 	struct mutex cmd_mutex;
+	struct mutex suspend_mutex;
 
 	bool ulps;
 
@@ -373,14 +382,13 @@ int mdss_dsi_cmdlist_commit(struct mdss_dsi_ctrl_pdata *ctrl, int from_mdp);
 void mdss_dsi_cmdlist_kickoff(int intf);
 int mdss_dsi_bta_status_check(struct mdss_dsi_ctrl_pdata *ctrl);
 bool __mdss_dsi_clk_enabled(struct mdss_dsi_ctrl_pdata *ctrl, u8 clk_type);
-void mdss_dsi_cmd_dma_trigger_sel(struct mdss_dsi_ctrl_pdata *ctrl_pdata,
-			int enable);
-void mdss_mdp_cmd_clk_enable(void);
-void mdss_mdp_cmd_clk_disable(void);
+int mdss_dsi_ulps_config(struct mdss_dsi_ctrl_pdata *ctrl, int enable);
 
 int mdss_dsi_panel_init(struct device_node *node,
 		struct mdss_dsi_ctrl_pdata *ctrl_pdata,
 		bool cmd_cfg_cont_splash);
+void mdss_dsi_panel_idle_mode(struct mdss_dsi_ctrl_pdata *ctrl, int enable);
+void mdss_dsi_panel_low_fps_mode(struct mdss_dsi_ctrl_pdata *ctrl, int enable);
 
 static inline bool mdss_dsi_broadcast_mode_enabled(void)
 {
