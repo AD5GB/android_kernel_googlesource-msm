@@ -130,11 +130,11 @@ static ssize_t hwevent_store_setreg(struct device *dev,
 {
 	struct hwevent_drvdata *drvdata = dev_get_drvdata(dev->parent);
 	void *hwereg;
-	phys_addr_t addr;
-	uint32_t val;
+	unsigned long long addr;
+	unsigned long val;
 	int ret, i;
 
-	if (sscanf(buf, "%x %x", &addr, &val) != 2)
+	if (sscanf(buf, "%llx %lx", &addr, &val) != 2)
 		return -EINVAL;
 
 	mutex_lock(&drvdata->mutex);
@@ -153,7 +153,7 @@ static ssize_t hwevent_store_setreg(struct device *dev,
 					      drvdata->hmux[i].end -
 					      drvdata->hmux[i].start);
 			if (!hwereg) {
-				dev_err(dev, "unable to map address 0x%x\n",
+				dev_err(dev, "unable to map address 0x%llx\n",
 					addr);
 				ret = -ENOMEM;
 				goto err;
@@ -201,7 +201,7 @@ static const struct attribute_group *hwevent_attr_grps[] = {
 	NULL,
 };
 
-static int __devinit hwevent_probe(struct platform_device *pdev)
+static int hwevent_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
 	struct hwevent_drvdata *drvdata;
@@ -305,7 +305,7 @@ static int __devinit hwevent_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static int __devexit hwevent_remove(struct platform_device *pdev)
+static int hwevent_remove(struct platform_device *pdev)
 {
 	struct hwevent_drvdata *drvdata = platform_get_drvdata(pdev);
 
@@ -320,7 +320,7 @@ static struct of_device_id hwevent_match[] = {
 
 static struct platform_driver hwevent_driver = {
 	.probe		= hwevent_probe,
-	.remove		= __devexit_p(hwevent_remove),
+	.remove		= hwevent_remove,
 	.driver		= {
 		.name	= "coresight-hwevent",
 		.owner	= THIS_MODULE,

@@ -17,7 +17,6 @@
 #include <linux/i2c.h>
 #include <linux/videodev2.h>
 #include <linux/pm_qos.h>
-#include <linux/wakelock.h>
 #include <linux/msm_ion.h>
 #include <linux/iommu.h>
 #include <media/v4l2-dev.h>
@@ -32,6 +31,7 @@
 
 #define MSM_POST_EVT_TIMEOUT 5000
 #define MSM_POST_EVT_NOTIMEOUT 0xFFFFFFFF
+#define MSM_CAMERA_STREAM_CNT_BITS  32
 
 struct msm_video_device {
 	struct video_device *vdev;

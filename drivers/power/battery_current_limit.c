@@ -488,7 +488,7 @@ static void remove_bcl_sysfs(struct bcl_context *bcl)
 	return;
 }
 
-static int __devinit bcl_probe(struct platform_device *pdev)
+static int bcl_probe(struct platform_device *pdev)
 {
 	struct bcl_context *bcl;
 	int ret = 0;
@@ -522,12 +522,12 @@ static int __devinit bcl_probe(struct platform_device *pdev)
 		return ret;
 	}
 	platform_set_drvdata(pdev, bcl);
-	INIT_DELAYED_WORK_DEFERRABLE(&bcl->bcl_iavail_work, bcl_iavail_work);
+	INIT_DEFERRABLE_WORK(&bcl->bcl_iavail_work, bcl_iavail_work);
 
 	return 0;
 }
 
-static int __devexit bcl_remove(struct platform_device *pdev)
+static int bcl_remove(struct platform_device *pdev)
 {
 	remove_bcl_sysfs(gbcl);
 	kfree(gbcl);
@@ -543,7 +543,7 @@ static struct of_device_id bcl_match_table[] = {
 
 static struct platform_driver bcl_driver = {
 	.probe	= bcl_probe,
-	.remove	= __devexit_p(bcl_remove),
+	.remove	= bcl_remove,
 	.driver	= {
 		.name	= BCL_DEV_NAME,
 		.owner	= THIS_MODULE,

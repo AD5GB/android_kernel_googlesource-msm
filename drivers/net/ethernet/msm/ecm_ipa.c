@@ -1,4 +1,4 @@
-/* Copyright (c) 2013, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2013-2014, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -19,7 +19,7 @@
 #include <linux/skbuff.h>
 #include <linux/sched.h>
 #include <linux/atomic.h>
-#include <mach/ecm_ipa.h>
+#include <linux/ecm_ipa.h>
 
 #define DRIVER_NAME "ecm_ipa"
 #define ECM_IPA_IPV4_HDR_NAME "ecm_eth_ipv4"
@@ -29,6 +29,14 @@
 #define DEFAULT_OUTSTANDING_HIGH 64
 #define DEFAULT_OUTSTANDING_LOW 32
 #define DEBUGFS_TEMP_BUF_SIZE 4
+
+#define ECM_IPA_DEBUG(fmt, args...) \
+	pr_debug("ctx:%s: "\
+			fmt, current->comm, ## args)
+
+#define ECM_IPA_INFO(fmt, args...) \
+	pr_err(DRIVER_NAME "@%s@%d@ctx:%s: "\
+			fmt, __func__, __LINE__, current->comm, ## args)
 
 #define ECM_IPA_ERROR(fmt, args...) \
 	pr_err(DRIVER_NAME "@%s@%d@ctx:%s: "\
@@ -43,31 +51,55 @@
 	} \
 	while (0)
 
-#define ECM_IPA_LOG_ENTRY() pr_debug("begin\n")
-#define ECM_IPA_LOG_EXIT() pr_debug("end\n")
+#define ECM_IPA_LOG_ENTRY() ECM_IPA_DEBUG("begin\n")
+#define ECM_IPA_LOG_EXIT() ECM_IPA_DEBUG("end\n")
 
 /**
- * enum ecm_ipa_state - specify the current driver internal state.
+ * enum ecm_ipa_state - specify the current driver internal state
+ *  which is guarded by a state machine.
  *
- * The driver internal state changes due to its API usage.
+ * The driver internal state changes due to its external API usage.
  * The driver saves its internal state to guard from caller illegal
  * call sequence.
- * LOADED is the first state which is the default one.
+ * states:
+ * UNLOADED is the first state which is the default one and is also the state
+ *  after the driver gets unloaded(cleanup).
  * INITIALIZED is the driver state once it finished registering
- *  the network device
+ *  the network device and all internal data struct were initialized
  * CONNECTED is the driver state once the USB pipes were connected to IPA
- * UP is the driver state when it allows Linux network stack start
- *  data transfer
+ * UP is the driver state after the interface mode was set to UP but the
+ *  pipes are not connected yet - this state is meta-stable state.
+ * CONNECTED_AND_UP is the driver state when the pipe were connected and
+ *  the interface got UP request from the network stack. this is the driver
+ *   idle operation state which allows it to transmit/receive data.
+ * INVALID is a state which is not allowed.
  */
-enum ecm_ipa_mode {
-	ECM_IPA_LOADED,
+enum ecm_ipa_state {
+	ECM_IPA_UNLOADED = 0,
 	ECM_IPA_INITIALIZED,
 	ECM_IPA_CONNECTED,
 	ECM_IPA_UP,
+	ECM_IPA_CONNECTED_AND_UP,
+	ECM_IPA_INVALID,
 };
 
-#define ECM_IPA_MODE(ecm_ipa_ctx) \
-	pr_debug("Driver mode changed - %d", ecm_ipa_ctx->mode);
+/**
+ * enum ecm_ipa_operation - enumerations used to descibe the API operation
+ *
+ * Those enums are used as input for the driver state machine.
+ */
+enum ecm_ipa_operation {
+	ECM_IPA_INITIALIZE,
+	ECM_IPA_CONNECT,
+	ECM_IPA_OPEN,
+	ECM_IPA_STOP,
+	ECM_IPA_DISCONNECT,
+	ECM_IPA_CLEANUP,
+};
+
+#define ECM_IPA_STATE_DEBUG(ecm_ipa_ctx) \
+	ECM_IPA_DEBUG("Driver state - %s\n",\
+	ecm_ipa_state_string(ecm_ipa_ctx->state));
 
 /**
  * struct ecm_ipa_dev - main driver context parameters
@@ -85,7 +117,10 @@ enum ecm_ipa_mode {
  * @outstanding_high: number of outstanding packets allowed
  * @outstanding_low: number of outstanding packets which shall cause
  *  to netdev queue start (after stopped due to outstanding_high reached)
- * @mode: current mode of ecm_ipa driver
+ * @state: current state of ecm_ipa driver
+ * @device_ready_notify: callback supplied by USB core driver
+ * This callback shall be called by the Netdev once the Netdev internal
+ * state is changed to RNDIS_IPA_CONNECTED_AND_UP
  */
 struct ecm_ipa_dev {
 	struct net_device *net;
@@ -101,7 +136,8 @@ struct ecm_ipa_dev {
 	atomic_t outstanding_pkts;
 	u8 outstanding_high;
 	u8 outstanding_low;
-	enum ecm_ipa_mode mode;
+	enum ecm_ipa_state state;
+	void (*device_ready_notify)(void);
 };
 
 static int ecm_ipa_open(struct net_device *net);
@@ -110,6 +146,7 @@ static void ecm_ipa_packet_receive_notify(void *priv,
 static void ecm_ipa_tx_complete_notify(void *priv,
 		enum ipa_dp_evt_type evt, unsigned long data);
 static int ecm_ipa_stop(struct net_device *net);
+static void ecm_ipa_enable_data_path(struct ecm_ipa_dev *ecm_ipa_ctx);
 static int ecm_ipa_rules_cfg(struct ecm_ipa_dev *ecm_ipa_ctx,
 		const void *dst_mac, const void *src_mac);
 static void ecm_ipa_rules_destroy(struct ecm_ipa_dev *ecm_ipa_ctx);
@@ -142,8 +179,9 @@ static int ecm_ipa_ep_registers_cfg(u32 usb_to_ipa_hdl, u32 ipa_to_usb_hdl);
 static int ecm_ipa_ep_registers_dma_cfg(u32 usb_to_ipa_hdl);
 static int ecm_ipa_set_device_ethernet_addr(u8 *dev_ethaddr,
 		u8 device_ethaddr[]);
-static bool ecm_ipa_state_validate(enum ecm_ipa_mode current_mode,
-		enum ecm_ipa_mode new_mode);
+static enum ecm_ipa_state ecm_ipa_next_state(enum ecm_ipa_state current_state,
+		enum ecm_ipa_operation operation);
+static const char *ecm_ipa_state_string(enum ecm_ipa_state state);
 static int ecm_ipa_init_module(void);
 static void ecm_ipa_cleanup_module(void);
 
@@ -164,6 +202,11 @@ const struct file_operations ecm_ipa_debugfs_atomic_ops = {
 	.open = ecm_ipa_debugfs_atomic_open,
 	.read = ecm_ipa_debugfs_atomic_read,
 };
+
+static void ecm_ipa_msg_free_cb(void *buff, u32 len, u32 type)
+{
+	kfree(buff);
+}
 
 /**
  * ecm_ipa_init() - create network device and initializes internal
@@ -194,10 +237,11 @@ int ecm_ipa_init(struct ecm_ipa_params *params)
 	struct ecm_ipa_dev *ecm_ipa_ctx;
 
 	ECM_IPA_LOG_ENTRY();
-	pr_debug("%s initializing\n", DRIVER_NAME);
+
+	ECM_IPA_DEBUG("%s initializing\n", DRIVER_NAME);
 	NULL_CHECK(params);
 
-	pr_debug("host_ethaddr=%pM, device_ethaddr=%pM\n",
+	ECM_IPA_DEBUG("host_ethaddr=%pM, device_ethaddr=%pM\n",
 		params->host_ethaddr,
 		params->device_ethaddr);
 
@@ -207,10 +251,17 @@ int ecm_ipa_init(struct ecm_ipa_params *params)
 		ECM_IPA_ERROR("fail to allocate etherdev\n");
 		goto fail_alloc_etherdev;
 	}
-	pr_debug("network device was successfully allocated\n");
+	ECM_IPA_DEBUG("network device was successfully allocated\n");
 
 	ecm_ipa_ctx = netdev_priv(net);
+	if (!ecm_ipa_ctx) {
+		ECM_IPA_ERROR("fail to extract netdev priv\n");
+		result = -ENOMEM;
+		goto fail_netdev_priv;
+	}
 	memset(ecm_ipa_ctx, 0, sizeof(*ecm_ipa_ctx));
+	ECM_IPA_DEBUG("ecm_ipa_ctx (private) = %p\n", ecm_ipa_ctx);
+
 	ecm_ipa_ctx->net = net;
 	ecm_ipa_ctx->tx_enable = true;
 	ecm_ipa_ctx->rx_enable = true;
@@ -220,19 +271,23 @@ int ecm_ipa_init(struct ecm_ipa_params *params)
 	atomic_set(&ecm_ipa_ctx->outstanding_pkts, 0);
 	snprintf(net->name, sizeof(net->name), "%s%%d", "ecm");
 	net->netdev_ops = &ecm_ipa_netdev_ops;
-	pr_debug("internal data structures were intialized and defaults set\n");
+	ECM_IPA_DEBUG("internal data structures were intialized\n");
+
+	if (!params->device_ready_notify)
+		ECM_IPA_DEBUG("device_ready_notify() was not supplied");
+	ecm_ipa_ctx->device_ready_notify = params->device_ready_notify;
 
 	result = ecm_ipa_debugfs_init(ecm_ipa_ctx);
 	if (result)
 		goto fail_debugfs;
-	pr_debug("debugfs entries were created\n");
+	ECM_IPA_DEBUG("debugfs entries were created\n");
 
 	result = ecm_ipa_create_rm_resource(ecm_ipa_ctx);
 	if (result) {
 		ECM_IPA_ERROR("fail on RM create\n");
 		goto fail_create_rm;
 	}
-	pr_debug("RM resource was created\n");
+	ECM_IPA_DEBUG("RM resource was created\n");
 
 	result = ecm_ipa_set_device_ethernet_addr(net->dev_addr,
 			params->device_ethaddr);
@@ -240,7 +295,7 @@ int ecm_ipa_init(struct ecm_ipa_params *params)
 		ECM_IPA_ERROR("set device MAC failed\n");
 		goto fail_set_device_ethernet;
 	}
-	pr_debug("Device Ethernet address set %pM\n", net->dev_addr);
+	ECM_IPA_DEBUG("Device Ethernet address set %pM\n", net->dev_addr);
 
 	result = ecm_ipa_rules_cfg(ecm_ipa_ctx, params->host_ethaddr,
 			params->device_ethaddr);
@@ -248,30 +303,33 @@ int ecm_ipa_init(struct ecm_ipa_params *params)
 		ECM_IPA_ERROR("fail on ipa rules set\n");
 		goto fail_rules_cfg;
 	}
-	pr_debug("Ethernet header insertion set\n");
+	ECM_IPA_DEBUG("Ethernet header insertion set\n");
 
 	result = ecm_ipa_register_properties();
 	if (result) {
 		ECM_IPA_ERROR("fail on properties set\n");
 		goto fail_register_tx;
 	}
-	pr_debug("ecm_ipa 2 Tx and 2 Rx properties were registered\n");
+	ECM_IPA_DEBUG("ecm_ipa 2 Tx and 2 Rx properties were registered\n");
 
 	netif_carrier_off(net);
-	pr_debug("set carrier off\n");
+	ECM_IPA_DEBUG("set carrier off\n");
 
 	result = register_netdev(net);
 	if (result) {
 		ECM_IPA_ERROR("register_netdev failed: %d\n", result);
 		goto fail_register_netdev;
 	}
-	pr_debug("register_netdev succeeded\n");
+	ECM_IPA_DEBUG("register_netdev succeeded\n");
 
 	params->ecm_ipa_rx_dp_notify = ecm_ipa_packet_receive_notify;
 	params->ecm_ipa_tx_dp_notify = ecm_ipa_tx_complete_notify;
 	params->private = (void *)ecm_ipa_ctx;
-	ecm_ipa_ctx->mode = ECM_IPA_INITIALIZED;
-	ECM_IPA_MODE(ecm_ipa_ctx);
+	params->skip_ep_cfg = false;
+	ecm_ipa_ctx->state = ECM_IPA_INITIALIZED;
+	ECM_IPA_STATE_DEBUG(ecm_ipa_ctx);
+
+	ECM_IPA_INFO("ECM_IPA was initialized successfully\n");
 
 	ECM_IPA_LOG_EXIT();
 
@@ -287,6 +345,7 @@ fail_rules_cfg:
 fail_create_rm:
 	ecm_ipa_debugfs_destroy(ecm_ipa_ctx);
 fail_debugfs:
+fail_netdev_priv:
 	free_netdev(net);
 fail_alloc_etherdev:
 	return result;
@@ -303,6 +362,8 @@ EXPORT_SYMBOL(ecm_ipa_init);
  * Once USB driver finishes the pipe connection between IPA core
  * and USB core this method shall be called in order to
  * allow ecm_ipa complete the data path configurations.
+ * Caller should make sure that it is calling this function
+ * from a context that allows it to handle device_ready_notify().
  * Detailed description:
  *  - configure the IPA end-points register
  *  - notify the Linux kernel for "carrier_on"
@@ -314,16 +375,29 @@ int ecm_ipa_connect(u32 usb_to_ipa_hdl, u32 ipa_to_usb_hdl,
 		void *priv)
 {
 	struct ecm_ipa_dev *ecm_ipa_ctx = priv;
+	int next_state;
+	struct ipa_ecm_msg *ecm_msg;
+	struct ipa_msg_meta msg_meta;
+	int retval;
 
 	ECM_IPA_LOG_ENTRY();
 	NULL_CHECK(priv);
-	pr_debug("usb_to_ipa_hdl = %d, ipa_to_usb_hdl = %d, priv=0x%p\n",
+	ECM_IPA_DEBUG("usb_to_ipa_hdl = %d, ipa_to_usb_hdl = %d, priv=0x%p\n",
 					usb_to_ipa_hdl, ipa_to_usb_hdl, priv);
 
-	if (!ecm_ipa_state_validate(ecm_ipa_ctx->mode, ECM_IPA_CONNECTED)) {
-		ECM_IPA_ERROR("can't call connect before driver init\n");
+	ecm_msg = kzalloc(sizeof(struct ipa_ecm_msg), GFP_KERNEL);
+	if (!ecm_msg) {
+		ECM_IPA_ERROR("can't alloc msg mem\n");
+		return -ENOMEM;
+	}
+
+	next_state = ecm_ipa_next_state(ecm_ipa_ctx->state, ECM_IPA_CONNECT);
+	if (next_state == ECM_IPA_INVALID) {
+		ECM_IPA_ERROR("can't call connect before calling initialize\n");
 		return -EPERM;
 	}
+	ecm_ipa_ctx->state = next_state;
+	ECM_IPA_STATE_DEBUG(ecm_ipa_ctx);
 
 	if (!usb_to_ipa_hdl || usb_to_ipa_hdl >= IPA_CLIENT_MAX) {
 		ECM_IPA_ERROR("usb_to_ipa_hdl(%d) is not a valid ipa handle\n",
@@ -337,22 +411,51 @@ int ecm_ipa_connect(u32 usb_to_ipa_hdl, u32 ipa_to_usb_hdl,
 	}
 	ecm_ipa_ctx->ipa_to_usb_hdl = ipa_to_usb_hdl;
 	ecm_ipa_ctx->usb_to_ipa_hdl = usb_to_ipa_hdl;
-	ecm_ipa_ep_registers_cfg(usb_to_ipa_hdl, ipa_to_usb_hdl);
-	pr_debug("end-point configured\n");
+	retval = ecm_ipa_ep_registers_cfg(usb_to_ipa_hdl, ipa_to_usb_hdl);
+	if (retval) {
+		ECM_IPA_ERROR("fail on ep cfg\n");
+		goto fail_ep;
+	}
+	ECM_IPA_DEBUG("end-point configured\n");
 
 	netif_carrier_on(ecm_ipa_ctx->net);
+
+	memset(&msg_meta, 0, sizeof(struct ipa_msg_meta));
+	msg_meta.msg_type = ECM_CONNECT;
+	msg_meta.msg_len = sizeof(struct ipa_ecm_msg);
+	strlcpy(ecm_msg->name, ecm_ipa_ctx->net->name,
+		IPA_RESOURCE_NAME_MAX);
+	ecm_msg->ifindex = ecm_ipa_ctx->net->ifindex;
+
+	retval = ipa_send_msg(&msg_meta, ecm_msg, ecm_ipa_msg_free_cb);
+	if (retval) {
+		ECM_IPA_ERROR("fail to send ECM_CONNECT message\n");
+		goto fail_msg;
+	}
+
 	if (!netif_carrier_ok(ecm_ipa_ctx->net)) {
 		ECM_IPA_ERROR("netif_carrier_ok error\n");
-		return -EBUSY;
+		retval = -EBUSY;
+		goto fail_carrier;
 	}
-	pr_debug("carrier_on notified, ecm_ipa is operational\n");
+	ECM_IPA_DEBUG("carrier_on notified\n");
 
-	ecm_ipa_ctx->mode = ECM_IPA_CONNECTED;
-	ECM_IPA_MODE(ecm_ipa_ctx);
+	if (ecm_ipa_ctx->state == ECM_IPA_CONNECTED_AND_UP)
+		ecm_ipa_enable_data_path(ecm_ipa_ctx);
+	else
+		ECM_IPA_DEBUG("data path was not enabled yet\n");
+
+	ECM_IPA_INFO("ECM_IPA was connected successfully\n");
 
 	ECM_IPA_LOG_EXIT();
 
 	return 0;
+
+fail_carrier:
+fail_msg:
+	kfree(ecm_msg);
+fail_ep:
+	return retval;
 }
 EXPORT_SYMBOL(ecm_ipa_connect);
 
@@ -368,24 +471,24 @@ EXPORT_SYMBOL(ecm_ipa_connect);
 static int ecm_ipa_open(struct net_device *net)
 {
 	struct ecm_ipa_dev *ecm_ipa_ctx;
+	int next_state;
 
 	ECM_IPA_LOG_ENTRY();
 
 	ecm_ipa_ctx = netdev_priv(net);
 
-	if (!ecm_ipa_state_validate(ecm_ipa_ctx->mode, ECM_IPA_UP)) {
-		ECM_IPA_ERROR("can't bring driver up before cable connect\n");
+	next_state = ecm_ipa_next_state(ecm_ipa_ctx->state, ECM_IPA_OPEN);
+	if (next_state == ECM_IPA_INVALID) {
+		ECM_IPA_ERROR("can't bring driver up before initialize\n");
 		return -EPERM;
 	}
+	ecm_ipa_ctx->state = next_state;
+	ECM_IPA_STATE_DEBUG(ecm_ipa_ctx);
 
-	if (!netif_carrier_ok(net))
-		pr_debug("carrier is not ON yet - continuing\n");
-
-	netif_start_queue(net);
-	pr_debug("queue started\n");
-
-	ecm_ipa_ctx->mode = ECM_IPA_UP;
-	ECM_IPA_MODE(ecm_ipa_ctx);
+	if (ecm_ipa_ctx->state == ECM_IPA_CONNECTED_AND_UP)
+		ecm_ipa_enable_data_path(ecm_ipa_ctx);
+	else
+		ECM_IPA_DEBUG("data path was not enabled yet\n");
 
 	ECM_IPA_LOG_EXIT();
 
@@ -419,35 +522,38 @@ static netdev_tx_t ecm_ipa_start_xmit(struct sk_buff *skb,
 	netdev_tx_t status = NETDEV_TX_BUSY;
 	struct ecm_ipa_dev *ecm_ipa_ctx = netdev_priv(net);
 
+	ECM_IPA_DEBUG("packet Tx, len=%d, skb->protocol=%d\n",
+		skb->len, skb->protocol);
+
 	if (unlikely(netif_queue_stopped(net))) {
 		ECM_IPA_ERROR("interface queue is stopped\n");
 		goto out;
 	}
 
-	if (unlikely(ecm_ipa_ctx->mode != ECM_IPA_UP)) {
-		ECM_IPA_ERROR("can't send without network interface up\n");
-		return -NETDEV_TX_BUSY;
+	if (unlikely(ecm_ipa_ctx->state != ECM_IPA_CONNECTED_AND_UP)) {
+		ECM_IPA_ERROR("Missing pipe connected and/or iface up\n");
+		return NETDEV_TX_BUSY;
 	}
 
 	if (unlikely(tx_filter(skb))) {
 		dev_kfree_skb_any(skb);
-		pr_debug("packet got filtered out on Tx path\n");
+		ECM_IPA_DEBUG("packet got filtered out on Tx path\n");
 		status = NETDEV_TX_OK;
 		goto out;
 	}
 	ret = resource_request(ecm_ipa_ctx);
 	if (ret) {
-		pr_debug("Waiting to resource\n");
+		ECM_IPA_DEBUG("Waiting to resource\n");
 		netif_stop_queue(net);
 		goto resource_busy;
 	}
 
 	if (atomic_read(&ecm_ipa_ctx->outstanding_pkts) >=
 					ecm_ipa_ctx->outstanding_high) {
-		pr_debug("Outstanding high boundary reached (%d)- stopping queue\n",
+		ECM_IPA_DEBUG("Outstanding high (%d)- stopping\n",
 				ecm_ipa_ctx->outstanding_high);
 		netif_stop_queue(net);
-		status = -NETDEV_TX_BUSY;
+		status = NETDEV_TX_BUSY;
 		goto out;
 	}
 
@@ -488,6 +594,18 @@ static void ecm_ipa_packet_receive_notify(void *priv,
 	struct ecm_ipa_dev *ecm_ipa_ctx = priv;
 	int result;
 
+	if (!skb) {
+		ECM_IPA_ERROR("Bad SKB received from IPA driver\n");
+		return;
+	}
+
+	ECM_IPA_DEBUG("packet RX, len=%d\n", skb->len);
+
+	if (unlikely(ecm_ipa_ctx->state != ECM_IPA_CONNECTED_AND_UP)) {
+		ECM_IPA_DEBUG("Missing pipe connected and/or iface up\n");
+		return;
+	}
+
 	if (evt != IPA_RECEIVE)	{
 		ECM_IPA_ERROR("A none IPA_RECEIVE event in ecm_ipa_receive\n");
 		return;
@@ -496,7 +614,7 @@ static void ecm_ipa_packet_receive_notify(void *priv,
 	skb->dev = ecm_ipa_ctx->net;
 	skb->protocol = eth_type_trans(skb, ecm_ipa_ctx->net);
 	if (rx_filter(skb)) {
-		pr_debug("packet got filtered out on Rx path\n");
+		ECM_IPA_DEBUG("packet got filtered out on Rx path\n");
 		dev_kfree_skb_any(skb);
 		return;
 	}
@@ -522,19 +640,20 @@ static void ecm_ipa_packet_receive_notify(void *priv,
 static int ecm_ipa_stop(struct net_device *net)
 {
 	struct ecm_ipa_dev *ecm_ipa_ctx = netdev_priv(net);
+	int next_state;
 
 	ECM_IPA_LOG_ENTRY();
 
-	if (!ecm_ipa_state_validate(ecm_ipa_ctx->mode, ECM_IPA_CONNECTED)) {
+	next_state = ecm_ipa_next_state(ecm_ipa_ctx->state, ECM_IPA_STOP);
+	if (next_state == ECM_IPA_INVALID) {
 		ECM_IPA_ERROR("can't do network interface down without up\n");
 		return -EPERM;
 	}
+	ecm_ipa_ctx->state = next_state;
+	ECM_IPA_STATE_DEBUG(ecm_ipa_ctx);
 
 	netif_stop_queue(net);
-	pr_debug("network device stopped\n");
-
-	ecm_ipa_ctx->mode = ECM_IPA_CONNECTED;
-	ECM_IPA_MODE(ecm_ipa_ctx);
+	ECM_IPA_DEBUG("network device stopped\n");
 
 	ECM_IPA_LOG_EXIT();
 	return 0;
@@ -553,24 +672,56 @@ static int ecm_ipa_stop(struct net_device *net)
 int ecm_ipa_disconnect(void *priv)
 {
 	struct ecm_ipa_dev *ecm_ipa_ctx = priv;
+	int next_state;
+	struct ipa_ecm_msg *ecm_msg;
+	struct ipa_msg_meta msg_meta;
+	int retval;
+	int outstanding_dropped_pkts;
 
 	ECM_IPA_LOG_ENTRY();
 	NULL_CHECK(ecm_ipa_ctx);
-	pr_debug("priv=0x%p\n", priv);
+	ECM_IPA_DEBUG("priv=0x%p\n", priv);
 
-	if (!ecm_ipa_state_validate(ecm_ipa_ctx->mode, ECM_IPA_INITIALIZED)) {
-		ECM_IPA_ERROR("can't disconnect without connect first\n");
+	ecm_msg = kzalloc(sizeof(struct ipa_ecm_msg), GFP_KERNEL);
+	if (!ecm_msg) {
+		ECM_IPA_ERROR("can't alloc msg mem\n");
+		return -ENOMEM;
+	}
+
+	next_state = ecm_ipa_next_state(ecm_ipa_ctx->state, ECM_IPA_DISCONNECT);
+	if (next_state == ECM_IPA_INVALID) {
+		ECM_IPA_ERROR("can't disconnect before connect\n");
+		return -EPERM;
+	}
+	ecm_ipa_ctx->state = next_state;
+	ECM_IPA_STATE_DEBUG(ecm_ipa_ctx);
+
+	netif_carrier_off(ecm_ipa_ctx->net);
+	ECM_IPA_DEBUG("carrier_off notifcation was sent\n");
+
+	memset(&msg_meta, 0, sizeof(struct ipa_msg_meta));
+	msg_meta.msg_type = ECM_DISCONNECT;
+	msg_meta.msg_len = sizeof(struct ipa_ecm_msg);
+	strlcpy(ecm_msg->name, ecm_ipa_ctx->net->name,
+		IPA_RESOURCE_NAME_MAX);
+	ecm_msg->ifindex = ecm_ipa_ctx->net->ifindex;
+
+	retval = ipa_send_msg(&msg_meta, ecm_msg, ecm_ipa_msg_free_cb);
+	if (retval) {
+		ECM_IPA_ERROR("fail to send ECM_DISCONNECT message\n");
+		kfree(ecm_msg);
 		return -EPERM;
 	}
 
-	netif_carrier_off(ecm_ipa_ctx->net);
-	pr_debug("carrier_off notifcation was sent\n");
-
 	netif_stop_queue(ecm_ipa_ctx->net);
-	pr_debug("queue stopped\n");
+	ECM_IPA_DEBUG("queue stopped\n");
 
-	ecm_ipa_ctx->mode = ECM_IPA_INITIALIZED;
-	ECM_IPA_MODE(ecm_ipa_ctx);
+	outstanding_dropped_pkts =
+		atomic_read(&ecm_ipa_ctx->outstanding_pkts);
+	ecm_ipa_ctx->net->stats.tx_errors += outstanding_dropped_pkts;
+	atomic_set(&ecm_ipa_ctx->outstanding_pkts, 0);
+
+	ECM_IPA_INFO("ECM_IPA was disconnected successfully\n");
 
 	ECM_IPA_LOG_EXIT();
 
@@ -598,33 +749,52 @@ EXPORT_SYMBOL(ecm_ipa_disconnect);
 void ecm_ipa_cleanup(void *priv)
 {
 	struct ecm_ipa_dev *ecm_ipa_ctx = priv;
+	int next_state;
 
 	ECM_IPA_LOG_ENTRY();
 
-	pr_debug("priv=0x%p\n", priv);
+	ECM_IPA_DEBUG("priv=0x%p\n", priv);
 
 	if (!ecm_ipa_ctx) {
 		ECM_IPA_ERROR("ecm_ipa_ctx NULL pointer\n");
 		return;
 	}
 
-	if (!ecm_ipa_state_validate(ecm_ipa_ctx->mode, ECM_IPA_LOADED))
+	next_state = ecm_ipa_next_state(ecm_ipa_ctx->state, ECM_IPA_CLEANUP);
+	if (next_state == ECM_IPA_INVALID) {
 		ECM_IPA_ERROR("can't clean driver without cable disconnect\n");
+		return;
+	}
+	ecm_ipa_ctx->state = next_state;
+	ECM_IPA_STATE_DEBUG(ecm_ipa_ctx);
 
-
+	ecm_ipa_rules_destroy(ecm_ipa_ctx);
 	ecm_ipa_destory_rm_resource(ecm_ipa_ctx);
 	ecm_ipa_debugfs_destroy(ecm_ipa_ctx);
 
 	unregister_netdev(ecm_ipa_ctx->net);
 	free_netdev(ecm_ipa_ctx->net);
 
-	pr_debug("cleanup done\n");
-	ecm_ipa_ctx = NULL;
+	ECM_IPA_INFO("ECM_IPA was destroyed successfully\n");
+
 	ECM_IPA_LOG_EXIT();
 
-	return ;
+	return;
 }
 EXPORT_SYMBOL(ecm_ipa_cleanup);
+
+static void ecm_ipa_enable_data_path(struct ecm_ipa_dev *ecm_ipa_ctx)
+{
+	if (ecm_ipa_ctx->device_ready_notify) {
+		ecm_ipa_ctx->device_ready_notify();
+		ECM_IPA_DEBUG("USB device_ready_notify() was called\n");
+	} else {
+		ECM_IPA_DEBUG("device_ready_notify() not supplied\n");
+	}
+
+	netif_start_queue(ecm_ipa_ctx->net);
+	ECM_IPA_DEBUG("queue started\n");
+}
 
 /**
  * ecm_ipa_rules_cfg() - set header insertion and register Tx/Rx properties
@@ -721,7 +891,7 @@ static void ecm_ipa_rules_destroy(struct ecm_ipa_dev *ecm_ipa_ctx)
 	ipv6->hdl = ecm_ipa_ctx->eth_ipv6_hdr_hdl;
 	result = ipa_del_hdr(del_hdr);
 	if (result || ipv4->status || ipv6->status)
-		ECM_IPA_ERROR("ipa_del_hdr failed");
+		ECM_IPA_ERROR("ipa_del_hdr failed\n");
 }
 
 /* ecm_ipa_register_properties() - set Tx/Rx properties for ipacm
@@ -786,7 +956,7 @@ static void ecm_ipa_deregister_properties(void)
 	ECM_IPA_LOG_ENTRY();
 	result = ipa_deregister_intf("ecm0");
 	if (result)
-		pr_debug("Fail on Tx prop deregister\n");
+		ECM_IPA_DEBUG("Fail on Tx prop deregister\n");
 	ECM_IPA_LOG_EXIT();
 	return;
 }
@@ -816,10 +986,10 @@ static void ecm_ipa_rm_notify(void *user_data, enum ipa_rm_event event,
 	ECM_IPA_LOG_ENTRY();
 	if (event == IPA_RM_RESOURCE_GRANTED &&
 			netif_queue_stopped(ecm_ipa_ctx->net)) {
-		pr_debug("Resource Granted - waking queue\n");
-		netif_wake_queue(ecm_ipa_ctx->net);
+		ECM_IPA_DEBUG("Resource Granted - starting queue\n");
+		netif_start_queue(ecm_ipa_ctx->net);
 	} else {
-		pr_debug("Resource released\n");
+		ECM_IPA_DEBUG("Resource released\n");
 	}
 	ECM_IPA_LOG_EXIT();
 }
@@ -827,6 +997,7 @@ static void ecm_ipa_rm_notify(void *user_data, enum ipa_rm_event event,
 static int ecm_ipa_create_rm_resource(struct ecm_ipa_dev *ecm_ipa_ctx)
 {
 	struct ipa_rm_create_params create_params = {0};
+	struct ipa_rm_perf_profile profile;
 	int result;
 	ECM_IPA_LOG_ENTRY();
 	create_params.name = IPA_RM_RESOURCE_STD_ECM_PROD;
@@ -837,7 +1008,10 @@ static int ecm_ipa_create_rm_resource(struct ecm_ipa_dev *ecm_ipa_ctx)
 		ECM_IPA_ERROR("Fail on ipa_rm_create_resource\n");
 		goto fail_rm_create;
 	}
-	pr_debug("rm client was created");
+	ECM_IPA_DEBUG("rm client was created");
+
+	profile.max_supported_bandwidth_mbps = IPA_APPS_MAX_BW_IN_MBPS;
+	ipa_rm_set_perf_profile(IPA_RM_RESOURCE_STD_ECM_PROD, &profile);
 
 	result = ipa_rm_inactivity_timer_init(IPA_RM_RESOURCE_STD_ECM_PROD,
 			INACTIVITY_MSEC_DELAY);
@@ -845,14 +1019,21 @@ static int ecm_ipa_create_rm_resource(struct ecm_ipa_dev *ecm_ipa_ctx)
 		ECM_IPA_ERROR("Fail on ipa_rm_inactivity_timer_init\n");
 		goto fail_it;
 	}
-	pr_debug("rm_it client was created");
+	ECM_IPA_DEBUG("rm_it client was created");
 
 	result = ipa_rm_add_dependency(IPA_RM_RESOURCE_STD_ECM_PROD,
 				IPA_RM_RESOURCE_USB_CONS);
 	if (result)
-		ECM_IPA_ERROR("unable to add dependency (%d)\n", result);
+		ECM_IPA_ERROR("unable to add ECM/USB dependency (%d)\n",
+				result);
 
-	pr_debug("rm dependency was set\n");
+	result = ipa_rm_add_dependency(IPA_RM_RESOURCE_USB_PROD,
+					IPA_RM_RESOURCE_APPS_CONS);
+	if (result)
+		ECM_IPA_ERROR("unable to add USB/APPS dependency (%d)\n",
+				result);
+
+	ECM_IPA_DEBUG("rm dependency was set\n");
 
 	ECM_IPA_LOG_EXIT();
 	return 0;
@@ -870,6 +1051,8 @@ static void ecm_ipa_destory_rm_resource(struct ecm_ipa_dev *ecm_ipa_ctx)
 
 	ipa_rm_delete_dependency(IPA_RM_RESOURCE_STD_ECM_PROD,
 			IPA_RM_RESOURCE_USB_CONS);
+	ipa_rm_delete_dependency(IPA_RM_RESOURCE_USB_PROD,
+				IPA_RM_RESOURCE_APPS_CONS);
 	ipa_rm_inactivity_timer_destroy(IPA_RM_RESOURCE_STD_ECM_PROD);
 	result = ipa_rm_delete_resource(IPA_RM_RESOURCE_STD_ECM_PROD);
 	if (result)
@@ -933,6 +1116,15 @@ static void ecm_ipa_tx_complete_notify(void *priv,
 	struct sk_buff *skb = (struct sk_buff *)data;
 	struct ecm_ipa_dev *ecm_ipa_ctx = priv;
 
+
+	if (!skb) {
+		ECM_IPA_ERROR("Bad SKB received from IPA driver\n");
+		return;
+	}
+
+	ECM_IPA_DEBUG("packet Tx-complete, len=%d, skb->protocol=%d\n",
+		skb->len, skb->protocol);
+
 	if (!ecm_ipa_ctx) {
 		ECM_IPA_ERROR("ecm_ipa_ctx is NULL pointer\n");
 		return;
@@ -941,15 +1133,23 @@ static void ecm_ipa_tx_complete_notify(void *priv,
 		ECM_IPA_ERROR("unsupported event on Tx callback\n");
 		return;
 	}
+
+	if (unlikely(ecm_ipa_ctx->state != ECM_IPA_CONNECTED_AND_UP)) {
+		ECM_IPA_DEBUG("dropping Tx-complete pkt, state=%s",
+			ecm_ipa_state_string(ecm_ipa_ctx->state));
+		goto out;
+	}
+
 	atomic_dec(&ecm_ipa_ctx->outstanding_pkts);
 	if (netif_queue_stopped(ecm_ipa_ctx->net) &&
 		atomic_read(&ecm_ipa_ctx->outstanding_pkts) <
 					(ecm_ipa_ctx->outstanding_low)) {
-		pr_debug("Outstanding low boundary reached (%d) - waking up queue\n",
+		ECM_IPA_DEBUG("Outstanding low (%d) - waking up queue\n",
 				ecm_ipa_ctx->outstanding_low);
 		netif_wake_queue(ecm_ipa_ctx->net);
 	}
 
+out:
 	dev_kfree_skb_any(skb);
 	return;
 }
@@ -1006,9 +1206,9 @@ static ssize_t ecm_ipa_debugfs_enable_write(struct file *file,
 	missing = copy_from_user(&input, buf, 1);
 	if (missing)
 		return -EFAULT;
-	pr_debug("input received %c\n", input);
+	ECM_IPA_DEBUG("input received %c\n", input);
 	*enable = input - '0';
-	pr_debug("value was set to %d\n", *enable);
+	ECM_IPA_DEBUG("value was set to %d\n", *enable);
 	return count;
 }
 
@@ -1025,7 +1225,7 @@ static ssize_t ecm_ipa_debugfs_enable_read(struct file *file,
 	nbytes = scnprintf(enable_str, sizeof(enable_str), "%d\n", *enable);
 	ret = simple_read_from_buffer(ubuf, count, ppos, enable_str, nbytes);
 	if (ret < 0) {
-		ECM_IPA_ERROR("simple_read_from_buffer problem");
+		ECM_IPA_ERROR("simple_read_from_buffer problem\n");
 		return ret;
 	}
 	size += ret;
@@ -1163,7 +1363,7 @@ static int ecm_ipa_ep_registers_cfg(u32 usb_to_ipa_hdl, u32 ipa_to_usb_hdl)
 		ECM_IPA_ERROR("failed to configure IPA to USB end-point\n");
 		goto out;
 	}
-	pr_debug("end-point registers successfully configured\n");
+	ECM_IPA_DEBUG("end-point registers successfully configured\n");
 out:
 	ECM_IPA_LOG_EXIT();
 	return result;
@@ -1183,9 +1383,9 @@ static int ecm_ipa_ep_registers_dma_cfg(u32 usb_to_ipa_hdl)
 	int result = 0;
 	struct ipa_ep_cfg_mode cfg_mode;
 	u32 apps_to_ipa_hdl = 2;
+
 	ECM_IPA_LOG_ENTRY();
-	/* Apps to IPA - override the configuration made by IPA driver
-	 * in order to allow data path on older platforms*/
+
 	memset(&cfg_mode, 0 , sizeof(cfg_mode));
 	cfg_mode.mode = IPA_DMA;
 	cfg_mode.dst = IPA_CLIENT_USB_CONS;
@@ -1202,7 +1402,7 @@ static int ecm_ipa_ep_registers_dma_cfg(u32 usb_to_ipa_hdl)
 		ECM_IPA_ERROR("failed to configure USB to IPA\n");
 		goto out;
 	}
-	pr_debug("end-point registers successfully configured\n");
+	ECM_IPA_DEBUG("end-point registers successfully configured\n");
 out:
 	ECM_IPA_LOG_EXIT();
 	return result;
@@ -1220,50 +1420,93 @@ static int ecm_ipa_set_device_ethernet_addr(u8 *dev_ethaddr,
 	if (!is_valid_ether_addr(device_ethaddr))
 		return -EINVAL;
 	memcpy(dev_ethaddr, device_ethaddr, ETH_ALEN);
-	pr_debug("device ethernet address: %pM\n", dev_ethaddr);
+	ECM_IPA_DEBUG("device ethernet address: %pM\n", dev_ethaddr);
 	return 0;
 }
 
-/** ecm_ipa_state_validate - check if a state transition is allowed
+/** ecm_ipa_next_state - return the next state of the driver
+ * @current_state: the current state of the driver
+ * @operation: an enum which represent the operation being made on the driver
+ *  by its API.
  *
- * Allowed transition:
- *  LOADED->INITIALIZED: ecm_ipa_init()
- *  INITIALIZED->CONNECTED: ecm_ipa_connect()
- *  CONNECTED->INITIALIZED: ecm_ipa_disconnect()
- *  CONNECTED->UP: ecm_ipa_open()
- *  UP->CONNECTED: ecm_ipa_stop()
- *  UP->INITIALIZED: ecm_ipa_disconnect()
- *  INITIALIZED-> LOADED
+ * This function implements the driver internal state machine.
+ * Its decisions are based on the driver current state and the operation
+ * being made.
+ * In case the operation is invalid this state machine will return
+ * the value ECM_IPA_INVALID to inform the caller for a forbidden sequence.
  */
-static bool ecm_ipa_state_validate(enum ecm_ipa_mode current_mode,
-		enum ecm_ipa_mode new_mode)
+static enum ecm_ipa_state ecm_ipa_next_state(enum ecm_ipa_state current_state,
+		enum ecm_ipa_operation operation)
 {
-	bool result;
+	int next_state = ECM_IPA_INVALID;
 
-	switch (current_mode) {
-	case ECM_IPA_LOADED:
-		result = (new_mode == ECM_IPA_INITIALIZED);
+	switch (current_state) {
+	case ECM_IPA_UNLOADED:
+		if (operation == ECM_IPA_INITIALIZE)
+			next_state = ECM_IPA_INITIALIZED;
 		break;
 	case ECM_IPA_INITIALIZED:
-		result = (new_mode == ECM_IPA_CONNECTED ||
-				new_mode == ECM_IPA_LOADED);
+		if (operation == ECM_IPA_CONNECT)
+			next_state = ECM_IPA_CONNECTED;
+		else if (operation == ECM_IPA_OPEN)
+			next_state = ECM_IPA_UP;
+		else if (operation == ECM_IPA_CLEANUP)
+			next_state = ECM_IPA_UNLOADED;
 		break;
 	case ECM_IPA_CONNECTED:
-		result = (new_mode == ECM_IPA_INITIALIZED ||
-				new_mode == ECM_IPA_UP);
+		if (operation == ECM_IPA_DISCONNECT)
+			next_state = ECM_IPA_INITIALIZED;
+		else if (operation == ECM_IPA_OPEN)
+			next_state = ECM_IPA_CONNECTED_AND_UP;
 		break;
 	case ECM_IPA_UP:
-		result = (new_mode == ECM_IPA_CONNECTED ||
-				new_mode == ECM_IPA_INITIALIZED);
+		if (operation == ECM_IPA_STOP)
+			next_state = ECM_IPA_INITIALIZED;
+		else if (operation == ECM_IPA_CONNECT)
+			next_state = ECM_IPA_CONNECTED_AND_UP;
+		else if (operation == ECM_IPA_CLEANUP)
+			next_state = ECM_IPA_UNLOADED;
+		break;
+	case ECM_IPA_CONNECTED_AND_UP:
+		if (operation == ECM_IPA_STOP)
+			next_state = ECM_IPA_CONNECTED;
+		else if (operation == ECM_IPA_DISCONNECT)
+			next_state = ECM_IPA_UP;
 		break;
 	default:
-		result = false;
+		ECM_IPA_ERROR("State is not supported\n");
 		break;
 	}
 
-	pr_debug("state transition (%d->%d)- %s\n", current_mode,
-			new_mode , result ? "Allowed" : "Forbidden");
-	return result;
+	ECM_IPA_DEBUG("state transition ( %s -> %s )- %s\n",
+			ecm_ipa_state_string(current_state),
+			ecm_ipa_state_string(next_state) ,
+			next_state == ECM_IPA_INVALID ?
+					"Forbidden" : "Allowed");
+
+	return next_state;
+}
+
+/**
+ * ecm_ipa_state_string - return the state string representation
+ * @state: enum which describe the state
+ */
+static const char *ecm_ipa_state_string(enum ecm_ipa_state state)
+{
+	switch (state) {
+	case ECM_IPA_UNLOADED:
+		return "ECM_IPA_UNLOADED";
+	case ECM_IPA_INITIALIZED:
+		return "ECM_IPA_INITIALIZED";
+	case ECM_IPA_CONNECTED:
+		return "ECM_IPA_CONNECTED";
+	case ECM_IPA_UP:
+		return "ECM_IPA_UP";
+	case ECM_IPA_CONNECTED_AND_UP:
+		return "ECM_IPA_CONNECTED_AND_UP";
+	default:
+		return "Not supported";
+	}
 }
 
 /**

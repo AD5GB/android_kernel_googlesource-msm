@@ -24,16 +24,16 @@
  * success and error on failure.
  */
 
-#ifdef CONFIG_ARCH_MSM8974
+#ifdef CONFIG_KRAIT_REGULATOR
 int __init krait_power_init(void);
-void secondary_cpu_hs_init(void *base_ptr);
+void secondary_cpu_hs_init(void *base_ptr, int cpu);
 #else
 static inline int __init krait_power_init(void)
 {
 	return -ENOSYS;
 }
 
-static inline void secondary_cpu_hs_init(void *base_ptr) {}
+static inline void secondary_cpu_hs_init(void *base_ptr, int cpu) {}
 #endif
 
 #endif

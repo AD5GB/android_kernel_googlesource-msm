@@ -9,10 +9,10 @@
  */
 
 #ifndef __ASSEMBLY__
+#include <linux/reboot.h>
 
 struct tag;
 struct meminfo;
-struct sys_timer;
 struct pt_regs;
 struct smp_operations;
 #ifdef CONFIG_SMP
@@ -40,8 +40,8 @@ struct machine_desc {
 	unsigned char		reserve_lp0 :1;	/* never has lp0	*/
 	unsigned char		reserve_lp1 :1;	/* never has lp1	*/
 	unsigned char		reserve_lp2 :1;	/* never has lp2	*/
-	char			restart_mode;	/* default restart mode	*/
-	struct smp_operations  *smp;    /* SMP operations  */
+	enum reboot_mode	reboot_mode;	/* default restart mode	*/
+	struct smp_operations	*smp;		/* SMP operations	*/
 	void			(*fixup)(struct tag *, char **,
 					 struct meminfo *);
 	void			(*reserve)(void);/* reserve mem blocks	*/
@@ -49,12 +49,13 @@ struct machine_desc {
 	void			(*init_very_early)(void);
 	void			(*init_early)(void);
 	void			(*init_irq)(void);
-	struct sys_timer	*timer;		/* system tick timer	*/
+	void			(*init_time)(void);
 	void			(*init_machine)(void);
+	void			(*init_late)(void);
 #ifdef CONFIG_MULTI_IRQ_HANDLER
 	void			(*handle_irq)(struct pt_regs *);
 #endif
-	void			(*restart)(char, const char *);
+	void			(*restart)(enum reboot_mode, const char *);
 };
 
 /*

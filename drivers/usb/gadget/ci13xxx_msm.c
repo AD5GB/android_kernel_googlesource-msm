@@ -1,4 +1,4 @@
-/* Copyright (c) 2010-2013, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2010-2014, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -11,10 +11,13 @@
 #include <linux/usb/msm_hsusb_hw.h>
 #include <linux/usb/ulpi.h>
 #include <linux/gpio.h>
+#include <linux/pinctrl/consumer.h>
 
 #include "ci13xxx_udc.c"
 
 #define MSM_USB_BASE	(udc->regs)
+
+#define CI13XXX_MSM_MAX_LOG2_ITC	7
 
 struct ci13xxx_udc_context {
 	int irq;
@@ -22,6 +25,7 @@ struct ci13xxx_udc_context {
 	int wake_gpio;
 	int wake_irq;
 	bool wake_irq_state;
+	struct pinctrl *ci13xxx_pinctrl;
 };
 
 static struct ci13xxx_udc_context _udc_ctxt;
@@ -67,6 +71,26 @@ static void ci13xxx_msm_disconnect(void)
 				ULPI_CLR(ULPI_MISC_A));
 }
 
+/* Link power management will reduce power consumption by
+ * short time HW suspend/resume.
+ */
+static void ci13xxx_msm_set_l1(struct ci13xxx *udc)
+{
+	int temp;
+	struct device *dev = udc->gadget.dev.parent;
+
+	dev_dbg(dev, "Enable link power management\n");
+
+	/* Enable remote wakeup and L1 for IN EPs */
+	writel_relaxed(0xffff0000, USB_L1_EP_CTRL);
+
+	temp = readl_relaxed(USB_L1_CONFIG);
+	temp |= L1_CONFIG_LPM_EN | L1_CONFIG_REMOTE_WAKEUP |
+		L1_CONFIG_GATE_SYS_CLK | L1_CONFIG_PHY_LPM |
+		L1_CONFIG_PLL;
+	writel_relaxed(temp, USB_L1_CONFIG);
+}
+
 static void ci13xxx_msm_connect(void)
 {
 	struct ci13xxx *udc = _udc;
@@ -106,6 +130,9 @@ static void ci13xxx_msm_reset(void)
 
 	writel_relaxed(0, USB_AHBBURST);
 	writel_relaxed(0x08, USB_AHBMODE);
+
+	if (udc->gadget.l1_supported)
+		ci13xxx_msm_set_l1(udc);
 
 	if (phy && (phy->flags & ENABLE_SECONDARY_PHY)) {
 		int	temp;
@@ -157,6 +184,36 @@ static void ci13xxx_msm_notify_event(struct ci13xxx *udc, unsigned event)
 	}
 }
 
+static bool ci13xxx_msm_in_lpm(struct ci13xxx *udc)
+{
+	struct msm_otg *otg;
+
+	if (udc == NULL)
+		return false;
+
+	if (udc->transceiver == NULL)
+		return false;
+
+	otg = container_of(udc->transceiver, struct msm_otg, phy);
+
+	return (atomic_read(&otg->in_lpm) != 0);
+}
+
+static void ci13xxx_msm_set_fpr_flag(struct ci13xxx *udc)
+{
+	struct msm_otg *otg;
+
+	if (udc == NULL)
+		return;
+
+	if (udc->transceiver == NULL)
+		return;
+
+	otg = container_of(udc->transceiver, struct msm_otg, phy);
+
+	atomic_set(&otg->set_fpr_with_lpm_exit, 1);
+}
+
 static irqreturn_t ci13xxx_msm_resume_irq(int irq, void *data)
 {
 	struct ci13xxx *udc = _udc;
@@ -177,8 +234,10 @@ static struct ci13xxx_udc_driver ci13xxx_msm_udc_driver = {
 				  CI13XXX_ZERO_ITC |
 				  CI13XXX_DISABLE_STREAMING |
 				  CI13XXX_IS_OTG,
-
+	.nz_itc			= 0,
 	.notify_event		= ci13xxx_msm_notify_event,
+	.in_lpm                 = ci13xxx_msm_in_lpm,
+	.set_fpr_flag           = ci13xxx_msm_set_fpr_flag,
 };
 
 static int ci13xxx_msm_install_wake_gpio(struct platform_device *pdev,
@@ -186,10 +245,20 @@ static int ci13xxx_msm_install_wake_gpio(struct platform_device *pdev,
 {
 	int wake_irq;
 	int ret;
+	struct pinctrl_state *set_state;
 
 	dev_dbg(&pdev->dev, "ci13xxx_msm_install_wake_gpio\n");
 
 	_udc_ctxt.wake_gpio = res->start;
+	if (_udc_ctxt.ci13xxx_pinctrl) {
+		set_state = pinctrl_lookup_state(_udc_ctxt.ci13xxx_pinctrl,
+				"ci13xxx_active");
+		if (IS_ERR(set_state)) {
+			pr_err("cannot get ci13xxx pinctrl active state\n");
+			return PTR_ERR(set_state);
+		}
+		pinctrl_select_state(_udc_ctxt.ci13xxx_pinctrl, set_state);
+	}
 	gpio_request(_udc_ctxt.wake_gpio, "USB_RESUME");
 	gpio_direction_input(_udc_ctxt.wake_gpio);
 	wake_irq = gpio_to_irq(_udc_ctxt.wake_gpio);
@@ -213,16 +282,36 @@ static int ci13xxx_msm_install_wake_gpio(struct platform_device *pdev,
 
 gpio_free:
 	gpio_free(_udc_ctxt.wake_gpio);
+	if (_udc_ctxt.ci13xxx_pinctrl) {
+		set_state = pinctrl_lookup_state(_udc_ctxt.ci13xxx_pinctrl,
+				"ci13xxx_sleep");
+		if (IS_ERR(set_state))
+			pr_err("cannot get ci13xxx pinctrl sleep state\n");
+		else
+			pinctrl_select_state(_udc_ctxt.ci13xxx_pinctrl,
+					set_state);
+	}
 	_udc_ctxt.wake_gpio = 0;
 	return ret;
 }
 
 static void ci13xxx_msm_uninstall_wake_gpio(struct platform_device *pdev)
 {
+	struct pinctrl_state *set_state;
 	dev_dbg(&pdev->dev, "ci13xxx_msm_uninstall_wake_gpio\n");
 
 	if (_udc_ctxt.wake_gpio) {
 		gpio_free(_udc_ctxt.wake_gpio);
+		if (_udc_ctxt.ci13xxx_pinctrl) {
+			set_state =
+				pinctrl_lookup_state(_udc_ctxt.ci13xxx_pinctrl,
+						"ci13xxx_sleep");
+			if (IS_ERR(set_state))
+				pr_err("cannot get ci13xxx pinctrl sleep state\n");
+			else
+				pinctrl_select_state(_udc_ctxt.ci13xxx_pinctrl,
+						set_state);
+		}
 		_udc_ctxt.wake_gpio = 0;
 	}
 }
@@ -231,8 +320,26 @@ static int ci13xxx_msm_probe(struct platform_device *pdev)
 {
 	struct resource *res;
 	int ret;
+	struct ci13xxx_platform_data *pdata = pdev->dev.platform_data;
+	bool is_l1_supported = false;
 
 	dev_dbg(&pdev->dev, "ci13xxx_msm_probe\n");
+
+	if (pdata) {
+		/* Acceptable values for nz_itc are: 0,1,2,4,8,16,32,64 */
+		if (pdata->log2_itc > CI13XXX_MSM_MAX_LOG2_ITC ||
+			pdata->log2_itc <= 0)
+			ci13xxx_msm_udc_driver.nz_itc = 0;
+		else
+			ci13xxx_msm_udc_driver.nz_itc =
+				1 << (pdata->log2_itc-1);
+
+		is_l1_supported = pdata->l1_supported;
+		/* Set ahb2ahb bypass flag if it is requested. */
+		if (pdata->enable_ahb2ahb_bypass)
+			ci13xxx_msm_udc_driver.flags |=
+				CI13XXX_ENABLE_AHB2AHB_BYPASS;
+	}
 
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	if (!res) {
@@ -252,6 +359,8 @@ static int ci13xxx_msm_probe(struct platform_device *pdev)
 		goto iounmap;
 	}
 
+	_udc->gadget.l1_supported = is_l1_supported;
+
 	_udc_ctxt.irq = platform_get_irq(pdev, 0);
 	if (_udc_ctxt.irq < 0) {
 		dev_err(&pdev->dev, "IRQ not found\n");
@@ -260,6 +369,17 @@ static int ci13xxx_msm_probe(struct platform_device *pdev)
 	}
 
 	res = platform_get_resource_byname(pdev, IORESOURCE_IO, "USB_RESUME");
+	/* Get pinctrl if target uses pinctrl */
+	_udc_ctxt.ci13xxx_pinctrl = devm_pinctrl_get(&pdev->dev);
+	if (IS_ERR(_udc_ctxt.ci13xxx_pinctrl)) {
+		if (of_property_read_bool(pdev->dev.of_node, "pinctrl-names")) {
+			dev_err(&pdev->dev, "Error encountered while getting pinctrl");
+			ret = PTR_ERR(_udc_ctxt.ci13xxx_pinctrl);
+			goto udc_remove;
+		}
+		dev_dbg(&pdev->dev, "Target does not use pinctrl\n");
+		_udc_ctxt.ci13xxx_pinctrl = NULL;
+	}
 	if (res) {
 		ret = ci13xxx_msm_install_wake_gpio(pdev, res);
 		if (ret < 0) {
@@ -300,6 +420,11 @@ int ci13xxx_msm_remove(struct platform_device *pdev)
 	return 0;
 }
 
+void ci13xxx_msm_shutdown(struct platform_device *pdev)
+{
+	ci13xxx_pullup(&_udc->gadget, 0);
+}
+
 void msm_hw_bam_disable(bool bam_disable)
 {
 	u32 val;
@@ -315,8 +440,11 @@ void msm_hw_bam_disable(bool bam_disable)
 
 static struct platform_driver ci13xxx_msm_driver = {
 	.probe = ci13xxx_msm_probe,
-	.driver = { .name = "msm_hsusb", },
+	.driver = {
+		.name = "msm_hsusb",
+	},
 	.remove = ci13xxx_msm_remove,
+	.shutdown = ci13xxx_msm_shutdown,
 };
 MODULE_ALIAS("platform:msm_hsusb");
 

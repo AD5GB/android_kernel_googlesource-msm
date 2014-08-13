@@ -1,4 +1,4 @@
-/* Copyright (c) 2010-2013, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2010-2014, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -12,7 +12,7 @@
 
 #ifndef __HDMI_UTIL_H__
 #define __HDMI_UTIL_H__
-#include "mdss_io_util.h"
+#include <linux/mdss_io_util.h>
 #include "video/msm_hdmi_modes.h"
 
 /* HDMI_TX Registers */
@@ -256,7 +256,7 @@ void hdmi_setup_video_mode_lut(void);
 int hdmi_get_video_id_code(struct msm_hdmi_mode_timing_info *timing_in);
 const struct msm_hdmi_mode_timing_info *hdmi_get_supported_mode(u32 mode);
 void hdmi_del_supported_mode(u32 mode);
-ssize_t hdmi_get_video_3d_fmt_2string(u32 format, char *buf);
+ssize_t hdmi_get_video_3d_fmt_2string(u32 format, char *buf, u32 size);
 
 /* todo: Fix this. Right now this is defined in mdss_hdmi_tx.c */
 void *hdmi_get_featuredata_from_sysfs_dev(struct device *device, u32 type);

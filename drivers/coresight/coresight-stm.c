@@ -450,6 +450,8 @@ static int stm_trace_ost_tail_64bit(unsigned long ch_addr, uint32_t options)
 
 static int stm_send(void *addr, const void *data, uint32_t size)
 {
+	uint32_t len = size;
+
 	if (((unsigned long)data & 0x1) && (size >= 1)) {
 		stm_data_writeb(*(uint8_t *)data, addr);
 		data++;
@@ -479,7 +481,7 @@ static int stm_send(void *addr, const void *data, uint32_t size)
 		size--;
 	}
 
-	return size;
+	return len;
 }
 
 static int stm_trace_ost_header(unsigned long ch_addr, uint32_t options,
@@ -781,7 +783,7 @@ static const struct attribute_group *stm_attr_grps[] = {
 	NULL,
 };
 
-static int __devinit stm_probe(struct platform_device *pdev)
+static int stm_probe(struct platform_device *pdev)
 {
 	int ret;
 	struct device *dev = &pdev->dev;
@@ -887,7 +889,7 @@ err:
 	return ret;
 }
 
-static int __devexit stm_remove(struct platform_device *pdev)
+static int stm_remove(struct platform_device *pdev)
 {
 	struct stm_drvdata *drvdata = platform_get_drvdata(pdev);
 
@@ -903,7 +905,7 @@ static struct of_device_id stm_match[] = {
 
 static struct platform_driver stm_driver = {
 	.probe          = stm_probe,
-	.remove         = __devexit_p(stm_remove),
+	.remove         = stm_remove,
 	.driver         = {
 		.name   = "coresight-stm",
 		.owner	= THIS_MODULE,

@@ -25,11 +25,11 @@
 #define UART_CSR      (*(volatile uint32_t *)(MSM_DEBUG_UART_PHYS + 0x08))
 #define UART_TF       (*(volatile uint32_t *)(MSM_DEBUG_UART_PHYS + 0x0c))
 
-#define UART_DM_SR    (*((volatile uint32_t *)(MSM_DEBUG_UART_PHYS + 0x08)))
-#define UART_DM_CR    (*((volatile uint32_t *)(MSM_DEBUG_UART_PHYS + 0x10)))
-#define UART_DM_ISR   (*((volatile uint32_t *)(MSM_DEBUG_UART_PHYS + 0x14)))
-#define UART_DM_NCHAR (*((volatile uint32_t *)(MSM_DEBUG_UART_PHYS + 0x40)))
-#define UART_DM_TF    (*((volatile uint32_t *)(MSM_DEBUG_UART_PHYS + 0x70)))
+#define UART_DM_SR    (*((volatile uint32_t *)(MSM_DEBUG_UART_PHYS + UARTDM_SR_OFFSET)))
+#define UART_DM_CR    (*((volatile uint32_t *)(MSM_DEBUG_UART_PHYS + UARTDM_CR_OFFSET)))
+#define UART_DM_ISR   (*((volatile uint32_t *)(MSM_DEBUG_UART_PHYS + UARTDM_ISR_OFFSET)))
+#define UART_DM_NCHAR (*((volatile uint32_t *)(MSM_DEBUG_UART_PHYS + UARTDM_NCF_TX_OFFSET)))
+#define UART_DM_TF    (*((volatile uint32_t *)(MSM_DEBUG_UART_PHYS + UARTDM_TF_OFFSET)))
 
 #ifndef CONFIG_DEBUG_ICEDCC
 static void putc(int c)
@@ -42,8 +42,8 @@ static void putc(int c)
 	 * Wait for TX_READY to be set; but skip it if we have a
 	 * TX underrun.
 	 */
-	if (!(__raw_readl_no_log(base + UARTDM_SR_OFFSET) & 0x08))
-		while (!(__raw_readl_no_log(base + UARTDM_ISR_OFFSET) & 0x80))
+	if (!(UART_DM_SR & 0x08))
+		while (!(UART_DM_ISR & 0x80))
 			cpu_relax();
 
 	__raw_writel_no_log(0x300, base + UARTDM_CR_OFFSET);
@@ -64,10 +64,6 @@ static inline void flush(void)
 }
 
 static inline void arch_decomp_setup(void)
-{
-}
-
-static inline void arch_decomp_wdog(void)
 {
 }
 

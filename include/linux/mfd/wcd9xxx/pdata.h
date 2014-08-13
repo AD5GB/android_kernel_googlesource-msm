@@ -1,4 +1,4 @@
-/* Copyright (c) 2011-2013, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2011-2014, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -69,20 +69,20 @@
 #define TABLA_DCYCLE_3839 0xE
 #define TABLA_DCYCLE_4095 0xF
 
-#define TAIKO_MCLK_CLK_12P288MHZ 12288000
-#define TAIKO_MCLK_CLK_9P6HZ 9600000
+#define WCD9XXX_MCLK_CLK_12P288MHZ 12288000
+#define WCD9XXX_MCLK_CLK_9P6HZ 9600000
 
 /* Only valid for 9.6 MHz mclk */
-#define TAIKO_DMIC_SAMPLE_RATE_2P4MHZ 2400000
-#define TAIKO_DMIC_SAMPLE_RATE_3P2MHZ 3200000
-#define TAIKO_DMIC_SAMPLE_RATE_4P8MHZ 4800000
+#define WCD9XXX_DMIC_SAMPLE_RATE_2P4MHZ 2400000
+#define WCD9XXX_DMIC_SAMPLE_RATE_3P2MHZ 3200000
+#define WCD9XXX_DMIC_SAMPLE_RATE_4P8MHZ 4800000
 
 /* Only valid for 12.288 MHz mclk */
-#define TAIKO_DMIC_SAMPLE_RATE_3P072MHZ 3072000
-#define TAIKO_DMIC_SAMPLE_RATE_4P096MHZ 4096000
-#define TAIKO_DMIC_SAMPLE_RATE_6P144MHZ 6144000
+#define WCD9XXX_DMIC_SAMPLE_RATE_3P072MHZ 3072000
+#define WCD9XXX_DMIC_SAMPLE_RATE_4P096MHZ 4096000
+#define WCD9XXX_DMIC_SAMPLE_RATE_6P144MHZ 6144000
 
-#define TAIKO_DMIC_SAMPLE_RATE_UNDEFINED 0
+#define WCD9XXX_DMIC_SAMPLE_RATE_UNDEFINED 0
 
 struct wcd9xxx_amic {
 	/*legacy mode, txfe_enable and txfe_buff take 7 input
@@ -127,6 +127,11 @@ struct wcd9xxx_micbias_setting {
 	u8 bias3_cap_mode;
 	u8 bias4_cap_mode;
 	bool bias2_is_headset_only;
+};
+
+enum codec_variant {
+	WCD9XXX,
+	WCD9330,
 };
 
 struct wcd9xxx_ocp_setting {
@@ -175,6 +180,7 @@ struct wcd9xxx_pdata {
 	struct wcd9xxx_regulator regulator[WCD9XXX_MAX_REGULATOR];
 	u32 mclk_rate;
 	u32 dmic_sample_rate;
+	enum codec_variant cdc_variant;
 };
 
 #endif

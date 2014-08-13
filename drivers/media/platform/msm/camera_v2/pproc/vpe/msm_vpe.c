@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2013, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2014, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -17,16 +17,16 @@
 #include <linux/videodev2.h>
 #include <linux/msm_ion.h>
 #include <linux/iommu.h>
-#include <mach/iommu_domains.h>
-#include <mach/iommu.h>
+#include <linux/msm_iommu_domains.h>
+#include <linux/qcom_iommu.h>
 #include <media/v4l2-dev.h>
 #include <media/v4l2-event.h>
 #include <media/v4l2-fh.h>
 #include <media/v4l2-ioctl.h>
 #include <media/v4l2-subdev.h>
 #include <media/media-entity.h>
-#include <media/msmb_pproc.h>
 #include <media/msmb_generic_buf_mgr.h>
+#include <media/msmb_pproc.h>
 #include "msm_vpe.h"
 #include "msm_camera_io_util.h"
 
@@ -210,7 +210,7 @@ static unsigned long msm_vpe_queue_buffer_info(struct vpe_device *vpe_dev,
 
 	rc = ion_map_iommu(vpe_dev->client, buff->map_info.ion_handle,
 		vpe_dev->domain_num, 0, SZ_4K, 0,
-		(unsigned long *)&buff->map_info.phy_addr,
+		&buff->map_info.phy_addr,
 		&buff->map_info.len, 0, 0);
 	if (rc < 0) {
 		pr_err("ION mmap failed\n");
@@ -512,7 +512,6 @@ static int vpe_init_hardware(struct vpe_device *vpe_dev)
 	rc = msm_cam_clk_enable(&vpe_dev->pdev->dev, vpe_clk_info,
 				vpe_dev->vpe_clk, ARRAY_SIZE(vpe_clk_info), 1);
 	if (rc < 0) {
-		rc = -ENODEV;
 		pr_err("clk enable failed\n");
 		goto disable_and_put_regulator;
 	}
@@ -531,11 +530,11 @@ static int vpe_init_hardware(struct vpe_device *vpe_dev)
 				"vpe", vpe_dev);
 		if (rc < 0) {
 			pr_err("irq request fail! start=%u\n",
-				vpe_dev->irq->start);
+				(uint32_t) vpe_dev->irq->start);
 			rc = -EBUSY;
 			goto unmap_base;
 		} else {
-			VPE_DBG("Got irq! %d\n", vpe_dev->irq->start);
+			VPE_DBG("Got irq! %d\n", (int)vpe_dev->irq->start);
 		}
 	} else {
 		VPE_DBG("Skip requesting the irq since device is booting\n");
@@ -602,7 +601,6 @@ static int vpe_open_node(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
 		if (rc < 0) {
 			pr_err("%s: Couldn't init vpe hardware\n", __func__);
 			vpe_dev->vpe_open_cnt--;
-			rc = -ENODEV;
 			goto err_fixup_sub_list;
 		}
 		rc = vpe_init_mem(vpe_dev);
@@ -1135,15 +1133,8 @@ static int msm_vpe_cfg(struct vpe_device *vpe_dev,
 		return -ENOMEM;
 	}
 
-	if (ioctl_ptr->len != sizeof(struct msm_vpe_frame_info_t)){
-		pr_err("%s:%d: Invalid user argument %d\n",
-			__func__, __LINE__, ioctl_ptr->len);
-		rc = -EINVAL;
-		goto err_free_new_frame;
-	}
-
 	rc = copy_from_user(new_frame, (void __user *)ioctl_ptr->ioctl_ptr,
-		sizeof(struct msm_vpe_frame_info_t));
+			sizeof(struct msm_vpe_frame_info_t));
 	if (rc) {
 		pr_err("%s:%d copy from user\n", __func__, __LINE__);
 		rc = -EINVAL;
@@ -1222,11 +1213,6 @@ static long msm_vpe_subdev_ioctl(struct v4l2_subdev *sd,
 	struct msm_camera_v4l2_ioctl_t *ioctl_ptr = arg;
 	int rc = 0;
 
-	if (ioctl_ptr == NULL) {
-		pr_err("%s: ioctl_ptr is null\n", __func__);
-		return -EINVAL;
-	}
-
 	mutex_lock(&vpe_dev->mutex);
 	switch (cmd) {
 	case VIDIOC_MSM_VPE_TRANSACTION_SETUP: {
@@ -1294,18 +1280,17 @@ static long msm_vpe_subdev_ioctl(struct v4l2_subdev *sd,
 			return -EINVAL;
 		}
 
-		k_stream_buff_info.num_buffs = u_stream_buff_info->num_buffs;
-		k_stream_buff_info.identity = u_stream_buff_info->identity;
-
-		if (k_stream_buff_info.num_buffs > MSM_CAMERA_MAX_STREAM_BUF) {
-			pr_err("%s:%d: unexpected large num buff %d requested\n",
-				__func__, __LINE__,
-				k_stream_buff_info.num_buffs);
+		if ((u_stream_buff_info->num_buffs == 0) ||
+			(u_stream_buff_info->num_buffs >
+				MSM_CAMERA_MAX_STREAM_BUF)) {
+			pr_err("%s:%d: Invalid number of buffers\n", __func__,
+				__LINE__);
 			kfree(u_stream_buff_info);
 			mutex_unlock(&vpe_dev->mutex);
 			return -EINVAL;
 		}
-
+		k_stream_buff_info.num_buffs = u_stream_buff_info->num_buffs;
+		k_stream_buff_info.identity = u_stream_buff_info->identity;
 		k_stream_buff_info.buffer_info =
 			kzalloc(k_stream_buff_info.num_buffs *
 			sizeof(struct msm_vpe_buffer_info_t), GFP_KERNEL);
@@ -1402,7 +1387,7 @@ static long msm_vpe_subdev_ioctl(struct v4l2_subdev *sd,
 static int msm_vpe_subscribe_event(struct v4l2_subdev *sd, struct v4l2_fh *fh,
 				struct v4l2_event_subscription *sub)
 {
-	return v4l2_event_subscribe(fh, sub, MAX_VPE_V4l2_EVENTS);
+	return v4l2_event_subscribe(fh, sub, MAX_VPE_V4l2_EVENTS, NULL);
 }
 
 static int msm_vpe_unsubscribe_event(struct v4l2_subdev *sd, struct v4l2_fh *fh,
@@ -1447,6 +1432,7 @@ static long msm_vpe_subdev_do_ioctl(
 		struct vpe_device *vpe_dev = v4l2_get_subdevdata(sd);
 		struct msm_camera_v4l2_ioctl_t *ioctl_ptr = arg;
 		struct msm_vpe_frame_info_t inst_info;
+		memset(&inst_info, 0, sizeof(struct msm_vpe_frame_info_t));
 		for (i = 0; i < MAX_ACTIVE_VPE_INSTANCE; i++) {
 			if (vpe_dev->vpe_subscribe_list[i].vfh == vfh) {
 				inst_info.inst_id = i;
@@ -1489,7 +1475,7 @@ static int vpe_register_domain(void)
 	return msm_register_domain(&vpe_iommu_layout);
 }
 
-static int __devinit vpe_probe(struct platform_device *pdev)
+static int vpe_probe(struct platform_device *pdev)
 {
 	struct vpe_device *vpe_dev;
 	int rc = 0;
@@ -1577,7 +1563,6 @@ static int __devinit vpe_probe(struct platform_device *pdev)
 	rc = vpe_init_hardware(vpe_dev);
 	if (rc < 0) {
 		pr_err("%s: Couldn't init vpe hardware\n", __func__);
-		rc = -ENODEV;
 		goto err_unregister_sd;
 	}
 	vpe_reset(vpe_dev);
@@ -1647,7 +1632,7 @@ static int vpe_device_remove(struct platform_device *dev)
 
 static struct platform_driver vpe_driver = {
 	.probe = vpe_probe,
-	.remove = __devexit_p(vpe_device_remove),
+	.remove = vpe_device_remove,
 	.driver = {
 		.name = MSM_VPE_DRV_NAME,
 		.owner = THIS_MODULE,

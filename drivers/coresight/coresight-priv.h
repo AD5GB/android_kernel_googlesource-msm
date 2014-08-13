@@ -1,4 +1,4 @@
-/* Copyright (c) 2011-2013, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2011-2014, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -39,21 +39,25 @@
 #ifdef CONFIG_CORESIGHT_FUSE
 extern bool coresight_fuse_access_disabled(void);
 extern bool coresight_fuse_apps_access_disabled(void);
+extern bool coresight_fuse_qpdi_access_disabled(void);
 #else
 static inline bool coresight_fuse_access_disabled(void) { return false; }
 static inline bool coresight_fuse_apps_access_disabled(void) { return false; }
+static inline bool coresight_fuse_qpdi_access_disabled(void) { return false; }
 #endif
 #ifdef CONFIG_CORESIGHT_CSR
 extern void msm_qdss_csr_enable_bam_to_usb(void);
 extern void msm_qdss_csr_disable_bam_to_usb(void);
 extern void msm_qdss_csr_disable_flush(void);
-extern int coresight_csr_hwctrl_set(phys_addr_t addr, uint32_t val);
+extern int coresight_csr_hwctrl_set(uint64_t addr, uint32_t val);
+extern void coresight_csr_set_byte_cntr(uint32_t);
 #else
 static inline void msm_qdss_csr_enable_bam_to_usb(void) {}
 static inline void msm_qdss_csr_disable_bam_to_usb(void) {}
 static inline void msm_qdss_csr_disable_flush(void) {}
-static inline int coresight_csr_hwctrl_set(phys_addr_t addr,
+static inline int coresight_csr_hwctrl_set(uint64_t addr,
 					   uint32_t val) { return -ENOSYS; }
+static inline void coresight_csr_set_byte_cntr(uint32_t val) {}
 #endif
 #ifdef CONFIG_CORESIGHT_ETM
 extern unsigned int etm_readl_cp14(uint32_t off);

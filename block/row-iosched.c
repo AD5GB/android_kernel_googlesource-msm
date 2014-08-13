@@ -396,7 +396,6 @@ static void row_add_request(struct request_queue *q,
 				"added urgent request (total on queue=%d)",
 				rqueue->nr_req);
 			rq->cmd_flags |= REQ_URGENT;
-			WARN_ON(rqueue->nr_req > 1);
 			rd->pending_urgent_rq = rq;
 		}
 	} else
@@ -789,7 +788,7 @@ done:
  * this dispatch queue
  *
  */
-static void *row_init_queue(struct request_queue *q)
+static int row_init_queue(struct request_queue *q)
 {
 
 	struct row_data *rdata;
@@ -798,7 +797,7 @@ static void *row_init_queue(struct request_queue *q)
 	rdata = kmalloc_node(sizeof(*rdata),
 			     GFP_KERNEL | __GFP_ZERO, q->node);
 	if (!rdata)
-		return NULL;
+		return -ENOMEM;
 
 	memset(rdata, 0, sizeof(*rdata));
 	for (i = 0; i < ROWQ_MAX_PRIO; i++) {
@@ -830,8 +829,9 @@ static void *row_init_queue(struct request_queue *q)
 	rdata->last_served_ioprio_class = IOPRIO_CLASS_NONE;
 	rdata->rd_idle_data.idling_queue_idx = ROWQ_MAX_PRIO;
 	rdata->dispatch_queue = q;
+	q->elevator->elevator_data = rdata;
 
-	return rdata;
+	return 0;
 }
 
 /*
@@ -937,7 +937,8 @@ static enum row_queue_prio row_get_queue_prio(struct request *rq,
  *
  */
 static int
-row_set_request(struct request_queue *q, struct request *rq, gfp_t gfp_mask)
+row_set_request(struct request_queue *q, struct request *rq, struct bio *bio,
+		gfp_t gfp_mask)
 {
 	struct row_data *rd = (struct row_data *)q->elevator->elevator_data;
 	unsigned long flags;

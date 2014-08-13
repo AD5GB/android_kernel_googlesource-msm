@@ -81,7 +81,7 @@ static int soc_compr_open_fe(struct snd_compr_stream *cstream)
 	struct snd_soc_pcm_runtime *fe = cstream->private_data;
 	struct snd_pcm_substream *fe_substream = fe->pcm->streams[0].substream;
 	struct snd_soc_platform *platform = fe->platform;
-	struct snd_soc_dpcm_params *dpcm;
+	struct snd_soc_dpcm *dpcm;
 	struct snd_soc_dapm_widget_list *list;
 
 	struct snd_soc_dai *cpu_dai = fe->cpu_dai;
@@ -100,7 +100,8 @@ static int soc_compr_open_fe(struct snd_compr_stream *cstream)
 	if (platform->driver->compr_ops && platform->driver->compr_ops->open) {
 		ret = platform->driver->compr_ops->open(cstream);
 		if (ret < 0) {
-			pr_err("compress asoc: can't open platform %s\n", platform->name);
+			pr_err("compress asoc: can't open platform %s\n",
+								platform->name);
 			goto out;
 		}
 	}
@@ -108,7 +109,8 @@ static int soc_compr_open_fe(struct snd_compr_stream *cstream)
 	if (fe->dai_link->compr_ops && fe->dai_link->compr_ops->startup) {
 		ret = fe->dai_link->compr_ops->startup(cstream);
 		if (ret < 0) {
-			pr_err("compress asoc: %s startup failed\n", fe->dai_link->name);
+			pr_err("compress asoc: %s startup failed\n",
+							fe->dai_link->name);
 			goto machine_err;
 		}
 	}
@@ -186,11 +188,11 @@ static void close_delayed_work(struct work_struct *work)
 	dev_dbg(rtd->dev, "ASoC: pop wq checking: %s status: %s waiting: %s\n",
 		 codec_dai->driver->playback.stream_name,
 		 codec_dai->playback_active ? "active" : "inactive",
-		     codec_dai->pop_wait ? "yes" : "no");
+		 rtd->pop_wait ? "yes" : "no");
 
 	/* are we waiting on this codec DAI stream */
-	if (codec_dai->pop_wait == 1) {
-	  codec_dai->pop_wait = 0;
+	if (rtd->pop_wait == 1) {
+		rtd->pop_wait = 0;
 		snd_soc_dapm_stream_event(rtd, SNDRV_PCM_STREAM_PLAYBACK,
 					  SND_SOC_DAPM_STREAM_STOP);
 	}
@@ -211,11 +213,12 @@ static int soc_compr_free(struct snd_compr_stream *cstream)
 	if (cstream->direction == SND_COMPRESS_PLAYBACK) {
 		cpu_dai->playback_active--;
 		codec_dai->playback_active--;
-		snd_soc_dai_digital_mute(codec_dai, 1);
 	} else {
 		cpu_dai->capture_active--;
 		codec_dai->capture_active--;
 	}
+
+	snd_soc_dai_digital_mute(codec_dai, 1, cstream->direction);
 
 	cpu_dai->active--;
 	codec_dai->active--;
@@ -239,17 +242,17 @@ static int soc_compr_free(struct snd_compr_stream *cstream)
 		if (!rtd->pmdown_time || codec->ignore_pmdown_time ||
 		    rtd->dai_link->ignore_pmdown_time) {
 			snd_soc_dapm_stream_event(rtd,
-					codec_dai->driver->playback.stream_name,
+					SNDRV_PCM_STREAM_PLAYBACK,
 					SND_SOC_DAPM_STREAM_STOP);
 		} else {
-			codec_dai->pop_wait = 1;
+			rtd->pop_wait = 1;
 			schedule_delayed_work(&rtd->delayed_work,
 				msecs_to_jiffies(rtd->pmdown_time));
 		}
 	} else {
 		/* capture streams can be powered down now */
 		snd_soc_dapm_stream_event(rtd,
-			codec_dai->driver->capture.stream_name,
+			SNDRV_PCM_STREAM_CAPTURE,
 			SND_SOC_DAPM_STREAM_STOP);
 	}
 
@@ -261,7 +264,7 @@ static int soc_compr_free_fe(struct snd_compr_stream *cstream)
 {
 	struct snd_soc_pcm_runtime *fe = cstream->private_data;
 	struct snd_soc_platform *platform = fe->platform;
-	struct snd_soc_dpcm_params *dpcm;
+	struct snd_soc_dpcm *dpcm;
 	int stream, ret;
 
 	struct snd_soc_dai *cpu_dai = fe->cpu_dai;
@@ -278,7 +281,7 @@ static int soc_compr_free_fe(struct snd_compr_stream *cstream)
 	if (cstream->direction == SND_COMPRESS_PLAYBACK) {
 		cpu_dai->playback_active--;
 		codec_dai->playback_active--;
-		snd_soc_dai_digital_mute(codec_dai, 1);
+		snd_soc_dai_digital_mute(codec_dai, 1, cstream->direction);
 	} else {
 		cpu_dai->capture_active--;
 		codec_dai->capture_active--;
@@ -300,14 +303,7 @@ static int soc_compr_free_fe(struct snd_compr_stream *cstream)
 	list_for_each_entry(dpcm, &fe->dpcm[stream].be_clients, list_be)
 		dpcm->state = SND_SOC_DPCM_LINK_STATE_FREE;
 
-	if (stream == SNDRV_PCM_STREAM_PLAYBACK)
-		dpcm_dapm_stream_event(fe, stream,
-				fe->cpu_dai->driver->playback.stream_name,
-				SND_SOC_DAPM_STREAM_STOP);
-	else
-		dpcm_dapm_stream_event(fe, stream,
-				fe->cpu_dai->driver->capture.stream_name,
-				SND_SOC_DAPM_STREAM_STOP);
+	dpcm_dapm_stream_event(fe, stream, SND_SOC_DAPM_STREAM_STOP);
 
 	fe->dpcm[stream].state = SND_SOC_DPCM_STATE_CLOSE;
 	fe->dpcm[stream].runtime_update = SND_SOC_DPCM_UPDATE_NO;
@@ -321,7 +317,7 @@ static int soc_compr_free_fe(struct snd_compr_stream *cstream)
 
 	if (platform->driver->compr_ops && platform->driver->compr_ops->free)
 		platform->driver->compr_ops->free(cstream);
-	//cpu_dai->runtime = NULL;
+	/*cpu_dai->runtime = NULL;*/
 
 	mutex_unlock(&fe->card->mutex);
 	return 0;
@@ -335,7 +331,7 @@ static int soc_compr_trigger(struct snd_compr_stream *cstream, int cmd)
 	struct snd_soc_dai *codec_dai = rtd->codec_dai;
 	int ret = 0;
 
-	/* for partial drain and drain cmd, don't acquire lock while invoking DSP.
+	/* for partial-drain/drain cmd, don't acquire lock while invoking DSP.
 	 * These calls will be blocked till these operation can complete which
 	 * will be a while. And during that time, app can invoke STOP, PAUSE etc
 	 */
@@ -354,15 +350,13 @@ static int soc_compr_trigger(struct snd_compr_stream *cstream, int cmd)
 			goto out;
 	}
 
-	if (cstream->direction == SND_COMPRESS_PLAYBACK) {
-		switch (cmd) {
-		case SNDRV_PCM_TRIGGER_START:
-			snd_soc_dai_digital_mute(codec_dai, 0);
-			break;
-		case SNDRV_PCM_TRIGGER_STOP:
-			snd_soc_dai_digital_mute(codec_dai, 1);
-			break;
-		}
+	switch (cmd) {
+	case SNDRV_PCM_TRIGGER_START:
+		snd_soc_dai_digital_mute(codec_dai, 0, cstream->direction);
+		break;
+	case SNDRV_PCM_TRIGGER_STOP:
+		snd_soc_dai_digital_mute(codec_dai, 1, cstream->direction);
+		break;
 	}
 
 out:
@@ -376,7 +370,7 @@ static int soc_compr_trigger_fe(struct snd_compr_stream *cstream, int cmd)
 	struct snd_soc_platform *platform = fe->platform;
 	int ret = 0, stream;
 
-	/* for partial drain and drain cmd, don't acquire lock while invoking DSP.
+	/* for partial-drain/drain cmd, don't acquire lock while invoking DSP.
 	 * These calls will be blocked till these operation can complete which
 	 * will be a while. And during that time, app can invoke STOP, PAUSE etc
 	 */
@@ -395,7 +389,8 @@ static int soc_compr_trigger_fe(struct snd_compr_stream *cstream, int cmd)
 
 	mutex_lock_nested(&fe->card->mutex, SND_SOC_CARD_CLASS_RUNTIME);
 
-	if (platform->driver->compr_ops && platform->driver->compr_ops->trigger) {
+	if (platform->driver->compr_ops &&
+				platform->driver->compr_ops->trigger) {
 		ret = platform->driver->compr_ops->trigger(cstream, cmd);
 		if (ret < 0)
 			goto out;
@@ -431,7 +426,6 @@ static int soc_compr_set_params(struct snd_compr_stream *cstream,
 {
 	struct snd_soc_pcm_runtime *rtd = cstream->private_data;
 	struct snd_soc_platform *platform = rtd->platform;
-	struct snd_soc_dai *codec_dai = rtd->codec_dai;
 	int ret = 0;
 
 	mutex_lock_nested(&rtd->pcm_mutex, rtd->pcm_subclass);
@@ -454,12 +448,15 @@ static int soc_compr_set_params(struct snd_compr_stream *cstream,
 			goto err;
 	}
 
-	snd_soc_dapm_stream_event(rtd,
-				codec_dai->driver->playback.stream_name,
-				SND_SOC_DAPM_STREAM_START);
+	if (cstream->direction == SND_COMPRESS_PLAYBACK)
+		snd_soc_dapm_stream_event(rtd, SNDRV_PCM_STREAM_PLAYBACK,
+					SND_SOC_DAPM_STREAM_START);
+	else
+		snd_soc_dapm_stream_event(rtd, SNDRV_PCM_STREAM_CAPTURE,
+					SND_SOC_DAPM_STREAM_START);
 
 	/* cancel any delayed stream shutdown that is pending */
-	codec_dai->pop_wait = 0;
+	rtd->pop_wait = 0;
 	mutex_unlock(&rtd->pcm_mutex);
 
 	cancel_delayed_work_sync(&rtd->delayed_work);
@@ -477,17 +474,12 @@ static int soc_compr_set_params_fe(struct snd_compr_stream *cstream,
 	struct snd_soc_pcm_runtime *fe = cstream->private_data;
 	struct snd_pcm_substream *fe_substream = fe->pcm->streams[0].substream;
 	struct snd_soc_platform *platform = fe->platform;
-	struct snd_pcm_hw_params *hw_params;
 	int ret = 0, stream;
 
 	if (cstream->direction == SND_COMPRESS_PLAYBACK)
 		stream = SNDRV_PCM_STREAM_PLAYBACK;
 	else
 		stream = SNDRV_PCM_STREAM_CAPTURE;
-
-	hw_params = kzalloc(sizeof(*hw_params), GFP_KERNEL);
-	if (hw_params == NULL)
-		return -ENOMEM;
 
 	mutex_lock_nested(&fe->card->mutex, SND_SOC_CARD_CLASS_RUNTIME);
 
@@ -497,7 +489,8 @@ static int soc_compr_set_params_fe(struct snd_compr_stream *cstream,
 	 * expectation is that platform and machine will configure everything
 	 * for this compress path, like configuring pcm port for codec
 	 */
-	if (platform->driver->compr_ops && platform->driver->compr_ops->set_params) {
+	if (platform->driver->compr_ops &&
+			platform->driver->compr_ops->set_params) {
 		ret = platform->driver->compr_ops->set_params(cstream, params);
 		if (ret < 0)
 			goto out;
@@ -522,14 +515,7 @@ static int soc_compr_set_params_fe(struct snd_compr_stream *cstream,
 	if (ret < 0)
 		goto out;
 
-	if (stream == SNDRV_PCM_STREAM_PLAYBACK)
-		dpcm_dapm_stream_event(fe, stream,
-				fe->cpu_dai->driver->playback.stream_name,
-				SND_SOC_DAPM_STREAM_START);
-	else
-		dpcm_dapm_stream_event(fe, stream,
-				fe->cpu_dai->driver->capture.stream_name,
-				SND_SOC_DAPM_STREAM_START);
+	dpcm_dapm_stream_event(fe, stream, SND_SOC_DAPM_STREAM_START);
 
 	fe->dpcm[stream].state = SND_SOC_DPCM_STATE_PREPARE;
 
@@ -703,7 +689,14 @@ int soc_new_compress(struct snd_soc_pcm_runtime *rtd, int num)
 	/* check client and interface hw capabilities */
 	snprintf(new_name, sizeof(new_name), "%s %s-%d",
 			rtd->dai_link->stream_name, codec_dai->name, num);
-	direction = SND_COMPRESS_PLAYBACK;
+
+	if (codec_dai->driver->playback.channels_min)
+		direction = SND_COMPRESS_PLAYBACK;
+	else if (codec_dai->driver->capture.channels_min)
+		direction = SND_COMPRESS_CAPTURE;
+	else
+		return -EINVAL;
+
 	compr = kzalloc(sizeof(*compr), GFP_KERNEL);
 	if (compr == NULL) {
 		snd_printk(KERN_ERR "Cannot allocate compr\n");
@@ -732,9 +725,12 @@ int soc_new_compress(struct snd_soc_pcm_runtime *rtd, int num)
 
 		rtd->pcm = be_pcm;
 		rtd->fe_compr = 1;
-		be_pcm->streams[SNDRV_PCM_STREAM_PLAYBACK].substream->private_data = rtd;
-		//be_pcm->streams[SNDRV_PCM_STREAM_CAPTURE].substream->private_data = rtd;
-		memcpy(compr->ops, &soc_compr_dyn_ops, sizeof(soc_compr_dyn_ops));
+		be_pcm->streams[SNDRV_PCM_STREAM_PLAYBACK].
+					substream->private_data = rtd;
+		/*be_pcm->streams[SNDRV_PCM_STREAM_CAPTURE].
+					substream->private_data = rtd;*/
+		memcpy(compr->ops, &soc_compr_dyn_ops,
+						sizeof(soc_compr_dyn_ops));
 	} else
 		memcpy(compr->ops, &soc_compr_ops, sizeof(soc_compr_ops));
 
@@ -755,6 +751,14 @@ int soc_new_compress(struct snd_soc_pcm_runtime *rtd, int num)
 
 	rtd->compr = compr;
 	compr->private_data = rtd;
+
+	if (platform->driver->pcm_new) {
+		ret = platform->driver->pcm_new(rtd);
+		if (ret < 0) {
+			pr_err("asoc: compress pcm constructor failed\n");
+			goto compr_err;
+		}
+	}
 
 	printk(KERN_INFO "compress asoc: %s <-> %s mapping ok\n", codec_dai->name,
 		cpu_dai->name);

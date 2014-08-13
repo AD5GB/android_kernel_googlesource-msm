@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2013, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2014, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -28,6 +28,7 @@
 #define TEST_PATTERN_FF		0xFFFFFFFF
 #define TEST_NO_PATTERN		0xDEADBEEF
 #define BIO_U32_SIZE 1024
+#define TEST_BIO_SIZE		PAGE_SIZE	/* use one page bios */
 
 struct test_data;
 
@@ -39,6 +40,7 @@ typedef char* (get_test_case_str_fn) (struct test_data *);
 typedef void (blk_dev_test_init_fn) (void);
 typedef void (blk_dev_test_exit_fn) (void);
 typedef struct gendisk* (get_rq_disk_fn) (void);
+typedef bool (check_test_completion_fn) (void);
 
 /**
  * enum test_state - defines the state of the test
@@ -66,7 +68,6 @@ enum req_unique_type {
 	REQ_UNIQUE_NONE,
 	REQ_UNIQUE_DISCARD,
 	REQ_UNIQUE_FLUSH,
-	REQ_UNIQUE_SANITIZE,
 };
 
 /**
@@ -130,7 +131,7 @@ struct test_request {
  * @check_test_result_fn: Test specific test result checking
  *			callback
  * @get_test_case_str_fn: Test specific function to get the test name
- * @test_duration:	A jiffies value saved for timing
+ * @test_duration:	A ktime value saved for timing
  *			calculations
  * @data:		Test specific private data
  * @test_byte_count:	Total number of bytes dispatched in
@@ -144,8 +145,9 @@ struct test_info {
 	check_test_result_fn *check_test_result_fn;
 	post_test_fn *post_test_fn;
 	get_test_case_str_fn *get_test_case_str_fn;
-	unsigned long test_duration;
+	ktime_t test_duration;
 	get_rq_disk_fn *get_rq_disk_fn;
+	check_test_completion_fn *check_test_completion_fn;
 	void *data;
 	unsigned long test_byte_count;
 };
@@ -263,4 +265,9 @@ extern struct test_data *test_get_test_data(void);
 void test_iosched_add_urgent_req(struct test_request *test_rq);
 
 int test_is_req_urgent(struct request *rq);
+
+void check_test_completion(void);
+
+int compare_buffer_to_pattern(struct test_request *test_rq);
+
 #endif /* _LINUX_TEST_IOSCHED_H */

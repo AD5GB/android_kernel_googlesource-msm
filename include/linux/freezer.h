@@ -14,6 +14,11 @@ extern bool pm_freezing;		/* PM freezing in effect */
 extern bool pm_nosig_freezing;		/* PM nosig freezing in effect */
 
 /*
+ * Timeout for stopping processes
+ */
+extern unsigned int freeze_timeout_msecs;
+
+/*
  * Check if a process has been frozen
  */
 static inline bool frozen(struct task_struct *p)
@@ -43,23 +48,15 @@ extern void thaw_processes(void);
 extern void thaw_kernel_threads(void);
 
 /*
- * HACK: prevent sleeping while atomic warnings due to ARM signal handling
- * disabling irqs
- */
-static inline bool try_to_freeze_nowarn(void)
-{
-	if (likely(!freezing(current)))
-		return false;
-	return __refrigerator(false);
-}
-
-/*
  * DO NOT ADD ANY NEW CALLERS OF THIS FUNCTION
  * If try_to_freeze causes a lockdep warning it means the caller may deadlock
  */
 static inline bool try_to_freeze_unsafe(void)
 {
-	might_sleep();
+/* This causes problems for ARM targets and is a known
+ * problem upstream.
+ *	might_sleep();
+ */
 	if (likely(!freezing(current)))
 		return false;
 	return __refrigerator(false);
@@ -165,10 +162,9 @@ static inline bool freezer_should_skip(struct task_struct *p)
 }
 
 /*
- * These functions are intended to be used whenever you want allow a task that's
- * sleeping in TASK_UNINTERRUPTIBLE or TASK_KILLABLE state to be frozen. Note
- * that neither return any clear indication of whether a freeze event happened
- * while in this function.
+ * These functions are intended to be used whenever you want allow a sleeping
+ * task to be frozen. Note that neither return any clear indication of
+ * whether a freeze event happened while in this function.
  */
 
 /* Like schedule(), but should not block the freezer. */
@@ -312,6 +308,7 @@ static inline int freeze_kernel_threads(void) { return -ENOSYS; }
 static inline void thaw_processes(void) {}
 static inline void thaw_kernel_threads(void) {}
 
+static inline bool try_to_freeze_nowarn(void) { return false; }
 static inline bool try_to_freeze(void) { return false; }
 
 static inline void freezer_do_not_count(void) {}

@@ -1,4 +1,4 @@
-/* Copyright (c) 2013, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2013-2014, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -14,7 +14,7 @@
 #define _MSM_ISP_BUF_H_
 
 #include <media/msmb_isp.h>
-#include <mach/iommu_domains.h>
+#include <linux/msm_iommu_domains.h>
 #include "msm_sd.h"
 
 /* Buffer type could be userspace / HAL.
@@ -52,8 +52,13 @@ enum msm_isp_buffer_flush_t {
 
 struct msm_isp_buffer_mapped_info {
 	unsigned long len;
-	unsigned long paddr;
+	dma_addr_t paddr;
 	struct ion_handle *handle;
+};
+
+struct buffer_cmd {
+	struct list_head list;
+	struct msm_isp_buffer_mapped_info *mapped_info;
 };
 
 struct msm_isp_buffer {
@@ -123,7 +128,7 @@ struct msm_isp_buf_ops {
 
 	int (*buf_done) (struct msm_isp_buf_mgr *buf_mgr,
 		uint32_t bufq_handle, uint32_t buf_index,
-		struct timeval *tv, uint32_t frame_id);
+		struct timeval *tv, uint32_t frame_id, uint32_t output_format);
 	int (*buf_divert) (struct msm_isp_buf_mgr *buf_mgr,
 		uint32_t bufq_handle, uint32_t buf_index,
 		struct timeval *tv, uint32_t frame_id);
@@ -153,6 +158,7 @@ struct msm_isp_buf_mgr {
 
 	int num_iommu_ctx;
 	struct device *iommu_ctx[2];
+	struct list_head buffer_q;
 };
 
 int msm_isp_create_isp_buf_mgr(struct msm_isp_buf_mgr *buf_mgr,

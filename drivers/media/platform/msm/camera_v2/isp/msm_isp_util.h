@@ -1,4 +1,4 @@
-/* Copyright (c) 2013, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2013-2014, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -13,6 +13,7 @@
 #define __MSM_ISP_UTIL_H__
 
 #include "msm_isp.h"
+#include <soc/qcom/camera2.h>
 
 /* #define CONFIG_MSM_ISP_DBG 1 */
 
@@ -63,13 +64,17 @@ int msm_isp_send_event(struct vfe_device *vfe_dev,
 int msm_isp_cal_word_per_line(uint32_t output_format,
 	uint32_t pixel_per_line);
 int msm_isp_get_bit_per_pixel(uint32_t output_format);
+enum msm_isp_pack_fmt msm_isp_get_pack_format(uint32_t output_format);
 irqreturn_t msm_isp_process_irq(int irq_num, void *data);
-void msm_isp_set_src_state(struct vfe_device *vfe_dev, void *arg);
-int msm_isp_config_done(struct vfe_device *vfe_dev, void *arg);
+int msm_isp_set_src_state(struct vfe_device *vfe_dev, void *arg);
 void msm_isp_do_tasklet(unsigned long data);
 void msm_isp_update_error_frame_count(struct vfe_device *vfe_dev);
 void msm_isp_process_error_info(struct vfe_device *vfe_dev);
 int msm_isp_open_node(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh);
 int msm_isp_close_node(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh);
 long msm_isp_ioctl(struct v4l2_subdev *sd, unsigned int cmd, void *arg);
+int msm_isp_proc_cmd_list(struct vfe_device *vfe_dev, void *arg);
+int msm_isp_get_clk_info(struct vfe_device *vfe_dev,
+	struct platform_device *pdev, struct msm_cam_clk_info *vfe_clk_info);
+
 #endif /* __MSM_ISP_UTIL_H__ */

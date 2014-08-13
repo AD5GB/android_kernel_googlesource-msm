@@ -1,4 +1,4 @@
-/* Copyright (c) 2010-2013, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2010-2014, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -27,10 +27,10 @@
 #include <linux/of_address.h>
 #include <linux/of_device.h>
 
-#include <mach/iommu_perfmon.h>
-#include <mach/iommu_hw-v0.h>
-#include <mach/iommu.h>
-#include <mach/msm_bus.h>
+#include "msm_iommu_perfmon.h"
+#include "msm_iommu_hw-v0.h"
+#include <linux/qcom_iommu.h>
+#include <linux/msm-bus.h>
 
 static struct of_device_id msm_iommu_v0_ctx_match_table[];
 static struct iommu_access_ops *msm_iommu_access_ops;
@@ -215,6 +215,12 @@ static int msm_iommu_parse_dt(struct platform_device *pdev,
 
 	drvdata->sec_id = -1;
 	drvdata->ttbr_split = 0;
+
+	drvdata->needs_rem_spinlock = of_property_read_bool(pdev->dev.of_node,
+					"qcom,msm-enable-remote-spinlock");
+
+	if (drvdata->needs_rem_spinlock)
+		pr_info("%s enabled remote spinlock\n", drvdata->name);
 
 	ret = of_platform_populate(pdev->dev.of_node,
 				   msm_iommu_v0_ctx_match_table,
@@ -652,7 +658,7 @@ fail:
 	return ret;
 }
 
-static int __devexit msm_iommu_ctx_remove(struct platform_device *pdev)
+static int msm_iommu_ctx_remove(struct platform_device *pdev)
 {
 	platform_set_drvdata(pdev, NULL);
 	return 0;
@@ -670,7 +676,7 @@ static struct platform_driver msm_iommu_driver = {
 		.of_match_table = msm_iommu_match_table,
 	},
 	.probe		= msm_iommu_probe,
-	.remove		= __devexit_p(msm_iommu_remove),
+	.remove		= msm_iommu_remove,
 };
 
 static struct of_device_id msm_iommu_v0_ctx_match_table[] = {
@@ -684,7 +690,7 @@ static struct platform_driver msm_iommu_ctx_driver = {
 		.of_match_table = msm_iommu_v0_ctx_match_table,
 	},
 	.probe		= msm_iommu_ctx_probe,
-	.remove		= __devexit_p(msm_iommu_ctx_remove),
+	.remove		= msm_iommu_ctx_remove,
 };
 
 static int __init msm_iommu_driver_init(void)

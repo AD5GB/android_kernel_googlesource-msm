@@ -127,6 +127,8 @@ EXPORT_SYMBOL_GPL(wakeup_source_destroy);
  */
 void wakeup_source_add(struct wakeup_source *ws)
 {
+	unsigned long flags;
+
 	if (WARN_ON(!ws))
 		return;
 
@@ -135,9 +137,9 @@ void wakeup_source_add(struct wakeup_source *ws)
 	ws->active = false;
 	ws->last_time = ktime_get();
 
-	spin_lock_irq(&events_lock);
+	spin_lock_irqsave(&events_lock, flags);
 	list_add_rcu(&ws->entry, &wakeup_sources);
-	spin_unlock_irq(&events_lock);
+	spin_unlock_irqrestore(&events_lock, flags);
 }
 EXPORT_SYMBOL_GPL(wakeup_source_add);
 
@@ -147,12 +149,14 @@ EXPORT_SYMBOL_GPL(wakeup_source_add);
  */
 void wakeup_source_remove(struct wakeup_source *ws)
 {
+	unsigned long flags;
+
 	if (WARN_ON(!ws))
 		return;
 
-	spin_lock_irq(&events_lock);
+	spin_lock_irqsave(&events_lock, flags);
 	list_del_rcu(&ws->entry);
-	spin_unlock_irq(&events_lock);
+	spin_unlock_irqrestore(&events_lock, flags);
 	synchronize_rcu();
 }
 EXPORT_SYMBOL_GPL(wakeup_source_remove);
@@ -377,6 +381,12 @@ EXPORT_SYMBOL_GPL(device_set_wakeup_enable);
 static void wakeup_source_activate(struct wakeup_source *ws)
 {
 	unsigned int cec;
+
+	/*
+	 * active wakeup source should bring the system
+	 * out of PM_SUSPEND_FREEZE state
+	 */
+	freeze_wake();
 
 	ws->active = true;
 	ws->active_count++;
@@ -752,15 +762,16 @@ bool pm_get_wakeup_count(unsigned int *count, bool block)
 bool pm_save_wakeup_count(unsigned int count)
 {
 	unsigned int cnt, inpr;
+	unsigned long flags;
 
 	events_check_enabled = false;
-	spin_lock_irq(&events_lock);
+	spin_lock_irqsave(&events_lock, flags);
 	split_counters(&cnt, &inpr);
 	if (cnt == count && inpr == 0) {
 		saved_count = count;
 		events_check_enabled = true;
 	}
-	spin_unlock_irq(&events_lock);
+	spin_unlock_irqrestore(&events_lock, flags);
 	return events_check_enabled;
 }
 
@@ -831,18 +842,40 @@ static int print_wakeup_source_stats(struct seq_file *m,
 		active_time = ktime_set(0, 0);
 	}
 
-	ret = seq_printf(m, "%-12s\t%lu\t\t%lu\t\t%lu\t\t%lu\t\t"
-			"%lld\t\t%lld\t\t%lld\t\t%lld\t\t%lld\n",
-			ws->name, active_count, ws->event_count,
-			ws->wakeup_count, ws->expire_count,
-			ktime_to_ms(active_time), ktime_to_ms(total_time),
-			ktime_to_ms(max_time), ktime_to_ms(ws->last_time),
-			ktime_to_ms(prevent_sleep_time));
-
+	if (m == NULL) {
+		ret = pr_info("<%s>\tCount(%lu) Time(%lld/%lld) Prevent(%lld)\n",
+				ws->name, active_count,
+				ktime_to_ms(active_time), ktime_to_ms(total_time),
+				ktime_to_ms(prevent_sleep_time));
+	} else {
+		ret = seq_printf(m, "%-12s\t%lu\t\t%lu\t\t%lu\t\t%lu\t\t"
+				"%lld\t\t%lld\t\t%lld\t\t%lld\t\t%lld\n",
+				ws->name, active_count, ws->event_count,
+				ws->wakeup_count, ws->expire_count,
+				ktime_to_ms(active_time), ktime_to_ms(total_time),
+				ktime_to_ms(max_time), ktime_to_ms(ws->last_time),
+				ktime_to_ms(prevent_sleep_time));
+	}
 	spin_unlock_irqrestore(&ws->lock, flags);
 
 	return ret;
 }
+
+int wakeup_sources_stats_active(void)
+{
+	struct wakeup_source *ws;
+
+	pr_info("Active wake lock:\n");
+
+	rcu_read_lock();
+	list_for_each_entry_rcu(ws, &wakeup_sources, entry)
+		if (ws->active)
+			print_wakeup_source_stats(NULL, ws);
+	rcu_read_unlock();
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(wakeup_sources_stats_active);
 
 /**
  * wakeup_sources_stats_show - Print wakeup sources statistics information.

@@ -35,13 +35,12 @@
 #include <linux/i2c/apds993x.h>
 #include <linux/regulator/consumer.h>
 #include <linux/of_gpio.h>
+#include <linux/sensors.h>
 
 #define APDS993X_HAL_USE_SYS_ENABLE
 
 #define APDS993X_DRV_NAME	"apds993x"
 #define DRIVER_VERSION		"1.0.0"
-
-#define ABS_LIGHT	0x29	/* added to support LIGHT - light sensor */
 
 #define ALS_POLLING_ENABLED
 
@@ -206,6 +205,10 @@ struct apds993x_data {
 	struct delayed_work	als_dwork;	/* for ALS polling */
 	struct input_dev *input_dev_als;
 	struct input_dev *input_dev_ps;
+	struct regulator *vdd;
+	struct regulator *vio;
+	struct sensors_classdev als_cdev;
+	struct sensors_classdev ps_cdev;
 
 	struct apds993x_platform_data *platform_data;
 	int irq;
@@ -249,6 +252,42 @@ struct apds993x_data {
 	unsigned int als_atime_index;	/* storage for als integratiion time */
 	unsigned int als_again_index;	/* storage for als GAIN */
 	unsigned int als_reduce;	/* flag indicate ALS 6x reduction */
+};
+
+static struct sensors_classdev sensors_light_cdev = {
+	.name = "apds9930-light",
+	.vendor = "avago",
+	.version = 1,
+	.handle = SENSORS_LIGHT_HANDLE,
+	.type = SENSOR_TYPE_LIGHT,
+	.max_range = "30000",
+	.resolution = "0.0125",
+	.sensor_power = "0.20",
+	.min_delay = 1000, /* in microseconds */
+	.fifo_reserved_event_count = 0,
+	.fifo_max_event_count = 0,
+	.enabled = 0,
+	.delay_msec = 100,
+	.sensors_enable = NULL,
+	.sensors_poll_delay = NULL,
+};
+
+static struct sensors_classdev sensors_proximity_cdev = {
+	.name = "apds9930-proximity",
+	.vendor = "avago",
+	.version = 1,
+	.handle = SENSORS_PROXIMITY_HANDLE,
+	.type = SENSOR_TYPE_PROXIMITY,
+	.max_range = "5",
+	.resolution = "5.0",
+	.sensor_power = "3",
+	.min_delay = 1000, /* in microseconds */
+	.fifo_reserved_event_count = 0,
+	.fifo_max_event_count = 0,
+	.enabled = 0,
+	.delay_msec = 100,
+	.sensors_enable = NULL,
+	.sensors_poll_delay = NULL,
 };
 
 /*
@@ -766,7 +805,7 @@ static void apds993x_change_als_threshold(struct i2c_client *client)
 
 	if (lux_is_valid) {
 		/* report the lux level */
-		input_report_abs(data->input_dev_als, ABS_LIGHT, luxValue);
+		input_report_abs(data->input_dev_als, ABS_MISC, luxValue);
 		input_sync(data->input_dev_als);
 	}
 
@@ -834,7 +873,7 @@ static void apds993x_reschedule_work(struct apds993x_data *data,
 	 * If work is already scheduled then subsequent schedules will not
 	 * change the scheduled time that's why we have to cancel it first.
 	 */
-	__cancel_delayed_work(&data->dwork);
+	cancel_delayed_work(&data->dwork);
 	queue_delayed_work(apds993x_workqueue, &data->dwork, delay);
 }
 
@@ -914,7 +953,7 @@ static void apds993x_als_polling_work_handler(struct work_struct *work)
 
 	if (lux_is_valid) {
 		/* report the lux level */
-		input_report_abs(data->input_dev_als, ABS_LIGHT, luxValue);
+		input_report_abs(data->input_dev_als, ABS_MISC, luxValue);
 		input_sync(data->input_dev_als);
 	}
 
@@ -1093,7 +1132,7 @@ static int apds993x_enable_als_sensor(struct i2c_client *client, int val)
 			 * schedules will not change the scheduled time
 			 * that's why we have to cancel it first.
 			 */
-			__cancel_delayed_work(&data->als_dwork);
+			cancel_delayed_work(&data->als_dwork);
 			flush_delayed_work(&data->als_dwork);
 			queue_delayed_work(apds993x_workqueue, &data->als_dwork, msecs_to_jiffies(data->als_poll_delay));
 #endif
@@ -1125,7 +1164,7 @@ static int apds993x_enable_als_sensor(struct i2c_client *client, int val)
 		 * will not change the scheduled time that's why we have
 		 * to cancel it first.
 		 */
-		__cancel_delayed_work(&data->als_dwork);
+		cancel_delayed_work(&data->als_dwork);
 		flush_delayed_work(&data->als_dwork);
 #endif
 	}
@@ -1169,7 +1208,7 @@ static int apds993x_set_als_poll_delay(struct i2c_client *client,
 	 * If work is already scheduled then subsequent schedules will not
 	 * change the scheduled time that's why we have to cancel it first.
 	 */
-	__cancel_delayed_work(&data->als_dwork);
+	cancel_delayed_work(&data->als_dwork);
 	flush_delayed_work(&data->als_dwork);
 	queue_delayed_work(apds993x_workqueue,
 			&data->als_dwork,
@@ -1235,7 +1274,7 @@ static int apds993x_enable_ps_sensor(struct i2c_client *client, int val)
 			 * schedules will not change the scheduled time
 			 * that's why we have to cancel it first.
 			 */
-			__cancel_delayed_work(&data->als_dwork);
+			cancel_delayed_work(&data->als_dwork);
 			flush_delayed_work(&data->als_dwork);
 			/* 100ms */
 			queue_delayed_work(apds993x_workqueue,
@@ -1261,7 +1300,7 @@ static int apds993x_enable_ps_sensor(struct i2c_client *client, int val)
 			 * schedules will not change the scheduled time
 			 * that's why we have to cancel it first.
 			 */
-			__cancel_delayed_work(&data->als_dwork);
+			cancel_delayed_work(&data->als_dwork);
 			flush_delayed_work(&data->als_dwork);
 #endif
 		}
@@ -1668,6 +1707,34 @@ static ssize_t apds993x_store_enable_als_sensor(struct device *dev,
 	return count;
 }
 
+static int apds993x_als_set_enable(struct sensors_classdev *sensors_cdev,
+		unsigned int enable)
+{
+	struct apds993x_data *data = container_of(sensors_cdev,
+			struct apds993x_data, als_cdev);
+
+	if ((enable != 0) && (enable != 1)) {
+		pr_err("%s: invalid value(%d)\n", __func__, enable);
+		return -EINVAL;
+	}
+
+	return apds993x_enable_als_sensor(data->client, enable);
+}
+
+static int apds993x_ps_set_enable(struct sensors_classdev *sensors_cdev,
+		unsigned int enable)
+{
+	struct apds993x_data *data = container_of(sensors_cdev,
+			struct apds993x_data, ps_cdev);
+
+	if ((enable != 0) && (enable != 1)) {
+		pr_err("%s: invalid value(%d)\n", __func__, enable);
+		return -EINVAL;
+	}
+
+	return apds993x_enable_ps_sensor(data->client, enable);
+}
+
 static DEVICE_ATTR(enable_als_sensor, S_IWUSR | S_IWGRP | S_IRUGO,
 		apds993x_show_enable_als_sensor,
 		apds993x_store_enable_als_sensor);
@@ -1863,208 +1930,127 @@ static int apds993x_resume(struct device *dev)
 	return 0;
 }
 
-static int reg_set_optimum_mode_check(struct regulator *reg, int load_uA)
-{
-	return (regulator_count_voltages(reg) > 0) ?
-			regulator_set_optimum_mode(reg, load_uA) : 0;
-}
-
 static int sensor_regulator_configure(struct apds993x_data *data, bool on)
 {
-	struct i2c_client *client = data->client;
-	struct apds993x_platform_data *pdata = data->platform_data;
 	int rc;
 
-	if (on == false)
-		goto hw_shutdown;
+	if (!on) {
+		if (regulator_count_voltages(data->vdd) > 0)
+			regulator_set_voltage(data->vdd, 0,
+				APDS993X_VDD_MAX_UV);
 
-	pdata->vcc_ana = regulator_get(&client->dev, "avago,vdd_ana");
-	if (IS_ERR(pdata->vcc_ana)) {
-		rc = PTR_ERR(pdata->vcc_ana);
-		dev_err(&client->dev,
-			"Regulator get failed vcc_ana rc=%d\n", rc);
-		return rc;
-	}
+		regulator_put(data->vdd);
+		regulator_disable(data->vdd);
 
-	if (regulator_count_voltages(pdata->vcc_ana) > 0) {
-		rc = regulator_set_voltage(pdata->vcc_ana, AVDD_VTG_MIN_UV,
-			AVDD_VTG_MAX_UV);
+		if (regulator_count_voltages(data->vio) > 0)
+			regulator_set_voltage(data->vio, 0,
+				APDS993X_VIO_MAX_UV);
+
+		regulator_put(data->vio);
+		regulator_disable(data->vio);
+
+	} else {
+		data->vdd = regulator_get(&data->client->dev, "vdd");
+		if (IS_ERR(data->vdd)) {
+			rc = PTR_ERR(data->vdd);
+			dev_err(&data->client->dev,
+				"Regulator get failed vdd rc=%d\n", rc);
+			return rc;
+		}
+
+		if (regulator_count_voltages(data->vdd) > 0) {
+			rc = regulator_set_voltage(data->vdd,
+				APDS993X_VDD_MIN_UV, APDS993X_VDD_MAX_UV);
+			if (rc) {
+				dev_err(&data->client->dev,
+					"Regulator set failed vdd rc=%d\n",
+					rc);
+				goto reg_vdd_put;
+			}
+		}
+
+		rc = regulator_enable(data->vdd);
 		if (rc) {
-			dev_err(&client->dev,
-				"regulator set_vtg failed rc=%d\n", rc);
-			goto error_set_vtg_vcc_ana;
-		}
-	}
-
-	if (pdata->digital_pwr_regulator) {
-		pdata->vcc_dig = regulator_get(&client->dev, "avago,vddio_dig");
-		if (IS_ERR(pdata->vcc_dig)) {
-			rc = PTR_ERR(pdata->vcc_dig);
-			dev_err(&client->dev,
-				"Regulator get dig failed rc=%d\n", rc);
-			goto error_get_vtg_vcc_dig;
+			dev_err(&data->client->dev,
+				"Regulator enable vdd failed. rc=%d\n", rc);
+			goto reg_vdd_put;
 		}
 
-		if (regulator_count_voltages(pdata->vcc_dig) > 0) {
-			rc = regulator_set_voltage(pdata->vcc_dig,
-					VDDIO_VTG_DIG_MIN_UV, VDDIO_VTG_DIG_MAX_UV);
+		data->vio = regulator_get(&data->client->dev, "vio");
+		if (IS_ERR(data->vio)) {
+			rc = PTR_ERR(data->vio);
+			dev_err(&data->client->dev,
+				"Regulator get failed vio rc=%d\n", rc);
+			goto reg_vdd_set;
+		}
+
+		if (regulator_count_voltages(data->vio) > 0) {
+			rc = regulator_set_voltage(data->vio,
+				APDS993X_VIO_MIN_UV, APDS993X_VIO_MAX_UV);
 			if (rc) {
-				dev_err(&client->dev,
-					"regulator set_vtg failed rc=%d\n", rc);
-				goto error_set_vtg_vcc_dig;
+				dev_err(&data->client->dev,
+				"Regulator set failed vio rc=%d\n", rc);
+				goto reg_vio_put;
 			}
 		}
-	}
-
-	if (pdata->i2c_pull_up) {
-		pdata->vcc_i2c = regulator_get(&client->dev, "avago,vddio_i2c");
-		if (IS_ERR(pdata->vcc_i2c)) {
-			rc = PTR_ERR(pdata->vcc_i2c);
-			dev_err(&client->dev,
-				"Regulator get failed rc=%d\n", rc);
-			goto error_get_vtg_i2c;
-		}
-		if (regulator_count_voltages(pdata->vcc_i2c) > 0) {
-			rc = regulator_set_voltage(pdata->vcc_i2c,
-						   VDDIO_I2C_VTG_MIN_UV,
-						   VDDIO_I2C_VTG_MAX_UV);
-			if (rc) {
-				dev_err(&client->dev,
-					"regulator set_vtg failed rc=%d\n", rc);
-				goto error_set_vtg_i2c;
-			}
+		rc = regulator_enable(data->vio);
+		if (rc) {
+			dev_err(&data->client->dev,
+				"Regulator enable vio failed. rc=%d\n", rc);
+			goto reg_vio_put;
 		}
 	}
 
 	return 0;
+reg_vio_put:
+	regulator_put(data->vio);
 
-error_set_vtg_i2c:
-	regulator_put(pdata->vcc_i2c);
-error_get_vtg_i2c:
-	if (pdata->digital_pwr_regulator)
-		if (regulator_count_voltages(pdata->vcc_dig) > 0)
-			regulator_set_voltage(pdata->vcc_dig, 0,
-						  VDDIO_VTG_DIG_MAX_UV);
-error_set_vtg_vcc_dig:
-	if (pdata->digital_pwr_regulator)
-		regulator_put(pdata->vcc_dig);
-error_get_vtg_vcc_dig:
-	if (regulator_count_voltages(pdata->vcc_ana) > 0)
-		regulator_set_voltage(pdata->vcc_ana, 0, AVDD_VTG_MAX_UV);
-error_set_vtg_vcc_ana:
-	regulator_put(pdata->vcc_ana);
+reg_vdd_set:
+	if (regulator_count_voltages(data->vdd) > 0)
+		regulator_set_voltage(data->vdd, 0, APDS993X_VDD_MAX_UV);
+reg_vdd_put:
+	regulator_put(data->vdd);
 	return rc;
-
-hw_shutdown:
-	if (regulator_count_voltages(pdata->vcc_ana) > 0)
-		regulator_set_voltage(pdata->vcc_ana, 0, AVDD_VTG_MAX_UV);
-	regulator_put(pdata->vcc_ana);
-	if (pdata->digital_pwr_regulator) {
-		if (regulator_count_voltages(pdata->vcc_dig) > 0)
-			regulator_set_voltage(pdata->vcc_dig, 0,
-						  VDDIO_VTG_DIG_MAX_UV);
-		regulator_put(pdata->vcc_dig);
-	}
-	if (pdata->i2c_pull_up) {
-		if (regulator_count_voltages(pdata->vcc_i2c) > 0)
-			regulator_set_voltage(pdata->vcc_i2c, 0,
-						  VDDIO_I2C_VTG_MAX_UV);
-		regulator_put(pdata->vcc_i2c);
-	}
-	return 0;
 }
 
 
 static int sensor_regulator_power_on(struct apds993x_data *data, bool on)
 {
-	struct i2c_client *client = data->client;
-	struct apds993x_platform_data *pdata = data->platform_data;
-	int rc;
+	int rc = 0;
 
-	if (on == false)
-		goto power_off;
-
-	rc = reg_set_optimum_mode_check(pdata->vcc_ana, AVDD_ACTIVE_LOAD_UA);
-	if (rc < 0) {
-		dev_err(&client->dev,
-			"Regulator vcc_ana set_opt failed rc=%d\n", rc);
-		return rc;
-	}
-
-	rc = regulator_enable(pdata->vcc_ana);
-	if (rc) {
-		dev_err(&client->dev,
-			"Regulator vcc_ana enable failed rc=%d\n", rc);
-		goto error_reg_en_vcc_ana;
-	}
-
-	if (pdata->digital_pwr_regulator) {
-		rc = reg_set_optimum_mode_check(pdata->vcc_dig,
-						VDDIO_ACTIVE_LOAD_DIG_UA);
-		if (rc < 0) {
-			dev_err(&client->dev,
-				"Regulator vcc_dig set_opt failed rc=%d\n",
-				rc);
-			goto error_reg_opt_vcc_dig;
-		}
-
-		rc = regulator_enable(pdata->vcc_dig);
+	if (!on) {
+		rc = regulator_disable(data->vdd);
 		if (rc) {
-			dev_err(&client->dev,
-				"Regulator vcc_dig enable failed rc=%d\n", rc);
-			goto error_reg_en_vcc_dig;
-		}
-	}
-
-	if (pdata->i2c_pull_up) {
-		rc = reg_set_optimum_mode_check(pdata->vcc_i2c,
-				VDDIO_I2C_LOAD_UA);
-		if (rc < 0) {
-			dev_err(&client->dev,
-				"Regulator vcc_i2c set_opt failed rc=%d\n", rc);
-			goto error_reg_opt_i2c;
+			dev_err(&data->client->dev,
+				"Regulator vdd disable failed rc=%d\n", rc);
+			return rc;
 		}
 
-		rc = regulator_enable(pdata->vcc_i2c);
+		rc = regulator_disable(data->vio);
 		if (rc) {
-			dev_err(&client->dev,
-				"Regulator vcc_i2c enable failed rc=%d\n", rc);
-			goto error_reg_en_vcc_i2c;
+			dev_err(&data->client->dev,
+				"Regulator vio disable failed rc=%d\n", rc);
+			rc = regulator_enable(data->vdd);
+		}
+	} else {
+		rc = regulator_enable(data->vdd);
+		if (rc) {
+			dev_err(&data->client->dev,
+				"Regulator vdd enable failed rc=%d\n", rc);
+			return rc;
+		}
+
+		rc = regulator_enable(data->vio);
+		if (rc) {
+			dev_err(&data->client->dev,
+				"Regulator vio enable failed rc=%d\n", rc);
+			rc = regulator_disable(data->vdd);
 		}
 	}
 
 	msleep(130);
 
-	return 0;
-
-error_reg_en_vcc_i2c:
-	if (pdata->i2c_pull_up)
-		reg_set_optimum_mode_check(pdata->vcc_i2c, 0);
-error_reg_opt_i2c:
-	if (pdata->digital_pwr_regulator)
-		regulator_disable(pdata->vcc_dig);
-error_reg_en_vcc_dig:
-	if (pdata->digital_pwr_regulator)
-		reg_set_optimum_mode_check(pdata->vcc_dig, 0);
-error_reg_opt_vcc_dig:
-	regulator_disable(pdata->vcc_ana);
-error_reg_en_vcc_ana:
-	reg_set_optimum_mode_check(pdata->vcc_ana, 0);
 	return rc;
-
-power_off:
-	reg_set_optimum_mode_check(pdata->vcc_ana, 0);
-	regulator_disable(pdata->vcc_ana);
-	if (pdata->digital_pwr_regulator) {
-		reg_set_optimum_mode_check(pdata->vcc_dig, 0);
-		regulator_disable(pdata->vcc_dig);
-	}
-	if (pdata->i2c_pull_up) {
-		reg_set_optimum_mode_check(pdata->vcc_i2c, 0);
-		regulator_disable(pdata->vcc_i2c);
-	}
-	msleep(50);
-	return 0;
 }
 
 static int sensor_platform_hw_power_on(bool on)
@@ -2096,7 +2082,7 @@ static int sensor_platform_hw_init(void)
 	}
 
 	if (gpio_is_valid(data->platform_data->irq_gpio)) {
-		/* configure touchscreen irq gpio */
+		/* configure apds993x irq gpio */
 		error = gpio_request_one(data->platform_data->irq_gpio,
 				GPIOF_DIR_IN,
 				"apds993x_irq_gpio");
@@ -2130,20 +2116,21 @@ static int sensor_parse_dt(struct device *dev,
 {
 	struct device_node *np = dev->of_node;
 	unsigned int tmp;
-	int rc;
-
-	/* regulator info */
-	pdata->i2c_pull_up = of_property_read_bool(np, "avago,i2c-pull-up");
-	pdata->digital_pwr_regulator = NULL;
-
-	/* reset, irq gpio info */
-	pdata->irq_gpio = of_get_named_gpio_flags(np, "avago,irq-gpio",
-			0, &pdata->irq_gpio_flags);
+	int rc = 0;
 
 	/* set functions of platform data */
 	pdata->init = sensor_platform_hw_init;
 	pdata->exit = sensor_platform_hw_exit;
 	pdata->power_on = sensor_platform_hw_power_on;
+
+	/* irq gpio */
+	rc = of_get_named_gpio_flags(dev->of_node,
+			"avago,irq-gpio", 0, NULL);
+	if (rc < 0) {
+		dev_err(dev, "Unable to read irq gpio\n");
+		return rc;
+	}
+	pdata->irq_gpio = rc;
 
 	/* ps tuning data*/
 	rc = of_property_read_u32(np, "avago,ps_threshold", &tmp);
@@ -2345,11 +2332,11 @@ static int apds993x_probe(struct i2c_client *client,
 	set_bit(EV_ABS, data->input_dev_als->evbit);
 	set_bit(EV_ABS, data->input_dev_ps->evbit);
 
-	input_set_abs_params(data->input_dev_als, ABS_LIGHT, 0, 30000, 0, 0);
+	input_set_abs_params(data->input_dev_als, ABS_MISC, 0, 30000, 0, 0);
 	input_set_abs_params(data->input_dev_ps, ABS_DISTANCE, 0, 5, 0, 0);
 
-	data->input_dev_als->name = "Avago light sensor";
-	data->input_dev_ps->name = "Avago proximity sensor";
+	data->input_dev_als->name = "light";
+	data->input_dev_ps->name = "proximity";
 
 	err = input_register_device(data->input_dev_als);
 	if (err) {
@@ -2385,10 +2372,37 @@ static int apds993x_probe(struct i2c_client *client,
 		goto exit_unregister_ps_ioctl;
 	}
 
+	/* Register to sensors class */
+	data->als_cdev = sensors_light_cdev;
+	data->als_cdev.sensors_enable = apds993x_als_set_enable;
+	data->als_cdev.sensors_poll_delay = NULL;
+
+	data->ps_cdev = sensors_proximity_cdev;
+	data->ps_cdev.sensors_enable = apds993x_ps_set_enable;
+	data->ps_cdev.sensors_poll_delay = NULL,
+
+	err = sensors_classdev_register(&client->dev, &data->als_cdev);
+	if (err) {
+		pr_err("%s: Unable to register to sensors class: %d\n",
+				__func__, err);
+		goto exit_unregister_als_ioctl;
+	}
+
+	err = sensors_classdev_register(&client->dev, &data->ps_cdev);
+	if (err) {
+		pr_err("%s: Unable to register to sensors class: %d\n",
+			       __func__, err);
+		goto exit_unregister_als_class;
+	}
+
 	pr_info("%s: Support ver. %s enabled\n", __func__, DRIVER_VERSION);
 
 	return 0;
 
+exit_unregister_als_class:
+	sensors_classdev_unregister(&data->als_cdev);
+exit_unregister_als_ioctl:
+	misc_deregister(&apds993x_als_device);
 exit_unregister_ps_ioctl:
 	misc_deregister(&apds993x_ps_device);
 exit_remove_sysfs_group:

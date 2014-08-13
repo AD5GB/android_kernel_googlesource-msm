@@ -1235,49 +1235,49 @@ static const struct snd_kcontrol_new tabla_snd_controls[] = {
 	SOC_SINGLE_TLV("HPHR Volume", TABLA_A_RX_HPH_R_GAIN, 0, 12, 1,
 		line_gain),
 
-	SOC_SINGLE_S8_TLV("RX1 Digital Volume", TABLA_A_CDC_RX1_VOL_CTL_B2_CTL,
-		-84, 40, digital_gain),
-	SOC_SINGLE_S8_TLV("RX2 Digital Volume", TABLA_A_CDC_RX2_VOL_CTL_B2_CTL,
-		-84, 40, digital_gain),
-	SOC_SINGLE_S8_TLV("RX3 Digital Volume", TABLA_A_CDC_RX3_VOL_CTL_B2_CTL,
-		-84, 40, digital_gain),
-	SOC_SINGLE_S8_TLV("RX4 Digital Volume", TABLA_A_CDC_RX4_VOL_CTL_B2_CTL,
-		-84, 40, digital_gain),
-	SOC_SINGLE_S8_TLV("RX5 Digital Volume", TABLA_A_CDC_RX5_VOL_CTL_B2_CTL,
-		-84, 40, digital_gain),
-	SOC_SINGLE_S8_TLV("RX6 Digital Volume", TABLA_A_CDC_RX6_VOL_CTL_B2_CTL,
-		-84, 40, digital_gain),
-	SOC_SINGLE_S8_TLV("RX7 Digital Volume", TABLA_A_CDC_RX7_VOL_CTL_B2_CTL,
-		-84, 40, digital_gain),
+	SOC_SINGLE_SX_TLV("RX1 Digital Volume", TABLA_A_CDC_RX1_VOL_CTL_B2_CTL,
+		0, -84, 40, digital_gain),
+	SOC_SINGLE_SX_TLV("RX2 Digital Volume", TABLA_A_CDC_RX2_VOL_CTL_B2_CTL,
+		0, -84, 40, digital_gain),
+	SOC_SINGLE_SX_TLV("RX3 Digital Volume", TABLA_A_CDC_RX3_VOL_CTL_B2_CTL,
+		0, -84, 40, digital_gain),
+	SOC_SINGLE_SX_TLV("RX4 Digital Volume", TABLA_A_CDC_RX4_VOL_CTL_B2_CTL,
+		0, -84, 40, digital_gain),
+	SOC_SINGLE_SX_TLV("RX5 Digital Volume", TABLA_A_CDC_RX5_VOL_CTL_B2_CTL,
+		0, -84, 40, digital_gain),
+	SOC_SINGLE_SX_TLV("RX6 Digital Volume", TABLA_A_CDC_RX6_VOL_CTL_B2_CTL,
+		0, -84, 40, digital_gain),
+	SOC_SINGLE_SX_TLV("RX7 Digital Volume", TABLA_A_CDC_RX7_VOL_CTL_B2_CTL,
+		0, -84, 40, digital_gain),
 
-	SOC_SINGLE_S8_TLV("DEC1 Volume", TABLA_A_CDC_TX1_VOL_CTL_GAIN, -84, 40,
-		digital_gain),
-	SOC_SINGLE_S8_TLV("DEC2 Volume", TABLA_A_CDC_TX2_VOL_CTL_GAIN, -84, 40,
-		digital_gain),
-	SOC_SINGLE_S8_TLV("DEC3 Volume", TABLA_A_CDC_TX3_VOL_CTL_GAIN, -84, 40,
-		digital_gain),
-	SOC_SINGLE_S8_TLV("DEC4 Volume", TABLA_A_CDC_TX4_VOL_CTL_GAIN, -84, 40,
-		digital_gain),
-	SOC_SINGLE_S8_TLV("DEC5 Volume", TABLA_A_CDC_TX5_VOL_CTL_GAIN, -84, 40,
-		digital_gain),
-	SOC_SINGLE_S8_TLV("DEC6 Volume", TABLA_A_CDC_TX6_VOL_CTL_GAIN, -84, 40,
-		digital_gain),
-	SOC_SINGLE_S8_TLV("DEC7 Volume", TABLA_A_CDC_TX7_VOL_CTL_GAIN, -84, 40,
-		digital_gain),
-	SOC_SINGLE_S8_TLV("DEC8 Volume", TABLA_A_CDC_TX8_VOL_CTL_GAIN, -84, 40,
-		digital_gain),
-	SOC_SINGLE_S8_TLV("DEC9 Volume", TABLA_A_CDC_TX9_VOL_CTL_GAIN, -84, 40,
-		digital_gain),
-	SOC_SINGLE_S8_TLV("DEC10 Volume", TABLA_A_CDC_TX10_VOL_CTL_GAIN, -84,
+	SOC_SINGLE_SX_TLV("DEC1 Volume", TABLA_A_CDC_TX1_VOL_CTL_GAIN, 0, -84,
 		40, digital_gain),
-	SOC_SINGLE_S8_TLV("IIR1 INP1 Volume", TABLA_A_CDC_IIR1_GAIN_B1_CTL, -84,
+	SOC_SINGLE_SX_TLV("DEC2 Volume", TABLA_A_CDC_TX2_VOL_CTL_GAIN, 0, -84,
 		40, digital_gain),
-	SOC_SINGLE_S8_TLV("IIR1 INP2 Volume", TABLA_A_CDC_IIR1_GAIN_B2_CTL, -84,
+	SOC_SINGLE_SX_TLV("DEC3 Volume", TABLA_A_CDC_TX3_VOL_CTL_GAIN, 0, -84,
 		40, digital_gain),
-	SOC_SINGLE_S8_TLV("IIR1 INP3 Volume", TABLA_A_CDC_IIR1_GAIN_B3_CTL, -84,
+	SOC_SINGLE_SX_TLV("DEC4 Volume", TABLA_A_CDC_TX4_VOL_CTL_GAIN, 0, -84,
 		40, digital_gain),
-	SOC_SINGLE_S8_TLV("IIR1 INP4 Volume", TABLA_A_CDC_IIR1_GAIN_B4_CTL, -84,
+	SOC_SINGLE_SX_TLV("DEC5 Volume", TABLA_A_CDC_TX5_VOL_CTL_GAIN, 0, -84,
 		40, digital_gain),
+	SOC_SINGLE_SX_TLV("DEC6 Volume", TABLA_A_CDC_TX6_VOL_CTL_GAIN, 0, -84,
+		40, digital_gain),
+	SOC_SINGLE_SX_TLV("DEC7 Volume", TABLA_A_CDC_TX7_VOL_CTL_GAIN, 0, -84,
+		40, digital_gain),
+	SOC_SINGLE_SX_TLV("DEC8 Volume", TABLA_A_CDC_TX8_VOL_CTL_GAIN, 0, -84,
+		40, digital_gain),
+	SOC_SINGLE_SX_TLV("DEC9 Volume", TABLA_A_CDC_TX9_VOL_CTL_GAIN, 0, -84,
+		40, digital_gain),
+	SOC_SINGLE_SX_TLV("DEC10 Volume", TABLA_A_CDC_TX10_VOL_CTL_GAIN, 0,
+		-84, 40, digital_gain),
+	SOC_SINGLE_SX_TLV("IIR1 INP1 Volume", TABLA_A_CDC_IIR1_GAIN_B1_CTL, 0,
+		-84, 40, digital_gain),
+	SOC_SINGLE_SX_TLV("IIR1 INP2 Volume", TABLA_A_CDC_IIR1_GAIN_B2_CTL, 0,
+		-84, 40, digital_gain),
+	SOC_SINGLE_SX_TLV("IIR1 INP3 Volume", TABLA_A_CDC_IIR1_GAIN_B3_CTL, 0,
+		-84, 40, digital_gain),
+	SOC_SINGLE_SX_TLV("IIR1 INP4 Volume", TABLA_A_CDC_IIR1_GAIN_B4_CTL, 0,
+		-84, 40, digital_gain),
 	SOC_SINGLE_TLV("ADC1 Volume", TABLA_A_TX_1_2_EN, 5, 3, 0, analog_gain),
 	SOC_SINGLE_TLV("ADC2 Volume", TABLA_A_TX_1_2_EN, 1, 3, 0, analog_gain),
 	SOC_SINGLE_TLV("ADC3 Volume", TABLA_A_TX_3_4_EN, 5, 3, 0, analog_gain),
@@ -2155,7 +2155,7 @@ static int slim_rx_mux_put(struct snd_kcontrol *kcontrol,
 		goto err;
 	}
 rtn:
-	snd_soc_dapm_mux_update_power(widget, kcontrol, 1, widget->value, e);
+	snd_soc_dapm_mux_update_power(widget, kcontrol, widget->value, e);
 	mutex_unlock(&codec->mutex);
 	return 0;
 err:
@@ -2183,7 +2183,53 @@ static const struct snd_kcontrol_new slim_rx_mux[TABLA_RX_MAX] = {
 			  slim_rx_mux_get, slim_rx_mux_put),
 };
 
-static const struct snd_kcontrol_new aif_cap_mixer[] = {
+static const struct snd_kcontrol_new aif1_cap_mixer[] = {
+	SOC_SINGLE_EXT("SLIM TX1", SND_SOC_NOPM, TABLA_TX1, 1, 0,
+			slim_tx_mixer_get, slim_tx_mixer_put),
+	SOC_SINGLE_EXT("SLIM TX2", SND_SOC_NOPM, TABLA_TX2, 1, 0,
+			slim_tx_mixer_get, slim_tx_mixer_put),
+	SOC_SINGLE_EXT("SLIM TX3", SND_SOC_NOPM, TABLA_TX3, 1, 0,
+			slim_tx_mixer_get, slim_tx_mixer_put),
+	SOC_SINGLE_EXT("SLIM TX4", SND_SOC_NOPM, TABLA_TX4, 1, 0,
+			slim_tx_mixer_get, slim_tx_mixer_put),
+	SOC_SINGLE_EXT("SLIM TX5", SND_SOC_NOPM, TABLA_TX5, 1, 0,
+			slim_tx_mixer_get, slim_tx_mixer_put),
+	SOC_SINGLE_EXT("SLIM TX6", SND_SOC_NOPM, TABLA_TX6, 1, 0,
+			slim_tx_mixer_get, slim_tx_mixer_put),
+	SOC_SINGLE_EXT("SLIM TX7", SND_SOC_NOPM, TABLA_TX7, 1, 0,
+			slim_tx_mixer_get, slim_tx_mixer_put),
+	SOC_SINGLE_EXT("SLIM TX8", SND_SOC_NOPM, TABLA_TX8, 1, 0,
+			slim_tx_mixer_get, slim_tx_mixer_put),
+	SOC_SINGLE_EXT("SLIM TX9", SND_SOC_NOPM, TABLA_TX9, 1, 0,
+			slim_tx_mixer_get, slim_tx_mixer_put),
+	SOC_SINGLE_EXT("SLIM TX10", SND_SOC_NOPM, TABLA_TX10, 1, 0,
+			slim_tx_mixer_get, slim_tx_mixer_put),
+};
+
+static const struct snd_kcontrol_new aif2_cap_mixer[] = {
+	SOC_SINGLE_EXT("SLIM TX1", SND_SOC_NOPM, TABLA_TX1, 1, 0,
+			slim_tx_mixer_get, slim_tx_mixer_put),
+	SOC_SINGLE_EXT("SLIM TX2", SND_SOC_NOPM, TABLA_TX2, 1, 0,
+			slim_tx_mixer_get, slim_tx_mixer_put),
+	SOC_SINGLE_EXT("SLIM TX3", SND_SOC_NOPM, TABLA_TX3, 1, 0,
+			slim_tx_mixer_get, slim_tx_mixer_put),
+	SOC_SINGLE_EXT("SLIM TX4", SND_SOC_NOPM, TABLA_TX4, 1, 0,
+			slim_tx_mixer_get, slim_tx_mixer_put),
+	SOC_SINGLE_EXT("SLIM TX5", SND_SOC_NOPM, TABLA_TX5, 1, 0,
+			slim_tx_mixer_get, slim_tx_mixer_put),
+	SOC_SINGLE_EXT("SLIM TX6", SND_SOC_NOPM, TABLA_TX6, 1, 0,
+			slim_tx_mixer_get, slim_tx_mixer_put),
+	SOC_SINGLE_EXT("SLIM TX7", SND_SOC_NOPM, TABLA_TX7, 1, 0,
+			slim_tx_mixer_get, slim_tx_mixer_put),
+	SOC_SINGLE_EXT("SLIM TX8", SND_SOC_NOPM, TABLA_TX8, 1, 0,
+			slim_tx_mixer_get, slim_tx_mixer_put),
+	SOC_SINGLE_EXT("SLIM TX9", SND_SOC_NOPM, TABLA_TX9, 1, 0,
+			slim_tx_mixer_get, slim_tx_mixer_put),
+	SOC_SINGLE_EXT("SLIM TX10", SND_SOC_NOPM, TABLA_TX10, 1, 0,
+			slim_tx_mixer_get, slim_tx_mixer_put),
+};
+
+static const struct snd_kcontrol_new aif3_cap_mixer[] = {
 	SOC_SINGLE_EXT("SLIM TX1", SND_SOC_NOPM, TABLA_TX1, 1, 0,
 			slim_tx_mixer_get, slim_tx_mixer_put),
 	SOC_SINGLE_EXT("SLIM TX2", SND_SOC_NOPM, TABLA_TX2, 1, 0,
@@ -4427,6 +4473,7 @@ static int tabla_write(struct snd_soc_codec *codec, unsigned int reg,
 	unsigned int value)
 {
 	int ret;
+	struct wcd9xxx *wcd9xxx = codec->control_data;
 
 	if (reg == SND_SOC_NOPM)
 		return 0;
@@ -4440,13 +4487,14 @@ static int tabla_write(struct snd_soc_codec *codec, unsigned int reg,
 				reg, ret);
 	}
 
-	return wcd9xxx_reg_write(codec->control_data, reg, value);
+	return wcd9xxx_reg_write(&wcd9xxx->core_res, reg, value);
 }
 static unsigned int tabla_read(struct snd_soc_codec *codec,
 				unsigned int reg)
 {
 	unsigned int val;
 	int ret;
+	struct wcd9xxx *wcd9xxx = codec->control_data;
 
 	if (reg == SND_SOC_NOPM)
 		return 0;
@@ -4463,7 +4511,7 @@ static unsigned int tabla_read(struct snd_soc_codec *codec,
 				reg, ret);
 	}
 
-	val = wcd9xxx_reg_read(codec->control_data, reg);
+	val = wcd9xxx_reg_read(&wcd9xxx->core_res, reg);
 	return val;
 }
 
@@ -5124,20 +5172,6 @@ static struct snd_soc_dai_driver tabla_dai[] = {
 		.ops = &tabla_dai_ops,
 	},
 	{
-		.name = "tabla_tx3",
-		.id = AIF3_CAP,
-		.capture = {
-			.stream_name = "AIF3 Capture",
-			.rates = WCD9310_RATES,
-			.formats = TABLA_FORMATS,
-			.rate_max = 48000,
-			.rate_min = 8000,
-			.channels_min = 1,
-			.channels_max = 2,
-		},
-		.ops = &tabla_dai_ops,
-	},
-	{
 		.name = "tabla_rx3",
 		.id = AIF3_PB,
 		.playback = {
@@ -5146,6 +5180,20 @@ static struct snd_soc_dai_driver tabla_dai[] = {
 			.formats = TABLA_FORMATS,
 			.rate_min = 8000,
 			.rate_max = 192000,
+			.channels_min = 1,
+			.channels_max = 2,
+		},
+		.ops = &tabla_dai_ops,
+	},
+	{
+		.name = "tabla_tx3",
+		.id = AIF3_CAP,
+		.capture = {
+			.stream_name = "AIF3 Capture",
+			.rates = WCD9310_RATES,
+			.formats = TABLA_FORMATS,
+			.rate_max = 48000,
+			.rate_min = 8000,
 			.channels_min = 1,
 			.channels_max = 2,
 		},
@@ -5697,13 +5745,13 @@ static const struct snd_soc_dapm_widget tabla_dapm_widgets[] = {
 		SND_SOC_DAPM_POST_PMU | SND_SOC_DAPM_POST_PMD),
 
 	SND_SOC_DAPM_MIXER("AIF1_CAP Mixer", SND_SOC_NOPM, AIF1_CAP, 0,
-		aif_cap_mixer, ARRAY_SIZE(aif_cap_mixer)),
+		aif1_cap_mixer, ARRAY_SIZE(aif1_cap_mixer)),
 
 	SND_SOC_DAPM_MIXER("AIF2_CAP Mixer", SND_SOC_NOPM, AIF2_CAP, 0,
-		aif_cap_mixer, ARRAY_SIZE(aif_cap_mixer)),
+		aif2_cap_mixer, ARRAY_SIZE(aif2_cap_mixer)),
 
 	SND_SOC_DAPM_MIXER("AIF3_CAP Mixer", SND_SOC_NOPM, AIF3_CAP, 0,
-		aif_cap_mixer, ARRAY_SIZE(aif_cap_mixer)),
+		aif3_cap_mixer, ARRAY_SIZE(aif3_cap_mixer)),
 
 	SND_SOC_DAPM_MUX("SLIM TX1 MUX", SND_SOC_NOPM, TABLA_TX1, 0,
 		&sb_tx1_mux),
@@ -5935,11 +5983,12 @@ static int tabla_cancel_btn_work(struct tabla_priv *tabla)
 {
 	int r = 0;
 	struct wcd9xxx *core = dev_get_drvdata(tabla->codec->dev->parent);
+	struct wcd9xxx_core_resource *core_res = &core->core_res;
 
 	if (cancel_delayed_work_sync(&tabla->mbhc_btn_dwork)) {
 		/* if scheduled mbhc_btn_dwork is canceled from here,
 		* we have to unlock from here instead btn_work */
-		wcd9xxx_unlock_sleep(core);
+		wcd9xxx_unlock_sleep(core_res);
 		r = 1;
 	}
 	return r;
@@ -6318,12 +6367,14 @@ static void btn_lpress_fn(struct work_struct *work)
 	short bias_value;
 	int dce_mv, sta_mv;
 	struct wcd9xxx *core;
+	struct wcd9xxx_core_resource *core_res;
 
 	pr_debug("%s:\n", __func__);
 
 	delayed_work = to_delayed_work(work);
 	tabla = container_of(delayed_work, struct tabla_priv, mbhc_btn_dwork);
 	core = dev_get_drvdata(tabla->codec->dev->parent);
+	core_res = &core->core_res;
 
 	if (tabla) {
 		if (tabla->mbhc_cfg.button_jack) {
@@ -6346,7 +6397,7 @@ static void btn_lpress_fn(struct work_struct *work)
 	}
 
 	pr_debug("%s: leave\n", __func__);
-	wcd9xxx_unlock_sleep(core);
+	wcd9xxx_unlock_sleep(core_res);
 }
 
 static u16 tabla_get_cfilt_reg(struct snd_soc_codec *codec, u8 cfilt)
@@ -6802,6 +6853,7 @@ static irqreturn_t tabla_dce_handler(int irq, void *data)
 	short btnmeas[d->n_btn_meas + 1];
 	struct snd_soc_codec *codec = priv->codec;
 	struct wcd9xxx *core = dev_get_drvdata(priv->codec->dev->parent);
+	struct wcd9xxx_core_resource *core_res = &core->core_res;
 	int n_btn_meas = d->n_btn_meas;
 	u8 mbhc_status = snd_soc_read(codec, TABLA_A_CDC_MBHC_B1_STATUS) & 0x3E;
 
@@ -6903,12 +6955,12 @@ static irqreturn_t tabla_dce_handler(int irq, void *data)
 		tabla_mbhc_set_rel_thres(codec, btn_high[btn]);
 		mask = tabla_get_button_mask(btn);
 		priv->buttons_pressed |= mask;
-		wcd9xxx_lock_sleep(core);
+		wcd9xxx_lock_sleep(core_res);
 		if (schedule_delayed_work(&priv->mbhc_btn_dwork,
 					  msecs_to_jiffies(400)) == 0) {
 			WARN(1, "Button pressed twice without release"
 			     "event\n");
-			wcd9xxx_unlock_sleep(core);
+			wcd9xxx_unlock_sleep(core_res);
 		}
 	} else {
 		pr_debug("%s: bogus button press, too short press?\n",
@@ -7234,9 +7286,11 @@ void tabla_find_plug_and_report(struct snd_soc_codec *codec,
 static void tabla_schedule_hs_detect_plug(struct tabla_priv *tabla,
 	struct work_struct *correct_plug_work)
 {
+	struct wcd9xxx *core = tabla->codec->control_data;
+	struct wcd9xxx_core_resource *core_res = &core->core_res;
 	pr_debug("%s: scheduling tabla_hs_correct_gpio_plug\n", __func__);
 	tabla->hs_detect_work_stop = false;
-	wcd9xxx_lock_sleep(tabla->codec->control_data);
+	wcd9xxx_lock_sleep(core_res);
 	schedule_work(correct_plug_work);
 }
 
@@ -7244,13 +7298,15 @@ static void tabla_schedule_hs_detect_plug(struct tabla_priv *tabla,
 static void tabla_cancel_hs_detect_plug(struct tabla_priv *tabla,
 		struct work_struct *correct_plug_work)
 {
+	struct wcd9xxx *core = tabla->codec->control_data;
+	struct wcd9xxx_core_resource *core_res = &core->core_res;
 	pr_debug("%s: canceling hs_correct_plug_work\n", __func__);
 	tabla->hs_detect_work_stop = true;
 	wmb();
 	TABLA_RELEASE_LOCK(tabla->codec_resource_lock);
 	if (cancel_work_sync(correct_plug_work)) {
 		pr_debug("%s: hs_correct_plug_work is canceled\n", __func__);
-		wcd9xxx_unlock_sleep(tabla->codec->control_data);
+		wcd9xxx_unlock_sleep(core_res);
 	}
 	TABLA_ACQUIRE_LOCK(tabla->codec_resource_lock);
 }
@@ -7456,9 +7512,13 @@ static void tabla_hs_correct_gpio_plug(struct work_struct *work)
 	bool correction = false;
 	enum tabla_mbhc_plug_type plug_type = PLUG_TYPE_INVALID;
 	unsigned long timeout;
+	struct wcd9xxx *core;
+	struct wcd9xxx_core_resource *core_res;
 
 	tabla = container_of(work, struct tabla_priv, hs_correct_plug_work);
 	codec = tabla->codec;
+	core = tabla->codec->control_data;
+	core_res = &core->core_res;
 
 	pr_debug("%s: enter\n", __func__);
 	tabla->mbhc_cfg.mclk_cb_fn(codec, 1, false);
@@ -7567,7 +7627,7 @@ static void tabla_hs_correct_gpio_plug(struct work_struct *work)
 	pr_debug("%s: leave current_plug(%d)\n",
 		 __func__, tabla->current_plug);
 	/* unlock sleep */
-	wcd9xxx_unlock_sleep(tabla->codec->control_data);
+	wcd9xxx_unlock_sleep(core_res);
 }
 
 /* called under codec_resource_lock acquisition */
@@ -7724,6 +7784,7 @@ static void tabla_hs_insert_irq_nogpio(struct tabla_priv *priv, bool is_removal,
 	int ret;
 	struct snd_soc_codec *codec = priv->codec;
 	struct wcd9xxx *core = dev_get_drvdata(priv->codec->dev->parent);
+	struct wcd9xxx_core_resource *core_res = &core->core_res;
 	struct tabla_priv *tabla = snd_soc_codec_get_drvdata(codec);
 
 	/* Cancel possibly running hs_detect_work */
@@ -7752,12 +7813,12 @@ static void tabla_hs_insert_irq_nogpio(struct tabla_priv *priv, bool is_removal,
 	} else if (is_mb_trigger && !is_removal) {
 		pr_debug("%s: Waiting for Headphone left trigger\n",
 			__func__);
-		wcd9xxx_lock_sleep(core);
+		wcd9xxx_lock_sleep(core_res);
 		if (schedule_delayed_work(&priv->mbhc_insert_dwork,
 					  usecs_to_jiffies(1000000)) == 0) {
 			pr_err("%s: mbhc_insert_dwork is already scheduled\n",
 			       __func__);
-			wcd9xxx_unlock_sleep(core);
+			wcd9xxx_unlock_sleep(core_res);
 		}
 		tabla_codec_enable_hs_detect(codec, 1, MBHC_USE_HPHL_TRIGGER,
 					     false);
@@ -7767,7 +7828,7 @@ static void tabla_hs_insert_irq_nogpio(struct tabla_priv *priv, bool is_removal,
 			pr_debug("%s: Complete plug insertion, Detecting plug "
 				 "type\n", __func__);
 			tabla_codec_detect_plug_type(codec);
-			wcd9xxx_unlock_sleep(core);
+			wcd9xxx_unlock_sleep(core_res);
 		} else {
 			wcd9xxx_enable_irq(codec->control_data,
 					   WCD9XXX_IRQ_MBHC_INSERTION);
@@ -8044,11 +8105,13 @@ void mbhc_insert_work(struct work_struct *work)
 	struct tabla_priv *tabla;
 	struct snd_soc_codec *codec;
 	struct wcd9xxx *tabla_core;
+	struct wcd9xxx_core_resource *core_res;
 
 	dwork = to_delayed_work(work);
 	tabla = container_of(dwork, struct tabla_priv, mbhc_insert_dwork);
 	codec = tabla->codec;
 	tabla_core = dev_get_drvdata(codec->dev->parent);
+	core_res = &tabla_core->core_res;
 
 	pr_debug("%s:\n", __func__);
 
@@ -8059,7 +8122,7 @@ void mbhc_insert_work(struct work_struct *work)
 	wcd9xxx_disable_irq_sync(codec->control_data,
 				 WCD9XXX_IRQ_MBHC_INSERTION);
 	tabla_codec_detect_plug_type(codec);
-	wcd9xxx_unlock_sleep(tabla_core);
+	wcd9xxx_unlock_sleep(core_res);
 }
 
 static void tabla_hs_gpio_handler(struct snd_soc_codec *codec)
@@ -8076,7 +8139,7 @@ static void tabla_hs_gpio_handler(struct snd_soc_codec *codec)
 	usleep_range(TABLA_GPIO_IRQ_DEBOUNCE_TIME_US,
 		     TABLA_GPIO_IRQ_DEBOUNCE_TIME_US);
 
-	wcd9xxx_nested_irq_lock(core);
+	wcd9xxx_nested_irq_lock(&core->core_res);
 	TABLA_ACQUIRE_LOCK(tabla->codec_resource_lock);
 
 	/* cancel pending button press */
@@ -8149,7 +8212,7 @@ static void tabla_hs_gpio_handler(struct snd_soc_codec *codec)
 
 	tabla->in_gpio_handler = false;
 	TABLA_RELEASE_LOCK(tabla->codec_resource_lock);
-	wcd9xxx_nested_irq_unlock(core);
+	wcd9xxx_nested_irq_unlock(&core->core_res);
 	pr_debug("%s: leave\n", __func__);
 }
 
@@ -8158,8 +8221,10 @@ static irqreturn_t tabla_mechanical_plug_detect_irq(int irq, void *data)
 	int r = IRQ_HANDLED;
 	struct snd_soc_codec *codec = data;
 	struct tabla_priv *tabla = snd_soc_codec_get_drvdata(codec);
+	struct wcd9xxx *core = codec->control_data;
+	struct wcd9xxx_core_resource *core_res = &core->core_res;
 
-	if (unlikely(wcd9xxx_lock_sleep(codec->control_data) == false)) {
+	if (unlikely(wcd9xxx_lock_sleep(core_res) == false)) {
 		pr_warn("%s: failed to hold suspend\n", __func__);
 		/*
 		 * Give up this IRQ for now and resend this IRQ so IRQ can be
@@ -8172,7 +8237,7 @@ static irqreturn_t tabla_mechanical_plug_detect_irq(int irq, void *data)
 		r = IRQ_NONE;
 	} else {
 		tabla_hs_gpio_handler(codec);
-		wcd9xxx_unlock_sleep(codec->control_data);
+		wcd9xxx_unlock_sleep(core_res);
 	}
 
 	return r;
@@ -8186,6 +8251,8 @@ static void tabla_hs_correct_plug_nogpio(struct work_struct *work)
 	int retry = 0;
 	enum tabla_mbhc_plug_type plug_type;
 	bool is_headset = false;
+	struct wcd9xxx *core;
+	struct wcd9xxx_core_resource *core_res;
 
 	pr_debug("%s(): Poll Microphone voltage for %d seconds\n",
 			 __func__, TABLA_HS_DETECT_PLUG_TIME_MS / 1000);
@@ -8193,6 +8260,8 @@ static void tabla_hs_correct_plug_nogpio(struct work_struct *work)
 	tabla = container_of(work, struct tabla_priv,
 						 hs_correct_plug_work_nogpio);
 	codec = tabla->codec;
+	core = codec->control_data;
+	core_res = &core->core_res;
 
 	/* Make sure the MBHC mux is connected to MIC Path */
 	snd_soc_write(codec, TABLA_A_MBHC_SCALING_MUX_1, 0x84);
@@ -8247,7 +8316,7 @@ static void tabla_hs_correct_plug_nogpio(struct work_struct *work)
 		tabla_codec_cleanup_hs_polling(codec);
 		tabla_codec_enable_hs_detect(codec, 0, 0, false);
 	}
-	wcd9xxx_unlock_sleep(codec->control_data);
+	wcd9xxx_unlock_sleep(core_res);
 }
 
 static int tabla_mbhc_init_and_calibrate(struct tabla_priv *tabla)
@@ -8551,26 +8620,6 @@ static int tabla_handle_pdata(struct tabla_priv *tabla)
 			0xE0, (pdata->ocp.hph_ocp_limit << 5));
 	}
 
-	for (i = 0; i < ARRAY_SIZE(pdata->regulator); i++) {
-		if (!strncmp(pdata->regulator[i].name, "CDC_VDDA_RX", 11)) {
-			if (pdata->regulator[i].min_uV == 1800000 &&
-			    pdata->regulator[i].max_uV == 1800000) {
-				snd_soc_write(codec, TABLA_A_BIAS_REF_CTL,
-					      0x1C);
-			} else if (pdata->regulator[i].min_uV == 2200000 &&
-				   pdata->regulator[i].max_uV == 2200000) {
-				snd_soc_write(codec, TABLA_A_BIAS_REF_CTL,
-					      0x1E);
-			} else {
-				pr_err("%s: unsupported CDC_VDDA_RX voltage "
-				       "min %d, max %d\n", __func__,
-				       pdata->regulator[i].min_uV,
-				       pdata->regulator[i].max_uV);
-				rc = -EINVAL;
-			}
-			break;
-		}
-	}
 done:
 	return rc;
 }
@@ -8912,9 +8961,11 @@ static int tabla_codec_probe(struct snd_soc_codec *codec)
 	int ret = 0;
 	int i;
 	void *ptr = NULL;
+	struct wcd9xxx_core_resource *core_res;
 
 	codec->control_data = dev_get_drvdata(codec->dev->parent);
 	control = codec->control_data;
+	core_res = &control->core_res;
 
 	tabla = kzalloc(sizeof(struct tabla_priv), GFP_KERNEL);
 	if (!tabla) {
@@ -9028,7 +9079,7 @@ static int tabla_codec_probe(struct snd_soc_codec *codec)
 
 	snd_soc_dapm_sync(dapm);
 
-	ret = wcd9xxx_request_irq(codec->control_data,
+	ret = wcd9xxx_request_irq(core_res,
 				  WCD9XXX_IRQ_MBHC_INSERTION,
 		tabla_hs_insert_irq, "Headset insert detect", tabla);
 	if (ret) {
@@ -9036,9 +9087,9 @@ static int tabla_codec_probe(struct snd_soc_codec *codec)
 		       WCD9XXX_IRQ_MBHC_INSERTION);
 		goto err_insert_irq;
 	}
-	wcd9xxx_disable_irq(codec->control_data, WCD9XXX_IRQ_MBHC_INSERTION);
+	wcd9xxx_disable_irq(core_res, WCD9XXX_IRQ_MBHC_INSERTION);
 
-	ret = wcd9xxx_request_irq(codec->control_data,
+	ret = wcd9xxx_request_irq(core_res,
 				  WCD9XXX_IRQ_MBHC_REMOVAL,
 				  tabla_hs_remove_irq,
 				  "Headset remove detect", tabla);
@@ -9048,7 +9099,7 @@ static int tabla_codec_probe(struct snd_soc_codec *codec)
 		goto err_remove_irq;
 	}
 
-	ret = wcd9xxx_request_irq(codec->control_data,
+	ret = wcd9xxx_request_irq(core_res,
 				  WCD9XXX_IRQ_MBHC_POTENTIAL,
 				  tabla_dce_handler, "DC Estimation detect",
 				  tabla);
@@ -9058,7 +9109,7 @@ static int tabla_codec_probe(struct snd_soc_codec *codec)
 		goto err_potential_irq;
 	}
 
-	ret = wcd9xxx_request_irq(codec->control_data, WCD9XXX_IRQ_MBHC_RELEASE,
+	ret = wcd9xxx_request_irq(core_res, WCD9XXX_IRQ_MBHC_RELEASE,
 				  tabla_release_handler,
 				  "Button Release detect", tabla);
 	if (ret) {
@@ -9067,7 +9118,7 @@ static int tabla_codec_probe(struct snd_soc_codec *codec)
 		goto err_release_irq;
 	}
 
-	ret = wcd9xxx_request_irq(codec->control_data, WCD9XXX_IRQ_SLIMBUS,
+	ret = wcd9xxx_request_irq(core_res, WCD9XXX_IRQ_SLIMBUS,
 				  tabla_slimbus_irq, "SLIMBUS Slave", tabla);
 	if (ret) {
 		pr_err("%s: Failed to request irq %d\n", __func__,
@@ -9076,10 +9127,10 @@ static int tabla_codec_probe(struct snd_soc_codec *codec)
 	}
 
 	for (i = 0; i < WCD9XXX_SLIM_NUM_PORT_REG; i++)
-		wcd9xxx_interface_reg_write(codec->control_data,
-			TABLA_SLIM_PGD_PORT_INT_EN0 + i, 0xFF);
+		wcd9xxx_interface_reg_write(control,
+				TABLA_SLIM_PGD_PORT_INT_EN0 + i, 0xFF);
 
-	ret = wcd9xxx_request_irq(codec->control_data,
+	ret = wcd9xxx_request_irq(core_res,
 				  WCD9XXX_IRQ_HPH_PA_OCPL_FAULT,
 				  tabla_hphl_ocp_irq,
 				  "HPH_L OCP detect", tabla);
@@ -9088,9 +9139,9 @@ static int tabla_codec_probe(struct snd_soc_codec *codec)
 		       WCD9XXX_IRQ_HPH_PA_OCPL_FAULT);
 		goto err_hphl_ocp_irq;
 	}
-	wcd9xxx_disable_irq(codec->control_data, WCD9XXX_IRQ_HPH_PA_OCPL_FAULT);
+	wcd9xxx_disable_irq(core_res, WCD9XXX_IRQ_HPH_PA_OCPL_FAULT);
 
-	ret = wcd9xxx_request_irq(codec->control_data,
+	ret = wcd9xxx_request_irq(core_res,
 				  WCD9XXX_IRQ_HPH_PA_OCPR_FAULT,
 				  tabla_hphr_ocp_irq,
 				  "HPH_R OCP detect", tabla);
@@ -9099,7 +9150,7 @@ static int tabla_codec_probe(struct snd_soc_codec *codec)
 		       WCD9XXX_IRQ_HPH_PA_OCPR_FAULT);
 		goto err_hphr_ocp_irq;
 	}
-	wcd9xxx_disable_irq(codec->control_data, WCD9XXX_IRQ_HPH_PA_OCPR_FAULT);
+	wcd9xxx_disable_irq(core_res, WCD9XXX_IRQ_HPH_PA_OCPR_FAULT);
 
 	/*
 	 * Register suspend lock and notifier to resend edge triggered
@@ -9130,19 +9181,19 @@ static int tabla_codec_probe(struct snd_soc_codec *codec)
 	return ret;
 
 err_hphr_ocp_irq:
-	wcd9xxx_free_irq(codec->control_data,
+	wcd9xxx_free_irq(core_res,
 			WCD9XXX_IRQ_HPH_PA_OCPL_FAULT, tabla);
 err_hphl_ocp_irq:
-	wcd9xxx_free_irq(codec->control_data, WCD9XXX_IRQ_SLIMBUS, tabla);
+	wcd9xxx_free_irq(core_res, WCD9XXX_IRQ_SLIMBUS, tabla);
 err_slimbus_irq:
-	wcd9xxx_free_irq(codec->control_data, WCD9XXX_IRQ_MBHC_RELEASE, tabla);
+	wcd9xxx_free_irq(core_res, WCD9XXX_IRQ_MBHC_RELEASE, tabla);
 err_release_irq:
-	wcd9xxx_free_irq(codec->control_data, WCD9XXX_IRQ_MBHC_POTENTIAL,
+	wcd9xxx_free_irq(core_res, WCD9XXX_IRQ_MBHC_POTENTIAL,
 			 tabla);
 err_potential_irq:
-	wcd9xxx_free_irq(codec->control_data, WCD9XXX_IRQ_MBHC_REMOVAL, tabla);
+	wcd9xxx_free_irq(core_res, WCD9XXX_IRQ_MBHC_REMOVAL, tabla);
 err_remove_irq:
-	wcd9xxx_free_irq(codec->control_data, WCD9XXX_IRQ_MBHC_INSERTION,
+	wcd9xxx_free_irq(core_res, WCD9XXX_IRQ_MBHC_INSERTION,
 			 tabla);
 err_insert_irq:
 err_pdata:
@@ -9239,7 +9290,7 @@ static const struct dev_pm_ops tabla_pm_ops = {
 };
 #endif
 
-static int __devinit tabla_probe(struct platform_device *pdev)
+static int tabla_probe(struct platform_device *pdev)
 {
 	int ret = 0;
 	pr_err("tabla_probe\n");
@@ -9251,7 +9302,7 @@ static int __devinit tabla_probe(struct platform_device *pdev)
 			tabla_i2s_dai, ARRAY_SIZE(tabla_i2s_dai));
 	return ret;
 }
-static int __devexit tabla_remove(struct platform_device *pdev)
+static int tabla_remove(struct platform_device *pdev)
 {
 	snd_soc_unregister_codec(&pdev->dev);
 	return 0;

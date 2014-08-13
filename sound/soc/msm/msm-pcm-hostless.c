@@ -1,4 +1,4 @@
-/* Copyright (c) 2011-2012, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2011-2013, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -18,13 +18,26 @@
 #include <sound/soc.h>
 #include <sound/pcm.h>
 
-static struct snd_pcm_ops msm_pcm_hostless_ops = {};
+
+static int msm_pcm_hostless_prepare(struct snd_pcm_substream *substream)
+{
+	if (!substream) {
+		pr_err("%s: invalid params\n", __func__);
+		return -EINVAL;
+	}
+	pm_qos_remove_request(&substream->latency_pm_qos_req);
+	return 0;
+}
+
+static struct snd_pcm_ops msm_pcm_hostless_ops = {
+	.prepare = msm_pcm_hostless_prepare
+};
 
 static struct snd_soc_platform_driver msm_soc_hostless_platform = {
 	.ops		= &msm_pcm_hostless_ops,
 };
 
-static __devinit int msm_pcm_hostless_probe(struct platform_device *pdev)
+static int msm_pcm_hostless_probe(struct platform_device *pdev)
 {
 	if (pdev->dev.of_node)
 		dev_set_name(&pdev->dev, "%s", "msm-pcm-hostless");
@@ -52,7 +65,7 @@ static struct platform_driver msm_pcm_hostless_driver = {
 		.of_match_table = msm_pcm_hostless_dt_match,
 	},
 	.probe = msm_pcm_hostless_probe,
-	.remove = __devexit_p(msm_pcm_hostless_remove),
+	.remove = msm_pcm_hostless_remove,
 };
 
 static int __init msm_soc_platform_init(void)

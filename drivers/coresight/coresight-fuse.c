@@ -1,4 +1,4 @@
-/* Copyright (c) 2013, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2013-2014, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -29,6 +29,7 @@
 
 #define OEM_CONFIG0		(0x000)
 #define OEM_CONFIG1		(0x004)
+#define FEATURE_CONFIG2		(0x000)
 
 #define ALL_DEBUG_DISABLE	BIT(21)
 #define APPS_DBGEN_DISABLE	BIT(0)
@@ -40,9 +41,15 @@
 #define DAP_SPIDEN_DISABLE	BIT(6)
 #define DAP_SPNIDEN_DISABLE	BIT(7)
 #define DAP_DEVICEEN_DISABLE	BIT(8)
+#define QPDI_SPMI_DISABLE	BIT(2)
+
+struct fuse_qpdi {
+	void __iomem		*base;
+};
 
 struct fuse_drvdata {
 	void __iomem		*base;
+	struct fuse_qpdi	*qpdi;
 	struct device		*dev;
 	struct coresight_device	*csdev;
 };
@@ -117,7 +124,28 @@ bool coresight_fuse_apps_access_disabled(void)
 }
 EXPORT_SYMBOL(coresight_fuse_apps_access_disabled);
 
-static int __devinit fuse_probe(struct platform_device *pdev)
+bool coresight_fuse_qpdi_access_disabled(void)
+{
+	struct fuse_drvdata *drvdata = fusedrvdata;
+	uint32_t config;
+
+	if (!drvdata->qpdi)
+		return false;
+
+	config = fuse_readl(drvdata->qpdi, FEATURE_CONFIG2);
+
+	dev_dbg(drvdata->dev, "qpdi config: %lx\n", (unsigned long)config);
+
+	if (config & QPDI_SPMI_DISABLE) {
+		dev_dbg(drvdata->dev, "qpdi fuse disabled\n");
+		return true;
+	} else {
+		return false;
+	}
+}
+EXPORT_SYMBOL(coresight_fuse_qpdi_access_disabled);
+
+static int fuse_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
 	struct coresight_platform_data *pdata;
@@ -148,6 +176,22 @@ static int __devinit fuse_probe(struct platform_device *pdev)
 	if (!drvdata->base)
 		return -ENOMEM;
 
+	res = platform_get_resource_byname(pdev, IORESOURCE_MEM,
+					   "qpdi-fuse-base");
+	if (res) {
+		drvdata->qpdi = devm_kzalloc(dev, sizeof(*drvdata->qpdi),
+					     GFP_KERNEL);
+		if (!drvdata->qpdi)
+			return -ENOMEM;
+
+		drvdata->qpdi->base = devm_ioremap(dev, res->start,
+						   resource_size(res));
+		if (!drvdata->qpdi->base)
+			return -ENOMEM;
+	} else {
+		dev_info(dev, "QPDI fuse not specified\n");
+	}
+
 	desc = devm_kzalloc(dev, sizeof(*desc), GFP_KERNEL);
 	if (!desc)
 		return -ENOMEM;
@@ -163,7 +207,7 @@ static int __devinit fuse_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static int __devexit fuse_remove(struct platform_device *pdev)
+static int fuse_remove(struct platform_device *pdev)
 {
 	struct fuse_drvdata *drvdata = platform_get_drvdata(pdev);
 
@@ -178,7 +222,7 @@ static struct of_device_id fuse_match[] = {
 
 static struct platform_driver fuse_driver = {
 	.probe          = fuse_probe,
-	.remove         = __devexit_p(fuse_remove),
+	.remove         = fuse_remove,
 	.driver         = {
 		.name   = "coresight-fuse",
 		.owner	= THIS_MODULE,

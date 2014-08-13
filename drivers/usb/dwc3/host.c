@@ -46,7 +46,7 @@ int dwc3_host_init(struct dwc3 *dwc)
 	int			ret;
 	struct xhci_plat_data	pdata;
 
-	xhci = platform_device_alloc("xhci-hcd", -1);
+	xhci = platform_device_alloc("xhci-hcd", PLATFORM_DEVID_AUTO);
 	if (!xhci) {
 		dev_err(dwc->dev, "couldn't allocate xHCI device\n");
 		ret = -ENOMEM;
@@ -79,7 +79,6 @@ int dwc3_host_init(struct dwc3 *dwc)
 
 	/* Add XHCI device if !OTG, otherwise OTG takes care of this */
 	if (!dwc->dotg) {
-		xhci->dev.parent = dwc->dev;
 		ret = platform_device_add(xhci);
 		if (ret) {
 			dev_err(dwc->dev, "failed to register xHCI device\n");

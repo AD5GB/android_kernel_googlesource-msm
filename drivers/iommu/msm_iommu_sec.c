@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2013, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2014, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -26,14 +26,16 @@
 #include <linux/of.h>
 #include <linux/of_device.h>
 #include <linux/kmemleak.h>
+#include <linux/dma-mapping.h>
+#include <soc/qcom/scm.h>
 
+#include <asm/cacheflush.h>
 #include <asm/sizes.h>
 
-#include <mach/iommu_perfmon.h>
-#include <mach/iommu_hw-v1.h>
-#include <mach/msm_iommu_priv.h>
-#include <mach/iommu.h>
-#include <mach/scm.h>
+#include "msm_iommu_perfmon.h"
+#include "msm_iommu_hw-v1.h"
+#include "msm_iommu_priv.h"
+#include <linux/qcom_iommu.h>
 
 /* bitmap of the page sizes currently supported */
 #define MSM_IOMMU_PGSIZES	(SZ_4K | SZ_64K | SZ_1M | SZ_16M)
@@ -42,6 +44,7 @@
 #define IOMMU_SECURE_CFG	2
 #define IOMMU_SECURE_PTBL_SIZE  3
 #define IOMMU_SECURE_PTBL_INIT  4
+#define IOMMU_SET_CP_POOL_SIZE	5
 #define IOMMU_SECURE_MAP	6
 #define IOMMU_SECURE_UNMAP      7
 #define IOMMU_SECURE_MAP2 0x0B
@@ -50,8 +53,21 @@
 
 /* commands for SCM_SVC_UTIL */
 #define IOMMU_DUMP_SMMU_FAULT_REGS 0X0C
+#define MAXIMUM_VIRT_SIZE	(300*SZ_1M)
+
+
+#define MAKE_VERSION(major, minor, patch) \
+	(((major & 0x3FF) << 22) | ((minor & 0x3FF) << 12) | (patch & 0xFFF))
+
 
 static struct iommu_access_ops *iommu_access_ops;
+static int is_secure;
+
+static const struct of_device_id msm_smmu_list[] = {
+	{ .compatible = "qcom,msm-smmu-v1", },
+	{ .compatible = "qcom,msm-smmu-v2", },
+	{ }
+};
 
 struct msm_scm_paddr_list {
 	unsigned int list;
@@ -77,37 +93,24 @@ struct msm_scm_unmap2_req {
 	unsigned int flags;
 };
 
+struct msm_cp_pool_size {
+	uint32_t size;
+	uint32_t spare;
+};
+
+#define NUM_DUMP_REGS 14
+/*
+ * some space to allow the number of registers returned by the secure
+ * environment to grow
+ */
+#define WIGGLE_ROOM (NUM_DUMP_REGS * 2)
+/* Each entry is a (reg_addr, reg_val) pair, hence the * 2 */
+#define SEC_DUMP_SIZE ((NUM_DUMP_REGS * 2) + WIGGLE_ROOM)
+
 struct msm_scm_fault_regs_dump {
 	uint32_t dump_size;
-	uint32_t fsr_addr;
-	uint32_t fsr;
-	uint32_t far0_addr;
-	uint32_t far0;
-	uint32_t far1_addr;
-	uint32_t far1;
-	uint32_t par0_addr;
-	uint32_t par0;
-	uint32_t par1_addr;
-	uint32_t par1;
-	uint32_t fsyn0_addr;
-	uint32_t fsyn0;
-	uint32_t fsyn1_addr;
-	uint32_t fsyn1;
-	uint32_t ttbr0_addr;
-	uint32_t ttbr0;
-	uint32_t ttbr1_addr;
-	uint32_t ttbr1;
-	uint32_t ttbcr_addr;
-	uint32_t ttbcr;
-	uint32_t sctlr_addr;
-	uint32_t sctlr;
-	uint32_t actlr_addr;
-	uint32_t actlr;
-	uint32_t prrr_addr;
-	uint32_t prrr;
-	uint32_t nmrr_addr;
-	uint32_t nmrr;
-};
+	uint32_t dump_data[SEC_DUMP_SIZE];
+} __packed;
 
 void msm_iommu_sec_set_access_ops(struct iommu_access_ops *access_ops)
 {
@@ -122,7 +125,7 @@ static int msm_iommu_dump_fault_regs(int smmu_id, int cb_num,
 	struct msm_scm_fault_regs_dump_req {
 		uint32_t id;
 		uint32_t cb_num;
-		phys_addr_t buff;
+		uint32_t buff;
 		uint32_t len;
 	} req_info;
 	int resp;
@@ -135,6 +138,102 @@ static int msm_iommu_dump_fault_regs(int smmu_id, int cb_num,
 	ret = scm_call(SCM_SVC_UTIL, IOMMU_DUMP_SMMU_FAULT_REGS,
 		&req_info, sizeof(req_info), &resp, 1);
 
+	dmac_inv_range(regs, regs + sizeof(*regs));
+
+	return ret;
+}
+
+static int msm_iommu_reg_dump_to_regs(
+	struct msm_iommu_context_reg ctx_regs[],
+	struct msm_scm_fault_regs_dump *dump, struct msm_iommu_drvdata *drvdata,
+	struct msm_iommu_ctx_drvdata *ctx_drvdata)
+{
+	int i, j, ret = 0;
+	const uint32_t nvals = (dump->dump_size / sizeof(uint32_t));
+	uint32_t *it = (uint32_t *) dump->dump_data;
+	const uint32_t * const end = ((uint32_t *) dump) + nvals;
+	phys_addr_t phys_base = drvdata->phys_base;
+	int ctx = ctx_drvdata->num;
+
+	for (i = 1; it < end; it += 2, i += 2) {
+		unsigned int reg_offset;
+		uint32_t addr	= *it;
+		uint32_t val	= *(it + 1);
+		struct msm_iommu_context_reg *reg = NULL;
+		if (addr < phys_base) {
+			pr_err("Bogus-looking register (0x%x) for Iommu with base at %pa. Skipping.\n",
+				addr, &phys_base);
+			continue;
+		}
+		reg_offset = addr - phys_base;
+
+		for (j = 0; j < MAX_DUMP_REGS; ++j) {
+			struct dump_regs_tbl_entry dump_reg = dump_regs_tbl[j];
+			void *test_reg;
+			unsigned int test_offset;
+			switch (dump_reg.dump_reg_type) {
+			case DRT_CTX_REG:
+				test_reg = CTX_REG(dump_reg.reg_offset,
+					drvdata->cb_base, ctx);
+				break;
+			case DRT_GLOBAL_REG:
+				test_reg = GLB_REG(
+					dump_reg.reg_offset, drvdata->glb_base);
+				break;
+			case DRT_GLOBAL_REG_N:
+				test_reg = GLB_REG_N(
+					drvdata->glb_base, ctx,
+					dump_reg.reg_offset);
+				break;
+			default:
+				pr_err("Unknown dump_reg_type: 0x%x\n",
+					dump_reg.dump_reg_type);
+				BUG();
+				break;
+			}
+			test_offset = test_reg - drvdata->glb_base;
+			if (test_offset == reg_offset) {
+				reg = &ctx_regs[j];
+				break;
+			}
+		}
+
+		if (reg == NULL) {
+			pr_debug("Unknown register in secure CB dump: %x\n",
+				addr);
+			continue;
+		}
+
+		if (reg->valid) {
+			WARN(1, "Invalid (repeated?) register in CB dump: %x\n",
+				addr);
+			continue;
+		}
+
+		reg->val = val;
+		reg->valid = true;
+	}
+
+	if (i != nvals) {
+		pr_err("Invalid dump! %d != %d\n", i, nvals);
+		ret = 1;
+	}
+
+	for (i = 0; i < MAX_DUMP_REGS; ++i) {
+		if (!ctx_regs[i].valid) {
+			if (dump_regs_tbl[i].must_be_present) {
+				pr_err("Register missing from dump: %s, 0x%x (0x%lx)\n",
+					dump_regs_tbl[i].name,
+					dump_regs_tbl[i].reg_offset,
+					(unsigned long)
+					(phys_base +
+						dump_regs_tbl[i].reg_offset));
+				ret = 1;
+			}
+			ctx_regs[i].val = 0xd00dfeed;
+		}
+	}
+
 	return ret;
 }
 
@@ -146,7 +245,7 @@ irqreturn_t msm_iommu_secure_fault_handler_v2(int irq, void *dev_id)
 	struct msm_scm_fault_regs_dump *regs;
 	int tmp, ret = IRQ_HANDLED;
 
-	iommu_access_ops->iommu_lock_acquire();
+	iommu_access_ops->iommu_lock_acquire(0);
 
 	BUG_ON(!pdev);
 
@@ -180,48 +279,47 @@ irqreturn_t msm_iommu_secure_fault_handler_v2(int irq, void *dev_id)
 	iommu_access_ops->iommu_clk_off(drvdata);
 
 	if (tmp) {
-		pr_err("%s: Couldn't dump fault registers!\n", __func__);
+		pr_err("%s: Couldn't dump fault registers (%d) %s, ctx: %d\n",
+			__func__, tmp, drvdata->name, ctx_drvdata->num);
 		goto free_regs;
-	} else if (regs->fsr) {
-		struct msm_iommu_context_regs ctx_regs = {
-			.far = regs->far0,
-			.par = regs->par0,
-			.fsr = regs->fsr,
-			.fsynr0 = regs->fsyn0,
-			.fsynr1 = regs->fsyn1,
-			.ttbr0 = regs->ttbr0,
-			.ttbr1 = regs->ttbr1,
-			.sctlr = regs->sctlr,
-			.actlr = regs->actlr,
-			.prrr = regs->prrr,
-			.nmrr = regs->nmrr,
-		};
-
-		if (!ctx_drvdata->attached_domain) {
-			pr_err("Bad domain in interrupt handler\n");
-			tmp = -ENOSYS;
-		} else {
-			tmp = report_iommu_fault(ctx_drvdata->attached_domain,
-				&ctx_drvdata->pdev->dev,
-				regs->far0, 0);
-		}
-
-		/* if the fault wasn't handled by someone else: */
-		if (tmp == -ENOSYS) {
-			pr_err("Unexpected IOMMU page fault from secure context bank!\n");
-			pr_err("name = %s\n", drvdata->name);
-			pr_err("context = %s (%d)\n", ctx_drvdata->name,
-				ctx_drvdata->num);
-			pr_err("Interesting registers:\n");
-			print_ctx_regs(&ctx_regs);
-		}
 	} else {
-		ret = IRQ_NONE;
+		struct msm_iommu_context_reg ctx_regs[MAX_DUMP_REGS];
+		memset(ctx_regs, 0, sizeof(ctx_regs));
+		tmp = msm_iommu_reg_dump_to_regs(
+			ctx_regs, regs, drvdata, ctx_drvdata);
+		if (ctx_regs[DUMP_REG_FSR].val) {
+			if (tmp)
+				pr_err("Incomplete fault register dump. Printout will be incomplete.\n");
+			if (!ctx_drvdata->attached_domain) {
+				pr_err("Bad domain in interrupt handler\n");
+				tmp = -ENOSYS;
+			} else {
+				tmp = report_iommu_fault(
+					ctx_drvdata->attached_domain,
+					&ctx_drvdata->pdev->dev,
+					COMBINE_DUMP_REG(
+						ctx_regs[DUMP_REG_FAR1].val,
+						ctx_regs[DUMP_REG_FAR0].val),
+					0);
+			}
+
+			/* if the fault wasn't handled by someone else: */
+			if (tmp == -ENOSYS) {
+				pr_err("Unexpected IOMMU page fault from secure context bank!\n");
+				pr_err("name = %s\n", drvdata->name);
+				pr_err("context = %s (%d)\n", ctx_drvdata->name,
+					ctx_drvdata->num);
+				pr_err("Interesting registers:\n");
+				print_ctx_regs(ctx_regs);
+			}
+		} else {
+			ret = IRQ_NONE;
+		}
 	}
 free_regs:
 	kfree(regs);
 lock_release:
-	iommu_access_ops->iommu_lock_release();
+	iommu_access_ops->iommu_lock_release(0);
 	return ret;
 }
 
@@ -233,19 +331,45 @@ static int msm_iommu_sec_ptbl_init(void)
 		unsigned int size;
 		unsigned int spare;
 	} pinit;
-	unsigned int *buf;
 	int psize[2] = {0, 0};
 	unsigned int spare;
 	int ret, ptbl_ret = 0;
+	int version;
+	/* Use a dummy device for dma_alloc_coherent allocation */
+	struct device dev = { 0 };
+	void *cpu_addr;
+	dma_addr_t paddr;
+	DEFINE_DMA_ATTRS(attrs);
 
-	for_each_compatible_node(np, NULL, "qcom,msm-smmu-v1")
-		if (of_find_property(np, "qcom,iommu-secure-id", NULL))
+	for_each_matching_node(np, msm_smmu_list)
+		if (of_find_property(np, "qcom,iommu-secure-id", NULL) &&
+				of_device_is_available(np))
 			break;
 
 	if (!np)
 		return 0;
 
 	of_node_put(np);
+
+	version = scm_get_feat_version(SCM_SVC_MP);
+
+	if (version >= MAKE_VERSION(1, 1, 1)) {
+		struct msm_cp_pool_size psize;
+		int retval;
+
+		psize.size = MAXIMUM_VIRT_SIZE;
+		psize.spare = 0;
+
+		ret = scm_call(SCM_SVC_MP, IOMMU_SET_CP_POOL_SIZE, &psize,
+				sizeof(psize), &retval, sizeof(retval));
+
+		if (ret) {
+			pr_err("scm call IOMMU_SET_CP_POOL_SIZE failed\n");
+			goto fail;
+		}
+
+	}
+
 	ret = scm_call(SCM_SVC_MP, IOMMU_SECURE_PTBL_SIZE, &spare,
 			sizeof(spare), psize, sizeof(psize));
 	if (ret) {
@@ -258,15 +382,17 @@ static int msm_iommu_sec_ptbl_init(void)
 		goto fail;
 	}
 
-	buf = kmalloc(psize[0], GFP_KERNEL);
-	if (!buf) {
+	dma_set_attr(DMA_ATTR_NO_KERNEL_MAPPING, &attrs);
+	dev.coherent_dma_mask = DMA_BIT_MASK(sizeof(dma_addr_t) * 8);
+	cpu_addr = dma_alloc_attrs(&dev, psize[0], &paddr, GFP_KERNEL, &attrs);
+	if (!cpu_addr) {
 		pr_err("%s: Failed to allocate %d bytes for PTBL\n",
 			__func__, psize[0]);
 		ret = -ENOMEM;
 		goto fail;
 	}
 
-	pinit.paddr = virt_to_phys(buf);
+	pinit.paddr = (unsigned int)paddr;
 	pinit.size = psize[0];
 
 	ret = scm_call(SCM_SVC_MP, IOMMU_SECURE_PTBL_INIT, &pinit,
@@ -280,17 +406,16 @@ static int msm_iommu_sec_ptbl_init(void)
 		goto fail_mem;
 	}
 
-	kmemleak_not_leak(buf);
-
 	return 0;
 
 fail_mem:
-	kfree(buf);
+	dma_free_coherent(&dev, psize[0], cpu_addr, paddr);
 fail:
 	return ret;
 }
 
-int msm_iommu_sec_program_iommu(int sec_id)
+int msm_iommu_sec_program_iommu(struct msm_iommu_drvdata *drvdata,
+			struct msm_iommu_ctx_drvdata *ctx_drvdata)
 {
 	struct msm_scm_sec_cfg {
 		unsigned int id;
@@ -298,7 +423,14 @@ int msm_iommu_sec_program_iommu(int sec_id)
 	} cfg;
 	int ret, scm_ret = 0;
 
-	cfg.id = sec_id;
+	cfg.id = drvdata->sec_id;
+	cfg.spare = ctx_drvdata->num;
+
+	if (drvdata->smmu_local_base) {
+		writel_relaxed(0xFFFFFFFF, drvdata->smmu_local_base +
+						SMMU_INTR_SEL_NS);
+		mb();
+	}
 
 	ret = scm_call(SCM_SVC_MP, IOMMU_SECURE_CFG, &cfg, sizeof(cfg),
 			&scm_ret, sizeof(scm_ret));
@@ -315,6 +447,8 @@ static int msm_iommu_sec_ptbl_map(struct msm_iommu_drvdata *iommu_drvdata,
 			unsigned long va, phys_addr_t pa, size_t len)
 {
 	struct msm_scm_map2_req map;
+	void *flush_va;
+	phys_addr_t flush_pa;
 	int ret = 0;
 
 	map.plist.list = virt_to_phys(&pa);
@@ -324,13 +458,23 @@ static int msm_iommu_sec_ptbl_map(struct msm_iommu_drvdata *iommu_drvdata,
 	map.info.ctx_id = ctx_drvdata->num;
 	map.info.va = va;
 	map.info.size = len;
-	map.flags = 0;
+	map.flags = IOMMU_TLBINVAL_FLAG;
+	flush_va = &pa;
+	flush_pa = virt_to_phys(&pa);
+
+	/*
+	 * Ensure that the buffer is in RAM by the time it gets to TZ
+	 */
+	dmac_clean_range(flush_va, flush_va + len);
 
 	if (scm_call(SCM_SVC_MP, IOMMU_SECURE_MAP2, &map, sizeof(map), &ret,
 								sizeof(ret)))
 		return -EINVAL;
 	if (ret)
 		return -EINVAL;
+
+	/* Invalidate cache since TZ touched this address range */
+	dmac_inv_range(flush_va, flush_va + len);
 
 	return 0;
 }
@@ -356,6 +500,7 @@ static int msm_iommu_sec_ptbl_map_range(struct msm_iommu_drvdata *iommu_drvdata,
 	struct msm_scm_map2_req map;
 	unsigned int *pa_list = 0;
 	unsigned int pa, cnt;
+	void *flush_va;
 	unsigned int offset = 0, chunk_offset = 0;
 	int ret, scm_ret;
 
@@ -363,13 +508,14 @@ static int msm_iommu_sec_ptbl_map_range(struct msm_iommu_drvdata *iommu_drvdata,
 	map.info.ctx_id = ctx_drvdata->num;
 	map.info.va = va;
 	map.info.size = len;
-	map.flags = 0;
+	map.flags = IOMMU_TLBINVAL_FLAG;
 
 	if (sg->length == len) {
 		pa = get_phys_addr(sg);
 		map.plist.list = virt_to_phys(&pa);
 		map.plist.list_size = 1;
 		map.plist.size = len;
+		flush_va = &pa;
 	} else {
 		sgiter = sg;
 		cnt = sg->length / SZ_1M;
@@ -400,7 +546,14 @@ static int msm_iommu_sec_ptbl_map_range(struct msm_iommu_drvdata *iommu_drvdata,
 		map.plist.list = virt_to_phys(pa_list);
 		map.plist.list_size = cnt;
 		map.plist.size = SZ_1M;
+		flush_va = pa_list;
 	}
+
+	/*
+	 * Ensure that the buffer is in RAM by the time it gets to TZ
+	 */
+	dmac_clean_range(flush_va,
+		flush_va + sizeof(unsigned long) * map.plist.list_size);
 
 	ret = scm_call(SCM_SVC_MP, IOMMU_SECURE_MAP2, &map, sizeof(map),
 			&scm_ret, sizeof(scm_ret));
@@ -443,12 +596,12 @@ static void msm_iommu_domain_destroy(struct iommu_domain *domain)
 {
 	struct msm_iommu_priv *priv;
 
-	iommu_access_ops->iommu_lock_acquire();
+	iommu_access_ops->iommu_lock_acquire(0);
 	priv = domain->priv;
 	domain->priv = NULL;
 
 	kfree(priv);
-	iommu_access_ops->iommu_lock_release();
+	iommu_access_ops->iommu_lock_release(0);
 }
 
 static int msm_iommu_attach_dev(struct iommu_domain *domain, struct device *dev)
@@ -459,7 +612,7 @@ static int msm_iommu_attach_dev(struct iommu_domain *domain, struct device *dev)
 	struct msm_iommu_ctx_drvdata *tmp_drvdata;
 	int ret = 0;
 
-	iommu_access_ops->iommu_lock_acquire();
+	iommu_access_ops->iommu_lock_acquire(0);
 
 	priv = domain->priv;
 	if (!priv || !dev) {
@@ -497,7 +650,8 @@ static int msm_iommu_attach_dev(struct iommu_domain *domain, struct device *dev)
 			goto fail;
 		}
 
-		ret = msm_iommu_sec_program_iommu(iommu_drvdata->sec_id);
+		ret = msm_iommu_sec_program_iommu(iommu_drvdata,
+						ctx_drvdata);
 
 		/* bfb settings are always programmed by HLOS */
 		program_iommu_bfb_settings(iommu_drvdata->base,
@@ -514,12 +668,12 @@ static int msm_iommu_attach_dev(struct iommu_domain *domain, struct device *dev)
 	ctx_drvdata->attached_domain = domain;
 	++iommu_drvdata->ctx_attach_count;
 
-	iommu_access_ops->iommu_lock_release();
+	iommu_access_ops->iommu_lock_release(0);
 
 	msm_iommu_attached(dev->parent);
 	return ret;
 fail:
-	iommu_access_ops->iommu_lock_release();
+	iommu_access_ops->iommu_lock_release(0);
 	return ret;
 }
 
@@ -531,7 +685,7 @@ static void msm_iommu_detach_dev(struct iommu_domain *domain,
 
 	msm_iommu_detached(dev->parent);
 
-	iommu_access_ops->iommu_lock_acquire();
+	iommu_access_ops->iommu_lock_acquire(0);
 	if (!dev)
 		goto fail;
 
@@ -547,7 +701,7 @@ static void msm_iommu_detach_dev(struct iommu_domain *domain,
 	BUG_ON(iommu_drvdata->ctx_attach_count == 0);
 	--iommu_drvdata->ctx_attach_count;
 fail:
-	iommu_access_ops->iommu_lock_release();
+	iommu_access_ops->iommu_lock_release(0);
 }
 
 static int get_drvdata(struct iommu_domain *domain,
@@ -577,7 +731,7 @@ static int msm_iommu_map(struct iommu_domain *domain, unsigned long va,
 	struct msm_iommu_ctx_drvdata *ctx_drvdata;
 	int ret = 0;
 
-	iommu_access_ops->iommu_lock_acquire();
+	iommu_access_ops->iommu_lock_acquire(0);
 
 	ret = get_drvdata(domain, &iommu_drvdata, &ctx_drvdata);
 	if (ret)
@@ -588,7 +742,7 @@ static int msm_iommu_map(struct iommu_domain *domain, unsigned long va,
 					va, pa, len);
 	iommu_access_ops->iommu_clk_off(iommu_drvdata);
 fail:
-	iommu_access_ops->iommu_lock_release();
+	iommu_access_ops->iommu_lock_release(0);
 	return ret;
 }
 
@@ -599,7 +753,7 @@ static size_t msm_iommu_unmap(struct iommu_domain *domain, unsigned long va,
 	struct msm_iommu_ctx_drvdata *ctx_drvdata;
 	int ret = -ENODEV;
 
-	iommu_access_ops->iommu_lock_acquire();
+	iommu_access_ops->iommu_lock_acquire(0);
 
 	ret = get_drvdata(domain, &iommu_drvdata, &ctx_drvdata);
 	if (ret)
@@ -610,7 +764,7 @@ static size_t msm_iommu_unmap(struct iommu_domain *domain, unsigned long va,
 					va, len);
 	iommu_access_ops->iommu_clk_off(iommu_drvdata);
 fail:
-	iommu_access_ops->iommu_lock_release();
+	iommu_access_ops->iommu_lock_release(0);
 
 	/* the IOMMU API requires us to return how many bytes were unmapped */
 	len = ret ? 0 : len;
@@ -625,7 +779,7 @@ static int msm_iommu_map_range(struct iommu_domain *domain, unsigned int va,
 	struct msm_iommu_drvdata *iommu_drvdata;
 	struct msm_iommu_ctx_drvdata *ctx_drvdata;
 
-	iommu_access_ops->iommu_lock_acquire();
+	iommu_access_ops->iommu_lock_acquire(0);
 
 	ret = get_drvdata(domain, &iommu_drvdata, &ctx_drvdata);
 	if (ret)
@@ -635,7 +789,7 @@ static int msm_iommu_map_range(struct iommu_domain *domain, unsigned int va,
 						va, sg, len);
 	iommu_access_ops->iommu_clk_off(iommu_drvdata);
 fail:
-	iommu_access_ops->iommu_lock_release();
+	iommu_access_ops->iommu_lock_release(0);
 	return ret;
 }
 
@@ -647,7 +801,7 @@ static int msm_iommu_unmap_range(struct iommu_domain *domain, unsigned int va,
 	struct msm_iommu_ctx_drvdata *ctx_drvdata;
 	int ret;
 
-	iommu_access_ops->iommu_lock_acquire();
+	iommu_access_ops->iommu_lock_acquire(0);
 
 	ret = get_drvdata(domain, &iommu_drvdata, &ctx_drvdata);
 	if (ret)
@@ -658,12 +812,12 @@ static int msm_iommu_unmap_range(struct iommu_domain *domain, unsigned int va,
 	iommu_access_ops->iommu_clk_off(iommu_drvdata);
 
 fail:
-	iommu_access_ops->iommu_lock_release();
+	iommu_access_ops->iommu_lock_release(0);
 	return 0;
 }
 
 static phys_addr_t msm_iommu_iova_to_phys(struct iommu_domain *domain,
-					  unsigned long va)
+					  phys_addr_t va)
 {
 	return 0;
 }
@@ -678,6 +832,32 @@ static phys_addr_t msm_iommu_get_pt_base_addr(struct iommu_domain *domain)
 {
 	return 0;
 }
+
+void msm_iommu_check_scm_call_avail(void)
+{
+	is_secure = scm_is_call_available(SCM_SVC_MP, IOMMU_SECURE_CFG);
+}
+
+int msm_iommu_get_scm_call_avail(void)
+{
+	return is_secure;
+}
+
+/*
+ * VFE SMMU is changing from being non-secure to being secure.
+ * For backwards compatibility we need to check whether the secure environment
+ * has support for this.
+ */
+static s32 secure_camera_enabled = -1;
+int is_vfe_secure(void)
+{
+	if (secure_camera_enabled == -1) {
+		u32 ver = scm_get_feat_version(SCM_SVC_SEC_CAMERA);
+		secure_camera_enabled = ver >= MAKE_VERSION(1, 0, 0);
+	}
+	return secure_camera_enabled;
+}
+
 
 static struct iommu_ops msm_iommu_ops = {
 	.domain_init = msm_iommu_domain_init,

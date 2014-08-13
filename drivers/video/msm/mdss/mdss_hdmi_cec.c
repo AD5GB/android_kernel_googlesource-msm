@@ -1,4 +1,4 @@
-/* Copyright (c) 2010-2013, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2010-2014, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -19,9 +19,11 @@
 
 #define CEC_STATUS_WR_ERROR	BIT(0)
 #define CEC_STATUS_WR_DONE	BIT(1)
+#define CEC_INTR		(BIT(1) | BIT(3) | BIT(7))
 
 /* Reference: HDMI 1.4a Specification section 7.1 */
 #define RETRANSMIT_MAX_NUM	5
+#define MAX_OPERAND_SIZE	15
 
 /*
  * Ref. HDMI 1.4a: Supplement-1 CEC Section 6, 7
@@ -30,7 +32,7 @@ struct hdmi_cec_msg {
 	u8 sender_id;
 	u8 recvr_id;
 	u8 opcode;
-	u8 operand[15];
+	u8 operand[MAX_OPERAND_SIZE];
 	u8 frame_size;
 	u8 retransmit;
 };
@@ -122,7 +124,7 @@ static void hdmi_cec_disable(struct hdmi_cec_ctrl *cec_ctrl)
 
 	/* Disable CEC interrupts */
 	reg_val = DSS_REG_R(io, HDMI_CEC_INT);
-	DSS_REG_W(io, HDMI_CEC_INT, reg_val & !BIT(1) & !BIT(3) & !BIT(7));
+	DSS_REG_W(io, HDMI_CEC_INT, reg_val & ~CEC_INTR);
 
 	spin_lock_irqsave(&cec_ctrl->lock, flags);
 	list_for_each_entry_safe(msg_node, tmp, &cec_ctrl->msg_head, list) {
@@ -146,7 +148,7 @@ static void hdmi_cec_enable(struct hdmi_cec_ctrl *cec_ctrl)
 	INIT_LIST_HEAD(&cec_ctrl->msg_head);
 
 	/* Enable CEC interrupts */
-	DSS_REG_W(io, HDMI_CEC_INT, BIT(1) | BIT(3) | BIT(7));
+	DSS_REG_W(io, HDMI_CEC_INT, CEC_INTR);
 
 	/* Enable Engine */
 	DSS_REG_W(io, HDMI_CEC_CTRL, BIT(0));
@@ -349,7 +351,8 @@ static int hdmi_cec_msg_send(struct hdmi_cec_ctrl *cec_ctrl,
 			(msg->operand[i] << 8) | frame_type);
 
 	while ((DSS_REG_R(io, HDMI_CEC_STATUS) & BIT(0)) &&
-		line_check_retry--) {
+		line_check_retry) {
+		line_check_retry--;
 		DEV_DBG("%s: CEC line is busy(%d)\n", __func__,
 			line_check_retry);
 		schedule();
@@ -364,7 +367,7 @@ static int hdmi_cec_msg_send(struct hdmi_cec_ctrl *cec_ctrl,
 	DSS_REG_W(io, HDMI_CEC_CTRL, BIT(0) | BIT(1) |
 		((msg->frame_size & 0x1F) << 4) | BIT(9));
 
-	if (!wait_for_completion_interruptible_timeout(
+	if (!wait_for_completion_timeout(
 		&cec_ctrl->cec_msg_wr_done, HZ)) {
 		DEV_ERR("%s: timedout", __func__);
 		hdmi_cec_dump_msg(cec_ctrl, msg);
@@ -738,6 +741,10 @@ static ssize_t hdmi_wta_cec_msg(struct device *dev,
 	}
 	spin_unlock_irqrestore(&cec_ctrl->lock, flags);
 
+	if (msg->frame_size > MAX_OPERAND_SIZE) {
+		DEV_ERR("%s: msg frame too big!\n", __func__);
+		return -EINVAL;
+	}
 	rc = hdmi_cec_msg_send(cec_ctrl, msg);
 	if (rc) {
 		DEV_ERR("%s: hdmi_cec_msg_send failed\n", __func__);
@@ -751,7 +758,7 @@ static DEVICE_ATTR(enable, S_IRUGO | S_IWUSR, hdmi_rda_cec_enable,
 	hdmi_wta_cec_enable);
 static DEVICE_ATTR(enable_compliance, S_IRUGO | S_IWUSR,
 	hdmi_rda_cec_enable_compliance, hdmi_wta_cec_enable_compliance);
-static DEVICE_ATTR(logical_addr, S_IRUGO | S_IWUSR,
+static DEVICE_ATTR(logical_addr, S_IRUSR | S_IWUSR,
 	hdmi_rda_cec_logical_addr, hdmi_wta_cec_logical_addr);
 static DEVICE_ATTR(rd_msg, S_IRUGO, hdmi_rda_cec_msg,	NULL);
 static DEVICE_ATTR(wr_msg, S_IWUSR, NULL, hdmi_wta_cec_msg);
@@ -869,7 +876,7 @@ int hdmi_cec_config(void *input)
 	DSS_REG_W(io, HDMI_CEC_REFTIMER, (0x3B6 & 0xFFF) | BIT(16));
 
 	hdmi_hw_version = DSS_REG_R(io, HDMI_VERSION);
-	if (hdmi_hw_version == 0x30000001) {
+	if (hdmi_hw_version >= 0x30000001) {
 		DSS_REG_W(io, HDMI_CEC_RD_RANGE, 0x30AB9888);
 		DSS_REG_W(io, HDMI_CEC_WR_RANGE, 0x888AA888);
 
